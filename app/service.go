@@ -1,14 +1,14 @@
 package app
 
-import "xtra-sync/lib/git"
+import "xtra-sync/lib/drivers"
 
 type Service struct {
-	gitClient GitClient
+	drivers *drivers.Factory
 }
 
 func NewService() *Service {
 	return &Service{
-		gitClient: git.NewAdapter(),
+		drivers: drivers.NewFactory(),
 	}
 }
 
@@ -18,5 +18,5 @@ func (s *Service) Run(configPath string) error {
 		return err
 	}
 
-	return RunSync(settings, s.gitClient)
+	return RunSync(settings, s.drivers)
 }
