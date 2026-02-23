@@ -17,3 +17,5 @@ func main() {
 
 // go run . --config config/exampleConfig.yaml sync
 // go build -o xtra-sync . && ./xtra-sync --config config/exampleConfig.yaml sync
+
+// Cache Ordner: echo $TMPDIR.   + /xtra-sync-cache/git
