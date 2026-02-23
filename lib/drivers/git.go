@@ -8,16 +8,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
 
-type gitDriver struct{}
+type gitDriver struct {
+	mu           sync.Mutex
+	updatedRepos map[string]bool
+}
 
 func NewGitDriver() SyncDriver {
-	return &gitDriver{}
+	return &gitDriver{updatedRepos: map[string]bool{}}
 }
 
 func (d *gitDriver) Sync(remote Remote) error {
@@ -42,7 +48,7 @@ func (d *gitDriver) Sync(remote Remote) error {
 }
 
 func (d *gitDriver) syncFullRepo(remote Remote, ref string, auth *githttp.BasicAuth) error {
-	if err := syncOrCloneRepo(remote.ResolvedLocalPath, remote.URL, ref, auth); err != nil {
+	if err := d.syncOrCloneRepo(remote.ResolvedLocalPath, remote.URL, ref, auth); err != nil {
 		return err
 	}
 
@@ -56,7 +62,7 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 		return err
 	}
 
-	if err := syncOrCloneRepo(cacheRepoDir, remote.URL, ref, auth); err != nil {
+	if err := d.syncOrCloneRepo(cacheRepoDir, remote.URL, ref, auth); err != nil {
 		return err
 	}
 
@@ -110,16 +116,24 @@ func resolveRepoSubpath(repoDir, remotePath string) (string, error) {
 	return joined, nil
 }
 
-func syncOrCloneRepo(repoDir, url, ref string, auth *githttp.BasicAuth) error {
+func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.BasicAuth) error {
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("cannot inspect %s: %w", repoDir, err)
 		}
-		fmt.Printf("[DEBUG] Clone Repository to %s (URL: %s, Ref: %s)\n", repoDir, url, ref)
+		fmt.Printf("[DEBUG] Cloning repository to %s (URL: %s, Ref: %s)\n", repoDir, url, ref)
 		if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 			return fmt.Errorf("could not create parent directory for %s: %w", repoDir, err)
 		}
-		return cloneWithRefFallback(url, repoDir, ref, auth)
+		if err := cloneWithRefFallback(url, repoDir, ref, auth); err != nil {
+			return err
+		}
+		d.markRepoUpdated(repoDir)
+		return nil
+	}
+
+	if d.wasRepoUpdated(repoDir) {
+		return nil
 	}
 
 	repo, err := git.PlainOpen(repoDir)
@@ -131,11 +145,70 @@ func syncOrCloneRepo(repoDir, url, ref string, auth *githttp.BasicAuth) error {
 		return err
 	}
 
+	remoteHash, refName, err := resolveRemoteRefHash(url, ref, auth)
+	if err != nil {
+		return fmt.Errorf("could not resolve remote ref hash: %w", err)
+	}
+
+	localHash, err := resolveLocalRefHash(repo, refName)
+	if err == nil && localHash == remoteHash {
+		d.markRepoUpdated(repoDir)
+		fmt.Printf("[DEBUG] Pull skipped (unchanged): %s @ %s\n", repoDir, remoteHash)
+		return nil
+	}
+
 	if err := pullWithRefFallback(repo, ref, auth); err != nil {
 		return fmt.Errorf("git pull failed in %s: %w", repoDir, err)
 	}
+
+	d.markRepoUpdated(repoDir)
 	fmt.Printf("[DEBUG] Pull successful!\n")
 	return nil
+}
+
+func (d *gitDriver) wasRepoUpdated(repoDir string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.updatedRepos[repoDir]
+}
+
+func (d *gitDriver) markRepoUpdated(repoDir string) {
+	d.mu.Lock()
+	d.updatedRepos[repoDir] = true
+	d.mu.Unlock()
+}
+
+func resolveRemoteRefHash(url, ref string, auth *githttp.BasicAuth) (plumbing.Hash, plumbing.ReferenceName, error) {
+	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{url},
+	})
+
+	refs, err := remote.List(&git.ListOptions{Auth: auth})
+	if err != nil {
+		return plumbing.ZeroHash, "", err
+	}
+
+	for _, candidate := range []plumbing.ReferenceName{
+		plumbing.NewBranchReferenceName(ref),
+		plumbing.NewTagReferenceName(ref),
+	} {
+		for _, r := range refs {
+			if r.Name() == candidate {
+				return r.Hash(), candidate, nil
+			}
+		}
+	}
+
+	return plumbing.ZeroHash, "", fmt.Errorf("ref %q not found as branch or tag", ref)
+}
+
+func resolveLocalRefHash(repo *git.Repository, refName plumbing.ReferenceName) (plumbing.Hash, error) {
+	ref, err := repo.Reference(refName, true)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return ref.Hash(), nil
 }
 
 func ensureOriginURL(repo *git.Repository, url string) error {
