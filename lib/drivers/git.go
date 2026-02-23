@@ -71,8 +71,10 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 		return err
 	}
 
-	if _, err := os.Stat(sourcePath); err != nil {
+	if info, err := os.Stat(sourcePath); err != nil {
 		return fmt.Errorf("source path not found (%s): %w", sourcePath, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("remote.path must point to a directory, but got file: %s", remote.Path)
 	}
 
 	if err := syncPathMirror(sourcePath, remote.ResolvedLocalPath); err != nil {
