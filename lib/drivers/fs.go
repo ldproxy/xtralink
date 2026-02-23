@@ -5,31 +5,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	copylib "github.com/otiai10/copy"
 )
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-
-	return out.Sync()
-}
 
 // syncPathMirror synchronizes a source directory into dst.
 // Files present in dst but missing in src are deleted.
@@ -45,7 +23,15 @@ func syncPathMirror(src, dst string) error {
 	if err := ensureDir(dst); err != nil {
 		return err
 	}
-	if err := syncDirContents(src, dst); err != nil {
+	if err := removeDestinationTypeConflicts(src, dst); err != nil {
+		return err
+	}
+	if err := copylib.Copy(src, dst, copylib.Options{
+		OnDirExists: func(srcDir, dstDir string) copylib.DirExistsAction {
+			return copylib.Merge
+		},
+		Sync: true,
+	}); err != nil {
 		return err
 	}
 	if err := deleteMissingEntries(src, dst); err != nil {
@@ -55,7 +41,7 @@ func syncPathMirror(src, dst string) error {
 	return nil
 }
 
-func syncDirContents(srcDir, dstDir string) error {
+func removeDestinationTypeConflicts(srcDir, dstDir string) error {
 	return filepath.WalkDir(srcDir, func(srcPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -70,24 +56,19 @@ func syncDirContents(srcDir, dstDir string) error {
 		}
 
 		dstPath := filepath.Join(dstDir, rel)
-
-		if d.IsDir() {
-			if err := ensureDir(dstPath); err != nil {
-				return err
-			}
+		dstInfo, err := os.Lstat(dstPath)
+		if os.IsNotExist(err) {
 			return nil
 		}
-
-		if err := ensureParentDir(dstPath); err != nil {
+		if err != nil {
 			return err
 		}
-		if dstInfo, err := os.Stat(dstPath); err == nil && dstInfo.IsDir() {
-			if err := os.RemoveAll(dstPath); err != nil {
-				return err
-			}
+
+		if d.IsDir() != dstInfo.IsDir() {
+			return os.RemoveAll(dstPath)
 		}
 
-		return copyFile(srcPath, dstPath)
+		return nil
 	})
 }
 
@@ -137,10 +118,6 @@ func ensureDir(path string) error {
 	}
 
 	return os.MkdirAll(path, 0o755)
-}
-
-func ensureParentDir(path string) error {
-	return os.MkdirAll(filepath.Dir(path), 0o755)
 }
 
 func writeReaderToFile(r io.Reader, dst string) error {
