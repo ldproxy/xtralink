@@ -2,6 +2,7 @@ package drivers
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,30 +17,37 @@ func NewS3Driver() SyncDriver {
 }
 
 func (d *s3Driver) Sync(remote Remote) error {
-	bucket, key, err := parseS3Location(remote.URL)
+	bucket, key, endpointFromURL, err := parseS3Location(remote.URL)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(remote.Path) != "" {
 		key = strings.TrimPrefix(strings.TrimSpace(remote.Path), "/")
 	}
-	if key == "" {
-		return fmt.Errorf("s3 path is empty; set url key or remote.path")
-	}
 
-	region := strings.TrimSpace(os.Getenv("XTRA_SYNC_S3_REGION"))
+	region := firstEnv("XTRA_SYNC_S3_REGION", "AWS_REGION")
 	if region == "" {
 		region = "us-east-1"
 	}
 
 	access := strings.TrimSpace(remote.User)
 	secret := strings.TrimSpace(remote.Password)
+	if access == "" {
+		access = firstEnv("accessKey")
+	}
+	if secret == "" {
+		secret = firstEnv("secretKey")
+	}
 	if access == "" || secret == "" {
-		return fmt.Errorf("s3 requires credentials in remote.user/remote.password")
+		return fmt.Errorf("s3 requires credentials in remote.user/remote.password or environment")
 	}
 
 	client := simples3.New(region, access, secret)
-	if endpoint := strings.TrimSpace(os.Getenv("XTRA_SYNC_S3_ENDPOINT")); endpoint != "" {
+	endpoint := firstEnv("XTRA_SYNC_S3_ENDPOINT")
+	if endpoint == "" {
+		endpoint = endpointFromURL
+	}
+	if endpoint != "" {
 		client.SetEndpoint(endpoint)
 	}
 
@@ -47,13 +55,15 @@ func (d *s3Driver) Sync(remote Remote) error {
 		return fmt.Errorf("could not clean destination path (%s): %w", remote.ResolvedLocalPath, err)
 	}
 
-	if err := d.downloadSingleObject(client, bucket, key, remote.ResolvedLocalPath); err == nil {
-		fmt.Printf("[xtra-sync][drivers/s3] synced s3://%s/%s -> %s\n", bucket, key, remote.ResolvedLocalPath)
-		return nil
+	if key != "" {
+		if err := d.downloadSingleObject(client, bucket, key, remote.ResolvedLocalPath); err == nil {
+			fmt.Printf("[xtra-sync][drivers/s3] synced s3://%s/%s -> %s\n", bucket, key, remote.ResolvedLocalPath)
+			return nil
+		}
 	}
 
 	prefix := key
-	if !strings.HasSuffix(prefix, "/") {
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
 
@@ -97,25 +107,54 @@ func (d *s3Driver) downloadSingleObject(client *simples3.S3, bucket, key, destin
 	return writeReaderToFile(rc, destination)
 }
 
-func parseS3Location(raw string) (bucket, key string, err error) {
+func parseS3Location(raw string) (bucket, key, endpoint string, err error) {
 	u := strings.TrimSpace(raw)
 	if u == "" {
-		return "", "", fmt.Errorf("s3 url is empty")
+		return "", "", "", fmt.Errorf("s3 url is empty")
 	}
-	if !strings.HasPrefix(strings.ToLower(u), "s3://") {
-		return "", "", fmt.Errorf("s3 url must start with s3://")
+
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, parseErr := url.Parse(u)
+		if parseErr != nil {
+			return "", "", "", fmt.Errorf("invalid s3 http url %q: %w", raw, parseErr)
+		}
+		path := strings.TrimPrefix(parsed.Path, "/")
+		parts := strings.SplitN(path, "/", 2)
+		bucket = strings.TrimSpace(parts[0])
+		if bucket == "" {
+			return "", "", "", fmt.Errorf("s3 bucket is empty in url %q", raw)
+		}
+		if len(parts) == 2 {
+			key = strings.TrimPrefix(parts[1], "/")
+		}
+		endpoint = parsed.Scheme + "://" + parsed.Host
+		return bucket, key, endpoint, nil
+	}
+
+	if !strings.HasPrefix(lower, "s3://") {
+		return "", "", "", fmt.Errorf("s3 url must start with s3:// or http(s)://")
 	}
 
 	trimmed := strings.TrimPrefix(u, "s3://")
 	parts := strings.SplitN(trimmed, "/", 2)
 	bucket = strings.TrimSpace(parts[0])
 	if bucket == "" {
-		return "", "", fmt.Errorf("s3 bucket is empty in url %q", raw)
+		return "", "", "", fmt.Errorf("s3 bucket is empty in url %q", raw)
 	}
 
 	if len(parts) == 2 {
 		key = strings.TrimPrefix(parts[1], "/")
 	}
 
-	return bucket, key, nil
+	return bucket, key, "", nil
+}
+
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
