@@ -1,16 +1,16 @@
 package drivers
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
-	copylib "github.com/otiai10/copy"
+	dirsync "github.com/Varjelus/dirsync"
 )
 
 // syncPathMirror synchronizes a source directory into dst.
-// Files present in dst but missing in src are deleted.
 func syncPathMirror(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -20,25 +20,17 @@ func syncPathMirror(src, dst string) error {
 		return &os.PathError{Op: "sync", Path: src, Err: fs.ErrInvalid}
 	}
 
-	if err := ensureDir(dst); err != nil {
-		return err
-	}
-	if err := removeDestinationTypeConflicts(src, dst); err != nil {
-		return err
-	}
-	if err := copylib.Copy(src, dst, copylib.Options{
-		OnDirExists: func(srcDir, dstDir string) copylib.DirExistsAction {
-			return copylib.Merge
-		},
-		Sync: true,
-	}); err != nil {
-		return err
-	}
-	if err := deleteMissingEntries(src, dst); err != nil {
+	if dstInfo, err := os.Stat(dst); err == nil && !dstInfo.IsDir() {
+		return fmt.Errorf("destination must be a directory: %s", dst)
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	return nil
+	if err := removeDestinationTypeConflicts(src, dst); err != nil {
+		return err
+	}
+
+	return dirsync.Sync(src, dst)
 }
 
 func removeDestinationTypeConflicts(srcDir, dstDir string) error {
@@ -70,54 +62,6 @@ func removeDestinationTypeConflicts(srcDir, dstDir string) error {
 
 		return nil
 	})
-}
-
-func deleteMissingEntries(srcDir, dstDir string) error {
-	return filepath.WalkDir(dstDir, func(dstPath string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if dstPath == dstDir {
-			return nil
-		}
-
-		rel, err := filepath.Rel(dstDir, dstPath)
-		if err != nil {
-			return err
-		}
-		srcPath := filepath.Join(srcDir, rel)
-
-		if _, err := os.Lstat(srcPath); err == nil {
-			return nil
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-
-		if err := os.RemoveAll(dstPath); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return filepath.SkipDir
-		}
-
-		return nil
-	})
-}
-
-func ensureDir(path string) error {
-	if info, err := os.Stat(path); err == nil {
-		if !info.IsDir() {
-			if err := os.RemoveAll(path); err != nil {
-				return err
-			}
-			return os.MkdirAll(path, 0o755)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.MkdirAll(path, 0o755)
 }
 
 func writeReaderToFile(r io.Reader, dst string) error {
