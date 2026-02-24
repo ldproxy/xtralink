@@ -1,10 +1,13 @@
 package drivers
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rhnvrm/simples3"
@@ -33,10 +36,10 @@ func (d *s3Driver) Sync(remote Remote) error {
 	access := strings.TrimSpace(remote.User)
 	secret := strings.TrimSpace(remote.Password)
 	if access == "" {
-		access = firstEnv("accessKey")
+		access = firstEnv("XTRA_SYNC_S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "accessKey", "ACCESS_KEY")
 	}
 	if secret == "" {
-		secret = firstEnv("secretKey")
+		secret = firstEnv("XTRA_SYNC_S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "secretKey", "SECRET_KEY")
 	}
 	if access == "" || secret == "" {
 		return fmt.Errorf("s3 requires credentials in remote.user/remote.password or environment")
@@ -51,47 +54,101 @@ func (d *s3Driver) Sync(remote Remote) error {
 		client.SetEndpoint(endpoint)
 	}
 
-	if err := os.RemoveAll(remote.ResolvedLocalPath); err != nil {
-		return fmt.Errorf("could not clean destination path (%s): %w", remote.ResolvedLocalPath, err)
-	}
-
-	if key != "" {
-		if err := d.downloadSingleObject(client, bucket, key, remote.ResolvedLocalPath); err == nil {
-			fmt.Printf("[xtra-sync][drivers/s3] synced s3://%s/%s -> %s\n", bucket, key, remote.ResolvedLocalPath)
-			return nil
-		}
-	}
-
-	prefix := key
-	if prefix != "" && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-
-	list, err := client.List(simples3.ListInput{Bucket: bucket, Prefix: prefix})
+	objects, prefix, err := d.resolveObjects(client, bucket, key)
 	if err != nil {
-		return fmt.Errorf("s3 list failed for s3://%s/%s: %w", bucket, prefix, err)
-	}
-	if len(list.Objects) == 0 {
-		return fmt.Errorf("no s3 objects found for s3://%s/%s", bucket, prefix)
+		return err
 	}
 
-	for _, obj := range list.Objects {
-		if strings.HasSuffix(obj.Key, "/") {
-			continue
+	signature := objectsSignature(objects)
+	cacheRoot := filepath.Join(os.TempDir(), "xtra-sync-cache", "s3", hashString(remote.URL+"|"+key))
+	cacheState := filepath.Join(cacheRoot, ".state")
+
+	cacheDataDir := filepath.Join(cacheRoot, "data")
+	cacheFresh := cacheHasSignature(cacheState, signature)
+	if _, err := os.Stat(cacheDataDir); os.IsNotExist(err) {
+		cacheFresh = false
+	}
+
+	if !cacheFresh {
+		if err := os.RemoveAll(cacheDataDir); err != nil {
+			return fmt.Errorf("could not clear s3 cache dir (%s): %w", cacheDataDir, err)
+		}
+		if err := os.MkdirAll(cacheDataDir, 0o755); err != nil {
+			return fmt.Errorf("could not create s3 cache dir (%s): %w", cacheDataDir, err)
 		}
 
-		rel := strings.TrimPrefix(obj.Key, prefix)
-		if rel == obj.Key {
-			rel = filepath.Base(obj.Key)
+		for _, obj := range objects {
+			if strings.HasSuffix(obj.Key, "/") {
+				continue
+			}
+
+			rel := strings.TrimPrefix(obj.Key, prefix)
+			if rel == obj.Key {
+				rel = filepath.Base(obj.Key)
+			}
+			dst := filepath.Join(cacheDataDir, rel)
+			if err := d.downloadSingleObject(client, bucket, obj.Key, dst); err != nil {
+				return fmt.Errorf("s3 download failed for %s: %w", obj.Key, err)
+			}
 		}
-		dst := filepath.Join(remote.ResolvedLocalPath, rel)
-		if err := d.downloadSingleObject(client, bucket, obj.Key, dst); err != nil {
-			return fmt.Errorf("s3 download failed for %s: %w", obj.Key, err)
+
+		if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+			return fmt.Errorf("could not create s3 cache root (%s): %w", cacheRoot, err)
 		}
+		if err := os.WriteFile(cacheState, []byte(signature), 0o644); err != nil {
+			return fmt.Errorf("could not write s3 cache state (%s): %w", cacheState, err)
+		}
+		fmt.Printf("[xtra-sync][drivers/s3] refreshed cache for s3://%s/%s\n", bucket, prefix)
+	} else {
+		fmt.Printf("[xtra-sync][drivers/s3] cache unchanged for s3://%s/%s\n", bucket, prefix)
+	}
+
+	if err := syncPathMirror(cacheDataDir, remote.ResolvedLocalPath); err != nil {
+		return fmt.Errorf("could not mirror s3 cache to target (%s -> %s): %w", cacheDataDir, remote.ResolvedLocalPath, err)
 	}
 
 	fmt.Printf("[xtra-sync][drivers/s3] synced s3://%s/%s* -> %s\n", bucket, prefix, remote.ResolvedLocalPath)
 	return nil
+}
+
+func (d *s3Driver) resolveObjects(client *simples3.S3, bucket, key string) ([]simples3.Object, string, error) {
+	if key == "" {
+		list, err := client.List(simples3.ListInput{Bucket: bucket, Prefix: ""})
+		if err != nil {
+			return nil, "", fmt.Errorf("s3 list failed for s3://%s/: %w", bucket, err)
+		}
+		if len(list.Objects) == 0 {
+			return nil, "", fmt.Errorf("no s3 objects found for s3://%s/", bucket)
+		}
+		return list.Objects, "", nil
+	}
+
+	listNoSlash, err := client.List(simples3.ListInput{Bucket: bucket, Prefix: key})
+	if err != nil {
+		return nil, "", fmt.Errorf("s3 list failed for s3://%s/%s: %w", bucket, key, err)
+	}
+	for _, obj := range listNoSlash.Objects {
+		if obj.Key == key {
+			return nil, "", fmt.Errorf("remote.path must point to a directory, but got file: %s", key)
+		}
+	}
+
+	if !strings.HasSuffix(key, "/") {
+		pref := key + "/"
+		listSlash, err := client.List(simples3.ListInput{Bucket: bucket, Prefix: pref})
+		if err != nil {
+			return nil, "", fmt.Errorf("s3 list failed for s3://%s/%s: %w", bucket, pref, err)
+		}
+		if len(listSlash.Objects) > 0 {
+			return listSlash.Objects, pref, nil
+		}
+	}
+
+	if len(listNoSlash.Objects) > 0 {
+		return listNoSlash.Objects, key, nil
+	}
+
+	return nil, "", fmt.Errorf("no s3 objects found for s3://%s/%s", bucket, key)
 }
 
 func (d *s3Driver) downloadSingleObject(client *simples3.S3, bucket, key, destination string) error {
@@ -105,6 +162,28 @@ func (d *s3Driver) downloadSingleObject(client *simples3.S3, bucket, key, destin
 	defer rc.Close()
 
 	return writeReaderToFile(rc, destination)
+}
+
+func objectsSignature(objects []simples3.Object) string {
+	parts := make([]string, 0, len(objects))
+	for _, o := range objects {
+		parts = append(parts, fmt.Sprintf("%s|%s|%d|%s", o.Key, o.ETag, o.Size, o.LastModified))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\n")
+}
+
+func cacheHasSignature(stateFile, signature string) bool {
+	raw, err := os.ReadFile(stateFile)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(raw)) == strings.TrimSpace(signature)
+}
+
+func hashString(v string) string {
+	s := sha1.Sum([]byte(v))
+	return hex.EncodeToString(s[:])
 }
 
 func parseS3Location(raw string) (bucket, key, endpoint string, err error) {
