@@ -31,8 +31,17 @@ func (d *ociDriver) Sync(remote Remote) error {
 	if err != nil {
 		return err
 	}
+	user := strings.TrimSpace(remote.User)
+	password := strings.TrimSpace(remote.Password)
+	remoteID := strings.TrimSpace(remote.ID)
+	if user == "" {
+		user = firstEnvWithRemoteID(remoteID, "user")
+	}
+	if password == "" {
+		password = firstEnvWithRemoteID(remoteID, "password")
+	}
 
-	repo, err := remoteRepository(repoRef, remote.User, remote.Password)
+	repo, err := remoteRepository(repoRef, user, password)
 	if err != nil {
 		return err
 	}

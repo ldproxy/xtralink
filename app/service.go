@@ -12,7 +12,11 @@ type Service struct {
 }
 
 func NewService() *Service {
+	dotEnvErr := loadDotEnvIfPresent()
 	logger := NewLoggerFromEnv().With().Str("component", "service").Logger()
+	if dotEnvErr != nil {
+		logger.Warn().Err(dotEnvErr).Msg("could not load .env")
+	}
 
 	return &Service{
 		drivers: drivers.NewFactoryWithLogger(logger),

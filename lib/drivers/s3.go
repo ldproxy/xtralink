@@ -36,11 +36,16 @@ func (d *s3Driver) Sync(remote Remote) error {
 
 	access := strings.TrimSpace(remote.User)
 	secret := strings.TrimSpace(remote.Password)
+	remoteID := strings.TrimSpace(remote.ID)
 	if access == "" {
-		access = firstEnv("XTRA_SYNC_S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "accessKey", "ACCESS_KEY")
+		access = firstEnvWithRemoteID(remoteID,
+			"user",
+		)
 	}
 	if secret == "" {
-		secret = firstEnv("XTRA_SYNC_S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "secretKey", "SECRET_KEY")
+		secret = firstEnvWithRemoteID(remoteID,
+			"password",
+		)
 	}
 	if access == "" || secret == "" {
 		return fmt.Errorf("s3 requires credentials in remote.user/remote.password or environment")
@@ -248,13 +253,4 @@ func parseS3Location(raw string) (bucket, key, endpoint string, err error) {
 	}
 
 	return bucket, key, "", nil
-}
-
-func firstEnv(names ...string) string {
-	for _, n := range names {
-		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
-			return v
-		}
-	}
-	return ""
 }

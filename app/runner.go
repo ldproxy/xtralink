@@ -36,6 +36,7 @@ func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger
 
 		remote := drivers.Remote{
 			Type:              r.Type,
+			ID:                r.Id,
 			URL:               r.URL,
 			Tag:               r.Tag,
 			User:              r.User,

@@ -7,6 +7,7 @@ type Settings struct {
 
 type Remote struct {
 	Type      string `yaml:"type"`
+	Id        string `yaml:"id"`
 	URL       string `yaml:"url"`
 	Tag       string `yaml:"tag,omitempty"`
 	User      string `yaml:"user,omitempty"`

@@ -36,7 +36,17 @@ func (d *gitDriver) Sync(remote Remote) error {
 		return fmt.Errorf("destination is empty")
 	}
 
-	auth := gitAuth(remote.User, remote.Password)
+	user := strings.TrimSpace(remote.User)
+	password := strings.TrimSpace(remote.Password)
+	remoteID := strings.TrimSpace(remote.ID)
+	if user == "" {
+		user = firstEnvWithRemoteID(remoteID, "user")
+	}
+	if password == "" {
+		password = firstEnvWithRemoteID(remoteID, "password")
+	}
+
+	auth := gitAuth(user, password)
 	ref := strings.TrimSpace(remote.Tag)
 	if ref == "" {
 		ref = "main"

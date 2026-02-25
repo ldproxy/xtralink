@@ -50,6 +50,7 @@ func validateAndNormalize(settings *Settings) error {
 		r := &settings.Remotes[i]
 
 		r.Type = strings.ToUpper(strings.TrimSpace(r.Type))
+		r.Id = strings.TrimSpace(r.Id)
 		r.URL = strings.TrimSpace(r.URL)
 		r.Tag = strings.TrimSpace(r.Tag)
 		r.User = strings.TrimSpace(r.User)
