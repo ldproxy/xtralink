@@ -11,12 +11,13 @@ import (
 	"strings"
 
 	"github.com/rhnvrm/simples3"
+	"github.com/rs/zerolog"
 )
 
-type s3Driver struct{}
+type s3Driver struct{ logger zerolog.Logger }
 
-func NewS3Driver() SyncDriver {
-	return &s3Driver{}
+func NewS3Driver(logger zerolog.Logger) SyncDriver {
+	return &s3Driver{logger: logger}
 }
 
 func (d *s3Driver) Sync(remote Remote) error {
@@ -106,16 +107,28 @@ func (d *s3Driver) Sync(remote Remote) error {
 		if err := os.WriteFile(cacheState, []byte(signature), 0o644); err != nil {
 			return fmt.Errorf("could not write s3 cache state (%s): %w", cacheState, err)
 		}
-		fmt.Printf("[xtra-sync][drivers/s3] refreshed cache for s3://%s/%s\n", bucket, prefix)
+		d.logger.Info().
+			Str("bucket", bucket).
+			Str("prefix", prefix).
+			Str("cache_root", cacheRoot).
+			Msg("refreshed s3 cache")
 	} else {
-		fmt.Printf("[xtra-sync][drivers/s3] cache unchanged for s3://%s/%s\n", bucket, prefix)
+		d.logger.Debug().
+			Str("bucket", bucket).
+			Str("prefix", prefix).
+			Msg("s3 cache unchanged")
 	}
 
 	if err := syncPathMirror(cacheDataDir, remote.ResolvedLocalPath); err != nil {
 		return fmt.Errorf("could not mirror s3 cache to target (%s -> %s): %w", cacheDataDir, remote.ResolvedLocalPath, err)
 	}
 
-	fmt.Printf("[xtra-sync][drivers/s3] synced s3://%s/%s* -> %s\n", bucket, prefix, remote.ResolvedLocalPath)
+	d.logger.Info().
+		Str("bucket", bucket).
+		Str("prefix", prefix).
+		Str("target", remote.ResolvedLocalPath).
+		Int("object_count", len(objects)).
+		Msg("synced s3 objects")
 	return nil
 }
 

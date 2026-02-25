@@ -1,6 +1,8 @@
 package cli
 
-import "xtra-sync/app"
+import (
+	"xtra-sync/app"
+)
 
 type CLI struct {
 	Config string  `help:"Pfad zur Steuer-Konfigurationsdatei." default:"config/exampleConfig.yaml" global:"true"`
@@ -11,5 +13,10 @@ type SyncCmd struct{}
 
 func (c *SyncCmd) Run(root *CLI) error {
 	svc := app.NewService()
-	return svc.Run(root.Config)
+	if err := svc.Run(root.Config); err != nil {
+		logger := svc.Logger()
+		logger.Error().Err(err).Str("config", root.Config).Msg("sync failed")
+		return err
+	}
+	return nil
 }

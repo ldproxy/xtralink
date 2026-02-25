@@ -15,15 +15,17 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/rs/zerolog"
 )
 
 type gitDriver struct {
 	mu           sync.Mutex
 	updatedRepos map[string]bool
+	logger       zerolog.Logger
 }
 
-func NewGitDriver() SyncDriver {
-	return &gitDriver{updatedRepos: map[string]bool{}}
+func NewGitDriver(logger zerolog.Logger) SyncDriver {
+	return &gitDriver{updatedRepos: map[string]bool{}, logger: logger}
 }
 
 func (d *gitDriver) Sync(remote Remote) error {
@@ -52,7 +54,11 @@ func (d *gitDriver) syncFullRepo(remote Remote, ref string, auth *githttp.BasicA
 		return err
 	}
 
-	fmt.Printf("[xtra-sync][drivers/git] synced full repo %s -> %s\n", remote.URL, remote.ResolvedLocalPath)
+	d.logger.Info().
+		Str("url", remote.URL).
+		Str("ref", ref).
+		Str("target", remote.ResolvedLocalPath).
+		Msg("synced full repository")
 	return nil
 }
 
@@ -81,7 +87,13 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 		return fmt.Errorf("mirror sync to %s failed: %w", remote.ResolvedLocalPath, err)
 	}
 
-	fmt.Printf("[xtra-sync][drivers/git] synced cached subpath %s -> %s (cache: %s)\n", sourcePath, remote.ResolvedLocalPath, cacheRepoDir)
+	d.logger.Info().
+		Str("url", remote.URL).
+		Str("ref", ref).
+		Str("source_path", sourcePath).
+		Str("cache_dir", cacheRepoDir).
+		Str("target", remote.ResolvedLocalPath).
+		Msg("synced cached subpath")
 	return nil
 }
 
@@ -123,7 +135,7 @@ func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.Basi
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("cannot inspect %s: %w", repoDir, err)
 		}
-		fmt.Printf("[DEBUG] Cloning repository to %s (URL: %s, Ref: %s)\n", repoDir, url, ref)
+		d.logger.Debug().Str("repo_dir", repoDir).Str("url", url).Str("ref", ref).Msg("cloning repository")
 		if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 			return fmt.Errorf("could not create parent directory for %s: %w", repoDir, err)
 		}
@@ -155,7 +167,7 @@ func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.Basi
 	localHash, err := resolveLocalRefHash(repo, refName)
 	if err == nil && localHash == remoteHash {
 		d.markRepoUpdated(repoDir)
-		fmt.Printf("[DEBUG] Pull skipped (unchanged): %s @ %s\n", repoDir, remoteHash)
+		d.logger.Debug().Str("repo_dir", repoDir).Str("remote_hash", remoteHash.String()).Msg("pull skipped (unchanged)")
 		return nil
 	}
 
@@ -164,7 +176,7 @@ func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.Basi
 	}
 
 	d.markRepoUpdated(repoDir)
-	fmt.Printf("[DEBUG] Pull successful!\n")
+	d.logger.Debug().Str("repo_dir", repoDir).Str("remote_hash", remoteHash.String()).Msg("pull successful")
 	return nil
 }
 
@@ -316,7 +328,7 @@ func cloneWithReference(url, repoDir string, ref plumbing.ReferenceName, auth *g
 		SingleBranch:  true,
 		ReferenceName: ref,
 		Auth:          auth,
-		Progress:      os.Stdout,
+		Progress:      nil,
 	})
 	return err
 }

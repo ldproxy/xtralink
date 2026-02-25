@@ -3,12 +3,13 @@ package app
 import (
 	"fmt"
 
+	"github.com/rs/zerolog"
+
 	"xtra-sync/lib/drivers"
 )
 
 // RunSync processes all configured remotes.
-// At the moment, only GIT remotes are actively executed.
-func RunSync(settings *Settings, factory *drivers.Factory) error {
+func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger) error {
 	if settings == nil {
 		return fmt.Errorf("settings is nil")
 	}
@@ -20,7 +21,13 @@ func RunSync(settings *Settings, factory *drivers.Factory) error {
 	}
 
 	for i, r := range settings.Remotes {
-		fmt.Printf("[xtra-sync] remote[%d]: type=%s url=%s path=%s target=%s\n", i, r.Type, r.URL, r.Path, r.ResolvedLocalPath)
+		logger.Info().
+			Int("remote_index", i).
+			Str("type", r.Type).
+			Str("url", r.URL).
+			Str("path", r.Path).
+			Str("target", r.ResolvedLocalPath).
+			Msg("processing remote")
 
 		driver, err := factory.For(r.Type)
 		if err != nil {

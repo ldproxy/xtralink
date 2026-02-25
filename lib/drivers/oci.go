@@ -13,16 +13,17 @@ import (
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/rs/zerolog"
 	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
-type ociDriver struct{}
+type ociDriver struct{ logger zerolog.Logger }
 
-func NewOCIDriver() SyncDriver {
-	return &ociDriver{}
+func NewOCIDriver(logger zerolog.Logger) SyncDriver {
+	return &ociDriver{logger: logger}
 }
 
 func (d *ociDriver) Sync(remote Remote) error {
@@ -109,9 +110,16 @@ func (d *ociDriver) Sync(remote Remote) error {
 		if err := os.WriteFile(manifestState, manifestRaw, 0o644); err != nil {
 			return fmt.Errorf("could not write oci manifest cache (%s): %w", manifestState, err)
 		}
-		fmt.Printf("[xtra-sync][drivers/oci] refreshed cache for %s:%s\n", repoRef, reference)
+		d.logger.Info().
+			Str("repository", repoRef).
+			Str("reference", reference).
+			Str("cache_root", cacheRoot).
+			Msg("refreshed oci cache")
 	} else {
-		fmt.Printf("[xtra-sync][drivers/oci] cache unchanged for %s:%s\n", repoRef, reference)
+		d.logger.Debug().
+			Str("repository", repoRef).
+			Str("reference", reference).
+			Msg("oci cache unchanged")
 	}
 
 	sourcePath, err := resolveOCISubpath(cacheExtracted, remote.Path)
@@ -123,7 +131,12 @@ func (d *ociDriver) Sync(remote Remote) error {
 		return fmt.Errorf("could not mirror oci cache to target (%s -> %s): %w", sourcePath, remote.ResolvedLocalPath, err)
 	}
 
-	fmt.Printf("[xtra-sync][drivers/oci] synced %s:%s (path=%s) -> %s\n", repoRef, reference, strings.TrimSpace(remote.Path), remote.ResolvedLocalPath)
+	d.logger.Info().
+		Str("repository", repoRef).
+		Str("reference", reference).
+		Str("path", strings.TrimSpace(remote.Path)).
+		Str("target", remote.ResolvedLocalPath).
+		Msg("synced oci artifact")
 	return nil
 }
 

@@ -3,6 +3,8 @@ package drivers
 import (
 	"fmt"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 // SyncDriver syncs a single remote source into a local destination.
@@ -17,10 +19,14 @@ type Factory struct {
 }
 
 func NewFactory() *Factory {
+	return NewFactoryWithLogger(zerolog.Nop())
+}
+
+func NewFactoryWithLogger(logger zerolog.Logger) *Factory {
 	return &Factory{
-		git: NewGitDriver(),
-		s3:  NewS3Driver(),
-		oci: NewOCIDriver(),
+		git: NewGitDriver(logger.With().Str("driver", "git").Logger()),
+		s3:  NewS3Driver(logger.With().Str("driver", "s3").Logger()),
+		oci: NewOCIDriver(logger.With().Str("driver", "oci").Logger()),
 	}
 }
 
