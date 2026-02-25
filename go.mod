@@ -6,8 +6,10 @@ require (
 	github.com/Varjelus/dirsync v0.0.0-20161105165804-51d44bc3b5fb
 	github.com/alecthomas/kong v1.12.1
 	github.com/go-git/go-git/v5 v5.16.5
+	github.com/opencontainers/image-spec v1.1.1
 	github.com/rhnvrm/simples3 v0.11.1
 	gopkg.in/yaml.v3 v3.0.1
+	oras.land/oras-go/v2 v2.6.0
 )
 
 require (
@@ -24,7 +26,6 @@ require (
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pjbgf/sha1cd v0.3.2 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
@@ -34,5 +35,4 @@ require (
 	golang.org/x/sync v0.14.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	oras.land/oras-go/v2 v2.6.0 // indirect
 )

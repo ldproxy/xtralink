@@ -83,8 +83,16 @@ func (d *s3Driver) Sync(remote Remote) error {
 			}
 
 			rel := strings.TrimPrefix(obj.Key, prefix)
-			if rel == obj.Key {
-				rel = filepath.Base(obj.Key)
+			if prefix != "" && rel == obj.Key {
+				return fmt.Errorf("s3 object key is outside resolved prefix: key=%q prefix=%q", obj.Key, prefix)
+			}
+			if strings.TrimSpace(rel) == "" {
+				continue
+			}
+
+			rel = filepath.FromSlash(rel)
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("resolved relative key escapes destination: key=%q rel=%q", obj.Key, rel)
 			}
 			dst := filepath.Join(cacheDataDir, rel)
 			if err := d.downloadSingleObject(client, bucket, obj.Key, dst); err != nil {
