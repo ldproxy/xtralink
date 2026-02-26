@@ -203,7 +203,7 @@ func parseOCIRepositoryAndReference(raw, tagOverride string) (string, string, er
 }
 
 func validateArtifactType(artifactType string) error {
-	const required = "application/vnd.opentofu.modulepkg"
+	const required = "application/vnd.iide.xtrapkg"
 	if strings.TrimSpace(artifactType) != required {
 		return fmt.Errorf("artifactType must be %q, got %q", required, artifactType)
 	}

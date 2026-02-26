@@ -7,6 +7,10 @@ Unterstützte Remote-Typen sind aktuell:
 - `OCI`
 - `S3`
 
+Zusätzlicher Befehl:
+
+- `push` (synchronisiert ein Remote per `id` und pusht das Ergebnis als OCI-Artifact)
+
 ## Kurz erklärt: Was macht das Tool?
 
 - Liest eine YAML-Steuerkonfiguration.
@@ -117,3 +121,21 @@ Beispiel:
 ```bash
 go run . --config config/oci-ghcr-test.yaml sync
 ```
+
+## Push-Befehl
+
+Mit `push` wählst du ein Remote über seine `id` aus der Steuer-Konfiguration aus. Dieses Remote wird zuerst wie bei `sync` lokal aktualisiert. Danach wird der lokale Inhalt als ZIP verpackt und als OCI-Artifact gepusht.
+
+- Ziel-Registry: `docker.ci.interactive-instruments.de/xtrasync/<image>`
+- Artifact Type: `application/vnd.iide.xtrapkg`
+
+Beispiel:
+
+```bash
+go run . --config config/all.yaml push --id bplan --image my-bplan --tag latest
+```
+
+Hinweis: Credentials für den Push werden wie bei den Treibern aufgelöst:
+
+1. `user` / `password` im Remote-Block
+2. sonst `user_<id>` / `password_<id>` aus Env bzw. `.env`
