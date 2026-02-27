@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"xtra-sync/lib/drivers"
+	"github.com/ldproxy/xtrasync/lib/drivers"
 )
 
 const (
