@@ -13,7 +13,7 @@ type Remote struct {
 	User      string `yaml:"user,omitempty"`
 	Password  string `yaml:"password,omitempty"`
 	Path      string `yaml:"path,omitempty"`
-	LocalPath string `yaml:"localPath"`
+	LocalPath string `yaml:"localPath,omitempty"`
 
 	ResolvedLocalPath string `yaml:"-"`
 }

@@ -70,8 +70,11 @@ func validateAndNormalize(settings *Settings) error {
 		if r.URL == "" {
 			return fmt.Errorf("remotes[%d].url is required", i)
 		}
+		if r.Id == "" {
+			return fmt.Errorf("remotes[%d].id is required", i)
+		}
 		if r.LocalPath == "" {
-			return fmt.Errorf("remotes[%d].localPath is required", i)
+			r.LocalPath = r.Id
 		}
 
 		if r.Type == "GIT" && r.Tag == "" {

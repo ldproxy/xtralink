@@ -39,13 +39,14 @@ remotes:
     user: "..." # optional
     password: "..." # optional
     path: "..." # optional, directory subpath only
-    localPath: "..." # target path relative to targetDir
+    localPath: "..." # optional, target path relative to targetDir (default: id)
 ```
 
 ### Important fields
 
 - `targetDir`: Base target directory for all remotes.
-- `localPath`: Target path relative to `targetDir` (required per remote).
+- `localPath`: Optional target path relative to `targetDir`.
+  - Default: the remote `id`.
 - `path`: optional subdirectory in the remote content.
   - Must point to a **directory** (not a single file).
 - `id`: Used to resolve matching credentials from env (`user_<id>`, `password_<id>`).
