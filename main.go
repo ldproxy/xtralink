@@ -16,6 +16,7 @@ func main() {
 }
 
 // go run . --config config/exampleConfig.yaml sync
-// go build -o xtrasync . && ./xtrasync --config config/exampleConfig.yaml sync
+// go build -o xtra-sync . && ./xtra-sync --config config/exampleConfig.yaml sync
+// go run . --config config/all.yaml push --id bplan --image test-bplan --tag latest
 
 // Cache Ordner: echo $TMPDIR.   + /xtrasync-cache/git

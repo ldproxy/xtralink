@@ -12,10 +12,16 @@ type SyncDriver interface {
 	Sync(remote Remote) error
 }
 
+// PushDriver pushes prepared content to a remote target.
+type PushDriver interface {
+	Push(push PushRequest) error
+}
+
 type Factory struct {
-	git SyncDriver
-	s3  SyncDriver
-	oci SyncDriver
+	git     SyncDriver
+	s3      SyncDriver
+	oci     SyncDriver
+	ociPush PushDriver
 }
 
 func NewFactory() *Factory {
@@ -23,10 +29,12 @@ func NewFactory() *Factory {
 }
 
 func NewFactoryWithLogger(logger zerolog.Logger) *Factory {
+	oci := NewOCIDriver(logger.With().Str("driver", "oci").Logger())
 	return &Factory{
-		git: NewGitDriver(logger.With().Str("driver", "git").Logger()),
-		s3:  NewS3Driver(logger.With().Str("driver", "s3").Logger()),
-		oci: NewOCIDriver(logger.With().Str("driver", "oci").Logger()),
+		git:     NewGitDriver(logger.With().Str("driver", "git").Logger()),
+		s3:      NewS3Driver(logger.With().Str("driver", "s3").Logger()),
+		oci:     oci,
+		ociPush: oci,
 	}
 }
 
@@ -40,5 +48,14 @@ func (f *Factory) For(remoteType string) (SyncDriver, error) {
 		return f.oci, nil
 	default:
 		return nil, fmt.Errorf("unsupported remote type: %s", remoteType)
+	}
+}
+
+func (f *Factory) PusherFor(targetType string) (PushDriver, error) {
+	switch strings.ToUpper(strings.TrimSpace(targetType)) {
+	case "OCI":
+		return f.ociPush, nil
+	default:
+		return nil, fmt.Errorf("unsupported push target type: %s", targetType)
 	}
 }

@@ -10,3 +10,13 @@ type Remote struct {
 	Path              string
 	ResolvedLocalPath string
 }
+
+type PushRequest struct {
+	Repository   string
+	Reference    string
+	User         string
+	Password     string
+	Payload      []byte
+	PayloadMedia string
+	ArtifactType string
+}

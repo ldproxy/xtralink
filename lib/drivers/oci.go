@@ -2,6 +2,7 @@ package drivers
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/rs/zerolog"
 	"oras.land/oras-go/v2/registry"
@@ -22,7 +25,7 @@ import (
 
 type ociDriver struct{ logger zerolog.Logger }
 
-func NewOCIDriver(logger zerolog.Logger) SyncDriver {
+func NewOCIDriver(logger zerolog.Logger) *ociDriver {
 	return &ociDriver{logger: logger}
 }
 
@@ -139,6 +142,82 @@ func (d *ociDriver) Sync(remote Remote) error {
 		Str("path", strings.TrimSpace(remote.Path)).
 		Str("target", remote.ResolvedLocalPath).
 		Msg("synced oci artifact")
+	return nil
+}
+
+func (d *ociDriver) Push(push PushRequest) error {
+	repository := strings.TrimSpace(push.Repository)
+	if repository == "" {
+		return fmt.Errorf("oci push repository is empty")
+	}
+	reference := strings.TrimSpace(push.Reference)
+	if reference == "" {
+		reference = "latest"
+	}
+	if len(push.Payload) == 0 {
+		return fmt.Errorf("oci push payload is empty")
+	}
+	payloadMedia := strings.TrimSpace(push.PayloadMedia)
+	if payloadMedia == "" {
+		payloadMedia = "archive/zip"
+	}
+	artifactType := strings.TrimSpace(push.ArtifactType)
+	if artifactType == "" {
+		artifactType = "application/vnd.iide.xtrapkg"
+	}
+
+	repo, err := remoteRepository(repository, push.User, push.Password)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	configBytes := []byte("{}")
+	configDesc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageConfig,
+		Digest:    digest.FromBytes(configBytes),
+		Size:      int64(len(configBytes)),
+	}
+	if err := repo.Push(ctx, configDesc, bytes.NewReader(configBytes)); err != nil {
+		return fmt.Errorf("push config blob failed: %w", err)
+	}
+
+	layerDesc := ocispec.Descriptor{
+		MediaType: payloadMedia,
+		Digest:    digest.FromBytes(push.Payload),
+		Size:      int64(len(push.Payload)),
+	}
+	if err := repo.Push(ctx, layerDesc, bytes.NewReader(push.Payload)); err != nil {
+		return fmt.Errorf("push layer blob failed: %w", err)
+	}
+
+	manifest := ocispec.Manifest{
+		Versioned:    specs.Versioned{SchemaVersion: 2},
+		MediaType:    ocispec.MediaTypeImageManifest,
+		ArtifactType: artifactType,
+		Config:       configDesc,
+		Layers:       []ocispec.Descriptor{layerDesc},
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("could not encode oci manifest: %w", err)
+	}
+
+	manifestDesc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    digest.FromBytes(manifestBytes),
+		Size:      int64(len(manifestBytes)),
+	}
+
+	if err := repo.PushReference(ctx, manifestDesc, bytes.NewReader(manifestBytes), reference); err != nil {
+		return fmt.Errorf("push manifest failed: %w", err)
+	}
+
+	d.logger.Info().
+		Str("repository", repository).
+		Str("reference", reference).
+		Msg("pushed oci artifact")
+
 	return nil
 }
 

@@ -3,20 +3,13 @@ package app
 import (
 	"archive/zip"
 	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/opencontainers/go-digest"
-	"github.com/opencontainers/image-spec/specs-go"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/auth"
-	"oras.land/oras-go/v2/registry/remote/retry"
+	"xtra-sync/lib/drivers"
 )
 
 const (
@@ -54,12 +47,20 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 	repoRef := fmt.Sprintf("%s/%s", xtraPkgRegistryBase, strings.TrimSpace(imageName))
 
 	user, password := resolveRemoteCredentials(*r)
-	repo, err := pushRepository(repoRef, user, password)
+	pusher, err := s.drivers.PusherFor("OCI")
 	if err != nil {
 		return err
 	}
 
-	if err := pushXtraPackage(context.Background(), repo, targetTag, zipBytes); err != nil {
+	if err := pusher.Push(drivers.PushRequest{
+		Repository:   repoRef,
+		Reference:    targetTag,
+		User:         user,
+		Password:     password,
+		Payload:      zipBytes,
+		PayloadMedia: "archive/zip",
+		ArtifactType: xtraPkgArtifactType,
+	}); err != nil {
 		return err
 	}
 
@@ -93,71 +94,6 @@ func findRemoteByID(settings *Settings, remoteID string) (*Remote, error) {
 
 func resolveRemoteCredentials(r Remote) (string, string) {
 	return strings.TrimSpace(r.User), strings.TrimSpace(r.Password)
-}
-
-func pushRepository(ref, user, password string) (*remote.Repository, error) {
-	repo, err := remote.NewRepository(ref)
-	if err != nil {
-		return nil, fmt.Errorf("invalid oci repository %q: %w", ref, err)
-	}
-
-	if strings.TrimSpace(user) != "" || strings.TrimSpace(password) != "" {
-		repo.Client = &auth.Client{
-			Client: retry.DefaultClient,
-			Cache:  auth.NewCache(),
-			Credential: auth.StaticCredential(repo.Reference.Registry, auth.Credential{
-				Username: strings.TrimSpace(user),
-				Password: strings.TrimSpace(password),
-			}),
-		}
-	}
-
-	return repo, nil
-}
-
-func pushXtraPackage(ctx context.Context, repo *remote.Repository, reference string, zipPayload []byte) error {
-	configBytes := []byte("{}")
-	configDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageConfig,
-		Digest:    digest.FromBytes(configBytes),
-		Size:      int64(len(configBytes)),
-	}
-	if err := repo.Push(ctx, configDesc, bytes.NewReader(configBytes)); err != nil {
-		return fmt.Errorf("push config blob failed: %w", err)
-	}
-
-	layerDesc := ocispec.Descriptor{
-		MediaType: "archive/zip",
-		Digest:    digest.FromBytes(zipPayload),
-		Size:      int64(len(zipPayload)),
-	}
-	if err := repo.Push(ctx, layerDesc, bytes.NewReader(zipPayload)); err != nil {
-		return fmt.Errorf("push layer blob failed: %w", err)
-	}
-
-	manifest := ocispec.Manifest{
-		Versioned:    specs.Versioned{SchemaVersion: 2},
-		MediaType:    ocispec.MediaTypeImageManifest,
-		ArtifactType: xtraPkgArtifactType,
-		Config:       configDesc,
-		Layers:       []ocispec.Descriptor{layerDesc},
-	}
-	manifestBytes, err := jsonMarshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	manifestDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageManifest,
-		Digest:    digest.FromBytes(manifestBytes),
-		Size:      int64(len(manifestBytes)),
-	}
-
-	if err := repo.PushReference(ctx, manifestDesc, bytes.NewReader(manifestBytes), reference); err != nil {
-		return fmt.Errorf("push manifest failed: %w", err)
-	}
-
-	return nil
 }
 
 func zipDirectoryToBytes(sourceDir string) ([]byte, error) {
@@ -219,12 +155,4 @@ func zipDirectoryToBytes(sourceDir string) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func jsonMarshal(v interface{}) ([]byte, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("could not encode oci manifest: %w", err)
-	}
-	return b, nil
 }
