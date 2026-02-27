@@ -146,7 +146,10 @@ func (d *ociDriver) Sync(remote Remote) error {
 }
 
 func (d *ociDriver) Push(push PushRequest) error {
-	repository := strings.TrimSpace(push.Repository)
+	repository, err := normalizeOCIRepository(push.Repository)
+	if err != nil {
+		return err
+	}
 	if repository == "" {
 		return fmt.Errorf("oci push repository is empty")
 	}
@@ -219,6 +222,26 @@ func (d *ociDriver) Push(push PushRequest) error {
 		Msg("pushed oci artifact")
 
 	return nil
+}
+
+func normalizeOCIRepository(raw string) (string, error) {
+	input := strings.TrimSpace(raw)
+	if input == "" {
+		return "", nil
+	}
+
+	input = strings.TrimPrefix(input, "oci://")
+	input = strings.TrimPrefix(input, "OCI://")
+
+	ref, err := registry.ParseReference(input)
+	if err != nil {
+		return "", fmt.Errorf("invalid oci repository %q: %w", raw, err)
+	}
+	if err := ref.ValidateRepository(); err != nil {
+		return "", fmt.Errorf("invalid oci repository %q: %w", raw, err)
+	}
+
+	return ref.Registry + "/" + ref.Repository, nil
 }
 
 func remoteRepository(ref, user, password string) (*remote.Repository, error) {
