@@ -118,11 +118,15 @@ S3 note: Access Key / Secret must be provided as `user` / `password`.
 
 ## Run
 
+`--config` is optional. If omitted, the default config file is `.xtrasync.yml`.
+
+Default config example:
+
 ```bash
-go run . --config config/<your-file>.yaml sync
+go run . sync
 ```
 
-Example:
+Custom config example:
 
 ```bash
 go run . --config config/oci-ghcr-test.yaml sync
@@ -138,6 +142,14 @@ packaged as ZIP and pushed as an OCI artifact.
 - Artifact Type: `application/vnd.iide.xtrapkg`
 
 Example:
+
+```bash
+go run . push --id bplan --image my-bplan --tag latest
+```
+
+This push example also uses the default `.xtrasync.yml` config file.
+
+Custom config file example:
 
 ```bash
 go run . --config config/all.yaml push --id bplan --image my-bplan --tag latest

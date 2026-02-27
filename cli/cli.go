@@ -5,7 +5,7 @@ import (
 )
 
 type CLI struct {
-	Config string  `help:"Path to the control configuration file." default:"config/exampleConfig.yaml" global:"true"`
+	Config string  `help:"Path to the control configuration file." default:".xtrasync.yml" global:"true"`
 	Sync   SyncCmd `cmd:"" help:"Loads the control configuration and starts synchronization."`
 	Push   PushCmd `cmd:"" help:"Synchronizes a remote by ID and pushes the result as an OCI artifact."`
 }
