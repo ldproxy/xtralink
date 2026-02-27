@@ -17,6 +17,6 @@ func main() {
 
 // go run . --config config/exampleConfig.yaml sync
 // go build -o xtrasync . && ./xtrasync --config config/exampleConfig.yaml sync
-// go run . --config config/all.yaml push --id bplan --image test-bplan --tag latest
+// go run . --config config/all.yaml push --id bplan --image oci://docker.ci.interactive-instruments.de/xtrasync/test-bplan --tag latest
 
 // Cache directory: echo $TMPDIR + /xtrasync-cache/git
