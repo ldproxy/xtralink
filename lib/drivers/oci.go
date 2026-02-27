@@ -73,7 +73,7 @@ func (d *ociDriver) Sync(remote Remote) error {
 		return fmt.Errorf("first layer mediaType must be archive/zip, got: %s", firstLayer.MediaType)
 	}
 
-	cacheRoot := filepath.Join(os.TempDir(), "xtra-sync-cache", "oci", hashStringOCI(repoRef+"|"+reference))
+	cacheRoot := filepath.Join(os.TempDir(), "xtrasync-cache", "oci", hashStringOCI(repoRef+"|"+reference))
 	layerDigestState := filepath.Join(cacheRoot, ".layer-digest")
 	manifestState := filepath.Join(cacheRoot, "manifest.json")
 	cacheZip := filepath.Join(cacheRoot, "layer.zip")

@@ -5,7 +5,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"xtra-sync/lib/drivers"
+	"github.com/ldproxy/xtrasync/lib/drivers"
 )
 
 // RunSync processes all configured remotes.

@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"xtra-sync/app"
+	"github.com/ldproxy/xtrasync/app"
 )
 
 type CLI struct {

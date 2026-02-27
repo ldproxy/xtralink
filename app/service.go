@@ -3,7 +3,7 @@ package app
 import (
 	"github.com/rs/zerolog"
 
-	"xtra-sync/lib/drivers"
+	"github.com/ldproxy/xtrasync/lib/drivers"
 )
 
 type Service struct {
