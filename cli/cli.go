@@ -5,15 +5,15 @@ import (
 )
 
 type CLI struct {
-	Config string  `help:"Pfad zur Steuer-Konfigurationsdatei." default:"config/exampleConfig.yaml" global:"true"`
-	Sync   SyncCmd `cmd:"" help:"Lädt die Steuer-Config und startet die Synchronisierung."`
-	Push   PushCmd `cmd:"" help:"Synchronisiert ein Remote per ID und pusht das Ergebnis als OCI-Artifact."`
+	Config string  `help:"Path to the control configuration file." default:"config/exampleConfig.yaml" global:"true"`
+	Sync   SyncCmd `cmd:"" help:"Loads the control configuration and starts synchronization."`
+	Push   PushCmd `cmd:"" help:"Synchronizes a remote by ID and pushes the result as an OCI artifact."`
 }
 
 type SyncCmd struct{}
 type PushCmd struct {
-	RemoteID  string `name:"id" help:"ID des Quell-Remotes aus der Steuer-Konfiguration." required:""`
-	ImageName string `name:"image" help:"Ziel-Image-Name unter docker.ci.interactive-instruments.de/xtrasync/." required:""`
+	RemoteID  string `name:"id" help:"ID of the source remote from the control configuration." required:""`
+	ImageName string `name:"image" help:"Target image name under docker.ci.interactive-instruments.de/xtrasync/." required:""`
 	Tag       string `name:"tag" help:"OCI-Tag (default: latest)."`
 }
 

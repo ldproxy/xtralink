@@ -1,33 +1,33 @@
 # xtrasync
 
-`xtrasync` synchronisiert Inhalte aus externen Quellen in ein lokales Zielverzeichnis.
-Unterstützte Remote-Typen sind aktuell:
+`xtrasync` synchronizes content from external sources into a local target directory.
+Currently supported remote types:
 
 - `GIT`
 - `OCI`
 - `S3`
 
-Zusätzlicher Befehl:
+Additional command:
 
-- `push` (synchronisiert ein Remote per `id` und pusht das Ergebnis als OCI-Artifact)
+- `push` (synchronizes a remote by `id` and pushes the result as an OCI artifact)
 
-## Kurz erklärt: Was macht das Tool?
+## What does the tool do?
 
-- Liest eine YAML-Steuerkonfiguration.
-- Verarbeitet alle Einträge unter `remotes`.
-- Holt/aktualisiert die Inhalte je nach Typ.
-- Spiegelt das Ergebnis in dein Ziel (`targetDir` + `localPath`).
+- Reads a YAML control configuration.
+- Processes all entries under `remotes`.
+- Fetches/updates content depending on the remote type.
+- Mirrors the result into your target (`targetDir` + `localPath`).
 
-## Wo liegt die Steuer-Konfiguration?
+## Where should the control configuration be stored?
 
-Du kannst die Datei frei ablegen, üblich ist z. B. unter `config/`.
+You can place the file anywhere; using `config/` is a common convention.
 
-Beispiel:
+Example:
 
 - `config/exampleConfig.yaml`
 - `config/oci-ghcr-test.yaml`
 
-## Konfigurationsschema
+## Configuration schema
 
 ```yaml
 targetDir: .
@@ -35,41 +35,41 @@ remotes:
   - type: GIT|OCI|S3
     id: "..."
     url: "..."
-    tag: "..." # optional (z. B. Branch/Tag/Ref)
+    tag: "..." # optional (e.g. branch/tag/ref)
     user: "..." # optional
     password: "..." # optional
-    path: "..." # optional, nur Verzeichnis-Subpath
-    localPath: "..." # Zielpfad relativ zu targetDir
+    path: "..." # optional, directory subpath only
+    localPath: "..." # target path relative to targetDir
 ```
 
-### Wichtige Felder
+### Important fields
 
-- `targetDir`: Basis-Zielordner für alle Remotes.
-- `localPath`: Ziel relativ zu `targetDir` (Pflichtfeld je Remote).
-- `path`: optionaler Unterordner im Remote-Inhalt.
-  - Muss auf ein **Verzeichnis** zeigen (keine einzelne Datei).
-- `id`: Mithilfe der ID wird der passende User und das passende Passwort aus .ENV geholt
+- `targetDir`: Base target directory for all remotes.
+- `localPath`: Target path relative to `targetDir` (required per remote).
+- `path`: optional subdirectory in the remote content.
+  - Must point to a **directory** (not a single file).
+- `id`: Used to resolve matching credentials from env (`user_<id>`, `password_<id>`).
 
 ## Credentials (GIT / OCI / S3)
 
-Für alle drei Treiber (`GIT`, `OCI`, `S3`) gilt dieselbe Reihenfolge:
+For all three drivers (`GIT`, `OCI`, `S3`), the same precedence applies:
 
-1. `user` / `password` direkt im jeweiligen Remote-Block (Steuer-Konfig).
-2. Falls dort leer: Environment-Variablen `user_<id>` / `password_<id>`.
+1. `user` / `password` directly in the corresponding remote block (control config).
+2. If empty there: environment variables `user_<id>` / `password_<id>`.
 
-Die Auflösung von `user_<id>` / `password_<id>` passiert zentral beim Laden der
-Konfiguration (`app/load.go`). Die Treiber arbeiten danach nur noch mit den
-bereits aufgelösten Werten in `remote.user` und `remote.password`.
+Resolution of `user_<id>` / `password_<id>` is performed centrally while loading
+the configuration (`app/load.go`). Drivers then only use already-resolved values
+in `remote.user` and `remote.password`.
 
-Beispiel bei `id: bplan`:
+Example for `id: bplan`:
 
 - `user_bplan`
 - `password_bplan`
 
-Wenn im Projektordner eine `.env`-Datei liegt, liest `xtrasync` sie automatisch ein.
-Du kannst deine Zugangsdaten also einfach dort eintragen (z. B. `user_bplan=...`), ohne vorher im Terminal etwas mit `export` setzen zu müssen.
+If a `.env` file exists in the project directory, `xtrasync` loads it automatically.
+So you can define credentials there (e.g. `user_bplan=...`) without needing shell `export` commands.
 
-## Beispiele pro Typ
+## Examples by type
 
 ### GIT
 
@@ -98,7 +98,8 @@ remotes:
     localPath: config/synced/oci-talos-config
 ```
 
-Hinweis OCI: Aktuell wird ein Artefakt unterstützt, bei dem der **erste Layer** das relevante ZIP mit Nutzdaten enthält.
+OCI note: currently the tool supports artifacts where the **first layer** contains
+the relevant payload ZIP.
 
 ### S3
 
@@ -112,34 +113,36 @@ remotes:
     localPath: config/synced/s3-data
 ```
 
-Hinweis S3: Access Key / Secret müssen als `user` / `password` angegeben werden.
+S3 note: Access Key / Secret must be provided as `user` / `password`.
 
-## Ausführen
+## Run
 
 ```bash
-go run . --config config/<deine-datei>.yaml sync
+go run . --config config/<your-file>.yaml sync
 ```
 
-Beispiel:
+Example:
 
 ```bash
 go run . --config config/oci-ghcr-test.yaml sync
 ```
 
-## Push-Befehl
+## Push command
 
-Mit `push` wählst du ein Remote über seine `id` aus der Steuer-Konfiguration aus. Dieses Remote wird zuerst wie bei `sync` lokal aktualisiert. Danach wird der lokale Inhalt als ZIP verpackt und als OCI-Artifact gepusht.
+With `push`, you select a remote by `id` from the control configuration. That
+remote is first synchronized locally (same as `sync`). Then the local content is
+packaged as ZIP and pushed as an OCI artifact.
 
-- Ziel-Registry: `docker.ci.interactive-instruments.de/xtrasync/<image>`
+- Target registry: `docker.ci.interactive-instruments.de/xtrasync/<image>`
 - Artifact Type: `application/vnd.iide.xtrapkg`
 
-Beispiel:
+Example:
 
 ```bash
 go run . --config config/all.yaml push --id bplan --image my-bplan --tag latest
 ```
 
-Hinweis: Credentials für den Push werden wie bei den Treibern aufgelöst:
+Note: Push credentials are resolved the same way as in the drivers:
 
-1. `user` / `password` im Remote-Block
-2. sonst `user_<id>` / `password_<id>` aus Env bzw. `.env`
+1. `user` / `password` in the remote block
+2. otherwise `user_<id>` / `password_<id>` from env or `.env`
