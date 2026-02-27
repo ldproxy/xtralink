@@ -36,19 +36,8 @@ func (d *s3Driver) Sync(remote Remote) error {
 
 	access := strings.TrimSpace(remote.User)
 	secret := strings.TrimSpace(remote.Password)
-	remoteID := strings.TrimSpace(remote.ID)
-	if access == "" {
-		access = firstEnvWithRemoteID(remoteID,
-			"user",
-		)
-	}
-	if secret == "" {
-		secret = firstEnvWithRemoteID(remoteID,
-			"password",
-		)
-	}
 	if access == "" || secret == "" {
-		return fmt.Errorf("s3 requires credentials in remote.user/remote.password or environment")
+		return fmt.Errorf("s3 requires credentials in resolved remote.user/remote.password")
 	}
 
 	client := simples3.New(region, access, secret)

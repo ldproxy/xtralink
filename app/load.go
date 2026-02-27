@@ -78,8 +78,24 @@ func validateAndNormalize(settings *Settings) error {
 			r.Tag = "main"
 		}
 
+		if r.User == "" {
+			r.User = envByRemoteID(r.Id, "user")
+		}
+		if r.Password == "" {
+			r.Password = envByRemoteID(r.Id, "password")
+		}
+
 		r.ResolvedLocalPath = filepath.Join(settings.TargetDir, r.LocalPath)
 	}
 
 	return nil
+}
+
+func envByRemoteID(remoteID, base string) string {
+	id := strings.TrimSpace(remoteID)
+	b := strings.TrimSpace(base)
+	if id == "" || b == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(b + "_" + id))
 }

@@ -92,24 +92,7 @@ func findRemoteByID(settings *Settings, remoteID string) (*Remote, error) {
 }
 
 func resolveRemoteCredentials(r Remote) (string, string) {
-	user := strings.TrimSpace(r.User)
-	password := strings.TrimSpace(r.Password)
-	if user == "" {
-		user = firstEnvWithRemoteID(strings.TrimSpace(r.Id), "user")
-	}
-	if password == "" {
-		password = firstEnvWithRemoteID(strings.TrimSpace(r.Id), "password")
-	}
-	return user, password
-}
-
-func firstEnvWithRemoteID(remoteID, base string) string {
-	id := strings.TrimSpace(remoteID)
-	b := strings.TrimSpace(base)
-	if id == "" || b == "" {
-		return ""
-	}
-	return strings.TrimSpace(os.Getenv(b + "_" + id))
+	return strings.TrimSpace(r.User), strings.TrimSpace(r.Password)
 }
 
 func pushRepository(ref, user, password string) (*remote.Repository, error) {

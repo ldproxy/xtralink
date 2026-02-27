@@ -38,13 +38,6 @@ func (d *gitDriver) Sync(remote Remote) error {
 
 	user := strings.TrimSpace(remote.User)
 	password := strings.TrimSpace(remote.Password)
-	remoteID := strings.TrimSpace(remote.ID)
-	if user == "" {
-		user = firstEnvWithRemoteID(remoteID, "user")
-	}
-	if password == "" {
-		password = firstEnvWithRemoteID(remoteID, "password")
-	}
 
 	auth := gitAuth(user, password)
 	ref := strings.TrimSpace(remote.Tag)

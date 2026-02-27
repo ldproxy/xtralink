@@ -57,6 +57,10 @@ Für alle drei Treiber (`GIT`, `OCI`, `S3`) gilt dieselbe Reihenfolge:
 1. `user` / `password` direkt im jeweiligen Remote-Block (Steuer-Konfig).
 2. Falls dort leer: Environment-Variablen `user_<id>` / `password_<id>`.
 
+Die Auflösung von `user_<id>` / `password_<id>` passiert zentral beim Laden der
+Konfiguration (`app/load.go`). Die Treiber arbeiten danach nur noch mit den
+bereits aufgelösten Werten in `remote.user` und `remote.password`.
+
 Beispiel bei `id: bplan`:
 
 - `user_bplan`

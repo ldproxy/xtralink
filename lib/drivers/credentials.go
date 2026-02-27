@@ -13,12 +13,3 @@ func firstEnv(names ...string) string {
 	}
 	return ""
 }
-
-func firstEnvWithRemoteID(remoteID, base string) string {
-	if id := strings.TrimSpace(remoteID); id != "" && strings.TrimSpace(base) != "" {
-		if v := strings.TrimSpace(os.Getenv(base + "_" + id)); v != "" {
-			return v
-		}
-	}
-	return ""
-}
