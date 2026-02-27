@@ -7,7 +7,6 @@
 *.dll
 *.so
 *.dylib
-/config
 
 # Test binary, built with `go test -c`
 *.test
@@ -31,6 +30,7 @@ go.work.sum
 # clineignore file
 .clineignore
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# app specific
+config/
+data/
+.xtrasync.yml
