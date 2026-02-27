@@ -13,7 +13,7 @@ type CLI struct {
 type SyncCmd struct{}
 type PushCmd struct {
 	RemoteID  string `name:"id" help:"ID of the source remote from the control configuration." required:""`
-	ImageName string `name:"image" help:"Target image name under docker.ci.interactive-instruments.de/xtrasync/." required:""`
+	ImageName string `name:"image" help:"Target OCI repository (including registry), e.g. ghcr.io/org/name or docker.ci.interactive-instruments.de/xtrasync/name." required:""`
 	Tag       string `name:"tag" help:"OCI-Tag (default: latest)."`
 }
 

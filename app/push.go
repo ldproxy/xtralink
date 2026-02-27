@@ -14,7 +14,6 @@ import (
 
 const (
 	xtraPkgArtifactType = "application/vnd.iide.xtrapkg"
-	xtraPkgRegistryBase = "docker.ci.interactive-instruments.de/xtrasync"
 )
 
 func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) error {
@@ -44,7 +43,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 	if strings.TrimSpace(targetTag) == "" {
 		targetTag = "latest"
 	}
-	repoRef := fmt.Sprintf("%s/%s", xtraPkgRegistryBase, strings.TrimSpace(imageName))
+	repoRef := strings.TrimSpace(imageName)
 
 	user, password := resolveRemoteCredentials(*r)
 	pusher, err := s.drivers.PusherFor("OCI")

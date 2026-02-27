@@ -138,13 +138,14 @@ With `push`, you select a remote by `id` from the control configuration. That
 remote is first synchronized locally (same as `sync`). Then the local content is
 packaged as ZIP and pushed as an OCI artifact.
 
-- Target registry: `docker.ci.interactive-instruments.de/xtrasync/<image>`
+- Target registry/repository is provided as part of `--image`
+  (e.g. `ghcr.io/org/name` or `docker.ci.interactive-instruments.de/xtrasync/name`)
 - Artifact Type: `application/vnd.iide.xtrapkg`
 
 Example:
 
 ```bash
-go run . push --id bplan --image my-bplan --tag latest
+go run . push --id bplan --image ghcr.io/my-org/my-bplan --tag latest
 ```
 
 This push example also uses the default `.xtrasync.yml` config file.
@@ -152,7 +153,7 @@ This push example also uses the default `.xtrasync.yml` config file.
 Custom config file example:
 
 ```bash
-go run . --config config/all.yaml push --id bplan --image my-bplan --tag latest
+go run . --config config/all.yaml push --id bplan --image docker.ci.interactive-instruments.de/xtrasync/my-bplan --tag latest
 ```
 
 Note: Push credentials are resolved the same way as in the drivers:
