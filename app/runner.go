@@ -16,14 +16,14 @@ func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger
 	if factory == nil {
 		return fmt.Errorf("drivers factory is nil")
 	}
-	if len(settings.Remotes) == 0 {
+	if len(settings.Packages) == 0 {
 		return fmt.Errorf("no remotes configured")
 	}
-	if pkgId != "" && !settings.HasRemote(pkgId) {
+	if pkgId != "" && !settings.HasPackage(pkgId) {
 		return fmt.Errorf("remote with id '%s' not found", pkgId)
 	}
 
-	for i, r := range settings.Remotes {
+	for i, r := range settings.Packages {
 		if pkgId != "" && r.Id != pkgId {
 			continue
 		}

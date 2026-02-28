@@ -37,7 +37,7 @@ func validateAndNormalize(settings *Settings) error {
 		return errors.New("settings is nil")
 	}
 
-	if len(settings.Remotes) == 0 {
+	if len(settings.Packages) == 0 {
 		return errors.New("at least one remote is required")
 	}
 
@@ -46,8 +46,8 @@ func validateAndNormalize(settings *Settings) error {
 		settings.TargetDir = "."
 	}
 
-	for i := range settings.Remotes {
-		r := &settings.Remotes[i]
+	for i := range settings.Packages {
+		r := &settings.Packages[i]
 
 		r.Type = strings.ToUpper(strings.TrimSpace(r.Type))
 		r.Id = strings.TrimSpace(r.Id)

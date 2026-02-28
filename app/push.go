@@ -73,7 +73,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 	return nil
 }
 
-func findRemoteByID(settings *Settings, remoteID string) (*Remote, error) {
+func findRemoteByID(settings *Settings, remoteID string) (*Package, error) {
 	if settings == nil {
 		return nil, fmt.Errorf("settings is nil")
 	}
@@ -82,16 +82,16 @@ func findRemoteByID(settings *Settings, remoteID string) (*Remote, error) {
 		return nil, fmt.Errorf("remote id is empty")
 	}
 
-	for i := range settings.Remotes {
-		if strings.TrimSpace(settings.Remotes[i].Id) == id {
-			return &settings.Remotes[i], nil
+	for i := range settings.Packages {
+		if strings.TrimSpace(settings.Packages[i].Id) == id {
+			return &settings.Packages[i], nil
 		}
 	}
 
 	return nil, fmt.Errorf("remote with id %q not found", id)
 }
 
-func resolveRemoteCredentials(r Remote) (string, string) {
+func resolveRemoteCredentials(r Package) (string, string) {
 	return strings.TrimSpace(r.User), strings.TrimSpace(r.Password)
 }
 

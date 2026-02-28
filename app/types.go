@@ -1,11 +1,11 @@
 package app
 
 type Settings struct {
-	TargetDir string   `yaml:"targetDir,omitempty"`
-	Remotes   []Remote `yaml:"remotes"`
+	TargetDir string    `yaml:"targetDir,omitempty"`
+	Packages  []Package `yaml:"packages"`
 }
 
-type Remote struct {
+type Package struct {
 	Type      string `yaml:"type"`
 	Id        string `yaml:"id"`
 	URL       string `yaml:"url"`
@@ -18,8 +18,8 @@ type Remote struct {
 	ResolvedLocalPath string `yaml:"-"`
 }
 
-func (s *Settings) HasRemote(id string) bool {
-	for _, r := range s.Remotes {
+func (s *Settings) HasPackage(id string) bool {
+	for _, r := range s.Packages {
 		if r.Id == id {
 			return true
 		}
