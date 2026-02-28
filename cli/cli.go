@@ -1,44 +1,30 @@
 package cli
 
 import (
-	"github.com/ldproxy/xtrasync/app"
+	"fmt"
+
+	"github.com/alecthomas/kong"
 )
 
+type Globals struct {
+	Config  string      `short:"c" help:"Path to the configuration file" default:".xtrasync.yml"`
+	Verbose uint        `short:"v" type:"counter" help:"Enable verbose mode"`
+	Version VersionFlag `name:"version" help:"Print version information"`
+}
+
+type VersionFlag string
+
+func (v VersionFlag) Decode(ctx *kong.DecodeContext) error { return nil }
+func (v VersionFlag) IsBool() bool                         { return true }
+
+func (v VersionFlag) BeforeApply(app *kong.Kong, vars kong.Vars) error {
+	fmt.Println(vars["version"])
+	app.Exit(0)
+	return nil
+}
+
 type CLI struct {
-	Config string  `help:"Path to the control configuration file." default:".xtrasync.yml" global:"true"`
-	Sync   SyncCmd `cmd:"" help:"Loads the control configuration and starts synchronization."`
-	Push   PushCmd `cmd:"" help:"Synchronizes a remote by ID and pushes the result as an OCI artifact."`
-}
+	Globals
 
-type SyncCmd struct{}
-type PushCmd struct {
-	RemoteID  string `name:"id" help:"ID of the source remote from the control configuration." required:""`
-	ImageName string `name:"image" help:"Target OCI repository (including registry), e.g. ghcr.io/org/name or docker.ci.interactive-instruments.de/xtrasync/name." required:""`
-	Tag       string `name:"tag" help:"OCI-Tag (default: latest)."`
-}
-
-func (c *SyncCmd) Run(root *CLI) error {
-	svc := app.NewService()
-	if err := svc.Run(root.Config); err != nil {
-		logger := svc.Logger()
-		logger.Error().Err(err).Str("config", root.Config).Msg("sync failed")
-		return err
-	}
-	return nil
-}
-
-func (c *PushCmd) Run(root *CLI) error {
-	svc := app.NewService()
-	if err := svc.RunPush(root.Config, c.RemoteID, c.ImageName, c.Tag); err != nil {
-		logger := svc.Logger()
-		logger.Error().
-			Err(err).
-			Str("config", root.Config).
-			Str("remote_id", c.RemoteID).
-			Str("image", c.ImageName).
-			Str("tag", c.Tag).
-			Msg("push failed")
-		return err
-	}
-	return nil
+	Pkg Pkg `cmd:"" help:"Manage packages"`
 }

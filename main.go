@@ -6,17 +6,47 @@ import (
 	"github.com/ldproxy/xtrasync/cli"
 )
 
-func main() {
-	var appCLI cli.CLI
-	ctx := kong.Parse(&appCLI,
-		kong.Name("xtrasync"),
-		kong.Description("Synchronizes configuration sources (MVP: Git)"),
-	)
-	ctx.FatalIfErrorf(ctx.Run())
+const (
+	// Name is the name of the application.
+	Name = "xtrasync"
+	// Description is the description of the application.
+	Description = "A glue tool for distributed applications"
+)
+
+var gitTag string
+var gitSha string
+var gitBranch = "unknown"
+
+func version() string {
+	if len(gitTag) > 0 {
+		return gitTag
+	} else if len(gitSha) > 0 {
+		return gitBranch + "-" + gitSha
+	}
+
+	return "DEV"
 }
 
-// go run . --config config/exampleConfig.yaml sync
-// go build -o xtrasync . && ./xtrasync --config config/exampleConfig.yaml sync
-// go run . --config config/all.yaml push --id bplan --image oci://docker.ci.interactive-instruments.de/xtrasync/test-bplan --tag latest
+func main() {
+	version := version()
+	cli := cli.CLI{}
 
-// Cache directory: echo $TMPDIR + /xtrasync-cache/git
+	ctx := kong.Parse(&cli,
+		kong.Name(Name),
+		kong.Description(Description),
+		kong.UsageOnError(),
+		kong.ConfigureHelp(kong.HelpOptions{
+			Compact:             true,
+			FlagsLast:           true,
+			NoExpandSubcommands: false,
+		}),
+		kong.Vars{
+			"version": version,
+		})
+
+	ctx.Bind(&cli.Globals)
+
+	err := ctx.Run()
+
+	ctx.FatalIfErrorf(err)
+}
