@@ -31,7 +31,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 		return err
 	}
 
-	if err := RunSync(&Settings{TargetDir: settings.TargetDir, Remotes: []Remote{*r}}, s.drivers, s.logger); err != nil {
+	if err := RunSync(settings, s.drivers, s.logger, r.Id); err != nil {
 		return err
 	}
 

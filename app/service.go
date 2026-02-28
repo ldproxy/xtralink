@@ -24,13 +24,13 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) Run(configPath string) error {
+func (s *Service) Run(configPath, pkgId string) error {
 	settings, err := LoadSettings(configPath)
 	if err != nil {
 		return err
 	}
 
-	return RunSync(settings, s.drivers, s.logger)
+	return RunSync(settings, s.drivers, s.logger, pkgId)
 }
 
 func (s *Service) Logger() zerolog.Logger {

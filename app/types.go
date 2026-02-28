@@ -17,3 +17,12 @@ type Remote struct {
 
 	ResolvedLocalPath string `yaml:"-"`
 }
+
+func (s *Settings) HasRemote(id string) bool {
+	for _, r := range s.Remotes {
+		if r.Id == id {
+			return true
+		}
+	}
+	return false
+}

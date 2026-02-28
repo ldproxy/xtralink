@@ -9,7 +9,7 @@ import (
 )
 
 // RunSync processes all configured remotes.
-func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger) error {
+func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger, pkgId string) error {
 	if settings == nil {
 		return fmt.Errorf("settings is nil")
 	}
@@ -19,8 +19,15 @@ func RunSync(settings *Settings, factory *drivers.Factory, logger zerolog.Logger
 	if len(settings.Remotes) == 0 {
 		return fmt.Errorf("no remotes configured")
 	}
+	if pkgId != "" && !settings.HasRemote(pkgId) {
+		return fmt.Errorf("remote with id '%s' not found", pkgId)
+	}
 
 	for i, r := range settings.Remotes {
+		if pkgId != "" && r.Id != pkgId {
+			continue
+		}
+
 		logger.Info().
 			Int("remote_index", i).
 			Str("type", r.Type).
