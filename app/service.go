@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/mew-sh/dotenv"
 	"github.com/rs/zerolog"
 
 	"github.com/ldproxy/xtrasync/lib/drivers"
@@ -12,11 +13,8 @@ type Service struct {
 }
 
 func NewService() *Service {
-	dotEnvErr := loadDotEnvIfPresent()
+	dotenv.Load()
 	logger := NewLoggerFromEnv().With().Str("component", "service").Logger()
-	if dotEnvErr != nil {
-		logger.Warn().Err(dotEnvErr).Msg("could not load .env")
-	}
 
 	return &Service{
 		drivers: drivers.NewFactoryWithLogger(logger),

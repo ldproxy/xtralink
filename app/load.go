@@ -95,8 +95,8 @@ func validateAndNormalize(settings *Settings) error {
 }
 
 func envByRemoteID(remoteID, base string) string {
-	id := strings.TrimSpace(remoteID)
-	b := strings.TrimSpace(base)
+	id := strings.ToUpper(strings.TrimSpace(remoteID))
+	b := strings.ToUpper(strings.TrimSpace(base))
 	if id == "" || b == "" {
 		return ""
 	}

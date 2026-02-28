@@ -7,16 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/lib/envutil"
+	"github.com/mew-sh/dotenv"
 	"github.com/rs/zerolog"
 )
 
 func init() {
-	loadDotEnvForIntegrationTests()
+	dotenv.Load("../../.env")
 }
 
 func TestIntegrationSync_Git(t *testing.T) {
-	url := envValue("XTRASYNC_IT_GIT_URL")
+	url := os.Getenv("XTRASYNC_IT_GIT_URL")
 	if url == "" {
 		t.Skip("set XTRASYNC_IT_GIT_URL to run git integration test")
 	}
@@ -27,10 +27,10 @@ func TestIntegrationSync_Git(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "GIT",
 		URL:               url,
-		Tag:               firstNonEmpty(envValue("XTRASYNC_IT_GIT_TAG"), "main"),
-		Path:              envValue("XTRASYNC_IT_GIT_PATH"),
-		User:              envValue("XTRASYNC_IT_GIT_USER"),
-		Password:          envValue("XTRASYNC_IT_GIT_PASSWORD"),
+		Tag:               firstNonEmpty(os.Getenv("XTRASYNC_IT_GIT_TAG"), "main"),
+		Path:              os.Getenv("XTRASYNC_IT_GIT_PATH"),
+		User:              os.Getenv("XTRASYNC_IT_GIT_USER"),
+		Password:          os.Getenv("XTRASYNC_IT_GIT_PASSWORD"),
 		ResolvedLocalPath: target,
 	})
 	if err != nil {
@@ -43,13 +43,13 @@ func TestIntegrationSync_Git(t *testing.T) {
 }
 
 func TestIntegrationSync_S3(t *testing.T) {
-	url := envValue("XTRASYNC_IT_S3_URL")
+	url := os.Getenv("XTRASYNC_IT_S3_URL")
 	if url == "" {
 		t.Skip("set XTRASYNC_IT_S3_URL to run s3 integration test")
 	}
 
-	user := envValue("XTRASYNC_IT_S3_USER")
-	password := envValue("XTRASYNC_IT_S3_PASSWORD")
+	user := os.Getenv("XTRASYNC_IT_S3_USER")
+	password := os.Getenv("XTRASYNC_IT_S3_PASSWORD")
 	if user == "" || password == "" {
 		t.Skip("set XTRASYNC_IT_S3_USER and XTRASYNC_IT_S3_PASSWORD to run s3 integration test")
 	}
@@ -60,7 +60,7 @@ func TestIntegrationSync_S3(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "S3",
 		URL:               url,
-		Path:              envValue("XTRASYNC_IT_S3_PATH"),
+		Path:              os.Getenv("XTRASYNC_IT_S3_PATH"),
 		User:              user,
 		Password:          password,
 		ResolvedLocalPath: target,
@@ -75,7 +75,7 @@ func TestIntegrationSync_S3(t *testing.T) {
 }
 
 func TestIntegrationSync_OCI(t *testing.T) {
-	url := envValue("XTRASYNC_IT_OCI_URL")
+	url := os.Getenv("XTRASYNC_IT_OCI_URL")
 	if url == "" {
 		t.Skip("set XTRASYNC_IT_OCI_URL to run oci integration test")
 	}
@@ -86,10 +86,10 @@ func TestIntegrationSync_OCI(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "OCI",
 		URL:               url,
-		Tag:               firstNonEmpty(envValue("XTRASYNC_IT_OCI_TAG"), "latest"),
-		Path:              envValue("XTRASYNC_IT_OCI_PATH"),
-		User:              envValue("XTRASYNC_IT_OCI_USER"),
-		Password:          envValue("XTRASYNC_IT_OCI_PASSWORD"),
+		Tag:               firstNonEmpty(os.Getenv("XTRASYNC_IT_OCI_TAG"), "latest"),
+		Path:              os.Getenv("XTRASYNC_IT_OCI_PATH"),
+		User:              os.Getenv("XTRASYNC_IT_OCI_USER"),
+		Password:          os.Getenv("XTRASYNC_IT_OCI_PASSWORD"),
 		ResolvedLocalPath: target,
 	})
 	if err != nil {
@@ -122,18 +122,4 @@ func firstNonEmpty(value, fallback string) string {
 		return fallback
 	}
 	return v
-}
-
-func envValue(name string) string {
-	v := strings.TrimSpace(os.Getenv(name))
-	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
-			return strings.TrimSpace(v[1 : len(v)-1])
-		}
-	}
-	return v
-}
-
-func loadDotEnvForIntegrationTests() {
-	_ = envutil.LoadDotEnvIfPresent("../../.env")
 }
