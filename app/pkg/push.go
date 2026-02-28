@@ -1,4 +1,4 @@
-package app
+package pkg
 
 import (
 	"archive/zip"
@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ldproxy/xtrasync/app"
 	"github.com/ldproxy/xtrasync/lib/drivers"
 )
 
@@ -16,22 +17,17 @@ const (
 	xtraPkgArtifactType = "application/vnd.iide.xtrapkg"
 )
 
-func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) error {
+func Push(appCtx *app.AppContext, remoteID, imageName, targetTag string) error {
 	if strings.TrimSpace(imageName) == "" {
 		return fmt.Errorf("image name is empty")
 	}
 
-	settings, err := LoadSettings(configPath)
+	r, err := findRemoteByID(appCtx.Settings, remoteID)
 	if err != nil {
 		return err
 	}
 
-	r, err := findRemoteByID(settings, remoteID)
-	if err != nil {
-		return err
-	}
-
-	if err := RunSync(settings, s.drivers, s.logger, r.Id); err != nil {
+	if err := Pull(appCtx, r.Id); err != nil {
 		return err
 	}
 
@@ -46,7 +42,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 	repoRef := strings.TrimSpace(imageName)
 
 	user, password := resolveRemoteCredentials(*r)
-	pusher, err := s.drivers.PusherFor("OCI")
+	pusher, err := appCtx.Drivers.PusherFor("OCI")
 	if err != nil {
 		return err
 	}
@@ -63,7 +59,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 		return err
 	}
 
-	s.logger.Info().
+	appCtx.Logger.Info().
 		Str("source_id", r.Id).
 		Str("source_path", r.ResolvedLocalPath).
 		Str("target_repository", repoRef).
@@ -73,7 +69,7 @@ func (s *Service) RunPush(configPath, remoteID, imageName, targetTag string) err
 	return nil
 }
 
-func findRemoteByID(settings *Settings, remoteID string) (*Package, error) {
+func findRemoteByID(settings *app.Settings, remoteID string) (*app.Package, error) {
 	if settings == nil {
 		return nil, fmt.Errorf("settings is nil")
 	}
@@ -91,7 +87,7 @@ func findRemoteByID(settings *Settings, remoteID string) (*Package, error) {
 	return nil, fmt.Errorf("remote with id %q not found", id)
 }
 
-func resolveRemoteCredentials(r Package) (string, string) {
+func resolveRemoteCredentials(r app.Package) (string, string) {
 	return strings.TrimSpace(r.User), strings.TrimSpace(r.Password)
 }
 
