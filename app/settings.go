@@ -65,7 +65,7 @@ func validateAndNormalize(settings *Settings) error {
 	}
 
 	if len(settings.Packages) == 0 {
-		return errors.New("at least one remote is required")
+		return errors.New("at least one package is required")
 	}
 
 	settings.TargetDir = strings.TrimSpace(settings.TargetDir)
@@ -86,19 +86,19 @@ func validateAndNormalize(settings *Settings) error {
 		r.LocalPath = strings.TrimSpace(r.LocalPath)
 
 		if r.Type == "" {
-			return fmt.Errorf("remotes[%d].type is required", i)
+			return fmt.Errorf("packages[%d].type is required", i)
 		}
 		switch r.Type {
 		case "GIT", "OCI", "S3":
 		default:
-			return fmt.Errorf("remotes[%d].type=%q is invalid (allowed: GIT, OCI, S3)", i, r.Type)
+			return fmt.Errorf("packages[%d].type=%q is invalid (allowed: GIT, OCI, S3)", i, r.Type)
 		}
 
 		if r.URL == "" {
-			return fmt.Errorf("remotes[%d].url is required", i)
+			return fmt.Errorf("packages[%d].url is required", i)
 		}
 		if r.Id == "" {
-			return fmt.Errorf("remotes[%d].id is required", i)
+			return fmt.Errorf("packages[%d].id is required", i)
 		}
 		if r.LocalPath == "" {
 			r.LocalPath = r.Id
