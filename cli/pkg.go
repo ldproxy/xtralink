@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/ldproxy/xtrasync/app"
@@ -8,8 +10,9 @@ import (
 )
 
 type Pkg struct {
-	Pull PullCmd `cmd:"" help:"Synchronize packages"`
-	Push PushCmd `cmd:"" help:"Push a package to an OCI registry"`
+	Pull    PullCmd    `cmd:"" help:"Synchronize packages"`
+	Push    PushCmd    `cmd:"" help:"Push a package to an OCI registry"`
+	Inspect InspectCmd `cmd:"" help:"Inspect one package and print analysis as JSON"`
 }
 
 type PullCmd struct {
@@ -55,4 +58,24 @@ func (c *PushCmd) Run(root *CLI, appCtx *app.AppContext) error {
 func (c *PushCmd) Help() string {
 	//return "Examples:\n xtrasync pkg push my-package-id example.com/repo/image:tag"
 	return "Example: xtrasync pkg push my-package-id example.com/repo/image:tag"
+}
+
+type InspectCmd struct {
+	Id string `arg:"" help:"Package id" required:""`
+}
+
+func (c *InspectCmd) Run(appCtx *app.AppContext) error {
+	result, err := pkg.Inspect(appCtx, c.Id)
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("inspect failed")
+		return err
+	}
+
+	raw, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not encode inspect result as json: %w", err)
+	}
+
+	fmt.Println(string(raw))
+	return nil
 }

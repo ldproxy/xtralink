@@ -11,6 +11,7 @@ Main commands live under `pkg`:
 
 - `pkg pull` (synchronize configured packages)
 - `pkg push` (synchronize one package by `id` and push it as OCI artifact)
+- `pkg inspect` (analyze one package and print JSON report)
 
 ## What does the tool do?
 
@@ -144,6 +145,17 @@ Use built binary instead of `go run`:
 ```bash
 go build -o xtrasync . && ./xtrasync pkg pull
 ```
+
+Inspect one package (currently: entities count for services/providers):
+
+```bash
+go run . pkg inspect bplan
+```
+
+`pkg inspect` JSON already contains placeholders for upcoming sections:
+
+- `substitutions` (currently empty)
+- `data-sources` (currently empty)
 
 ## Push command (`pkg push`)
 
