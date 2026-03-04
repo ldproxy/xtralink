@@ -61,7 +61,7 @@ func initialize(ctx *kong.Context, config string, verbosity uint, version string
 	settings, err := app.LoadSettings(config)
 
 	if err != nil {
-		panic(err)
+		ctx.FatalIfErrorf(err)
 	}
 
 	appCtx := app.NewAppContext(Name, version, verbosity, settings)

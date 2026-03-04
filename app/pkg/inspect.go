@@ -61,26 +61,17 @@ func Inspect(appCtx *app.AppContext, pkgID string) (*InspectResult, error) {
 	}
 	defer cleanup()
 
-	entities, err := inspectEntities(inspectRoot)
+	inspector, err := resolveInspector("ldp")
 	if err != nil {
 		return nil, err
 	}
 
-	substitutions, err := inspectSubstitutions(inspectRoot)
+	result, err := inspector.Inspect(inspectRoot)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s inspect failed: %w", inspector.Name(), err)
 	}
 
-	dataSources, err := inspectDataSources(inspectRoot, substitutions)
-	if err != nil {
-		return nil, err
-	}
-
-	return &InspectResult{
-		Entities:      entities,
-		Substitutions: substitutions,
-		DataSources:   dataSources,
-	}, nil
+	return result, nil
 }
 
 func syncPackageToInspectTemp(appCtx *app.AppContext, p app.Package) (string, func(), error) {
