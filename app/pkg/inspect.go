@@ -13,7 +13,7 @@ import (
 type InspectResult struct {
 	Entities      InspectEntities       `json:"entities"`
 	Substitutions []InspectSubstitution `json:"substitutions"`
-	DataSources   []map[string]any      `json:"data-sources"`
+	DataSources   []InspectDataSource   `json:"data-sources"`
 }
 
 type InspectEntities struct {
@@ -26,6 +26,20 @@ type InspectSubstitution struct {
 	Path    string  `json:"path"`
 	Name    string  `json:"name"`
 	Default *string `json:"default,omitempty"`
+}
+
+type InspectDataSource struct {
+	Type       string                 `json:"type"`
+	Name       string                 `json:"name"`
+	Paths      []string               `json:"paths,omitempty"`
+	Connection *InspectDataSourceConn `json:"connection,omitempty"`
+	Usages     []string               `json:"usages"`
+}
+
+type InspectDataSourceConn struct {
+	Host     string `json:"host"`
+	User     string `json:"user"`
+	Password string `json:"password"`
 }
 
 func Inspect(appCtx *app.AppContext, pkgID string) (*InspectResult, error) {
@@ -57,10 +71,15 @@ func Inspect(appCtx *app.AppContext, pkgID string) (*InspectResult, error) {
 		return nil, err
 	}
 
+	dataSources, err := inspectDataSources(inspectRoot, substitutions)
+	if err != nil {
+		return nil, err
+	}
+
 	return &InspectResult{
 		Entities:      entities,
 		Substitutions: substitutions,
-		DataSources:   []map[string]any{},
+		DataSources:   dataSources,
 	}, nil
 }
 

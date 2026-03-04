@@ -146,16 +146,24 @@ Use built binary instead of `go run`:
 go build -o xtrasync . && ./xtrasync pkg pull
 ```
 
-Inspect one package (currently: entities count for services/providers):
+Inspect one package and print a JSON report:
 
 ```bash
 go run . pkg inspect bplan
 ```
 
-`pkg inspect` JSON already contains placeholders for upcoming sections:
+`pkg inspect` currently reports:
 
-- `substitutions` (currently empty)
-- `data-sources` (currently empty)
+- `entities`
+  - service/provider type counts
+- `substitutions`
+  - all detected `${...}` placeholders in YAML files
+  - includes `file`, `path`, `name`, and optional `default`
+- `data-sources`
+  - detected sources from `resources/features` and `db`
+  - usage detection based on provider configs under `entities/instances/providers`
+  - source classes currently include `GPKG`, `PGIS/DUMP`, and `PGIS/REF`
+  - when resolving data-source related values from YAML, substitution defaults are used if available
 
 ## Push command (`pkg push`)
 
