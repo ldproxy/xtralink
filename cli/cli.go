@@ -26,5 +26,6 @@ func (v VersionFlag) BeforeApply(app *kong.Kong, vars kong.Vars) error {
 type CLI struct {
 	Globals
 
-	Pkg Pkg `cmd:"" help:"Manage packages"`
+	Pkg  Pkg  `cmd:"" help:"Manage packages"`
+	Jobs Jobs `cmd:"" help:"Manage jobs"`
 }

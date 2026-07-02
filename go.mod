@@ -6,9 +6,11 @@ require (
 	github.com/Varjelus/dirsync v0.0.0-20161105165804-51d44bc3b5fb
 	github.com/alecthomas/kong v1.12.1
 	github.com/go-git/go-git/v5 v5.16.5
+	github.com/google/uuid v1.6.0
 	github.com/mew-sh/dotenv v0.0.0-20250706192342-dfbc445d205b
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rhnvrm/simples3 v0.11.1
 	github.com/rs/zerolog v1.34.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -20,6 +22,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/Varjelus/kopsa v0.0.0-20151003065653-33789fe1970a // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
@@ -34,6 +37,7 @@ require (
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect

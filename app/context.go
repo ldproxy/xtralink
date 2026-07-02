@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ldproxy/xtrasync/lib/drivers"
+	"github.com/ldproxy/xtrasync/lib/jobs"
 	"github.com/rs/zerolog"
 )
 
@@ -19,6 +20,7 @@ type AppContext struct {
 	Settings *Settings
 
 	Drivers *drivers.Factory
+	Jobs    jobs.Backend
 }
 
 // NewAppContext returns an initialized context.
@@ -48,12 +50,18 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 		logger = zerolog.New(os.Stdout).Level(logLevel).With().Timestamp().Logger()
 	}
 
+	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
 	c := AppContext{
 		Logger:   logger,
 		Version:  version,
 		Dev:      isDev,
 		Settings: settings,
 		Drivers:  drivers.NewFactoryWithLogger(logger),
+		Jobs:     jobs.NewRedisBackend(redisAddr),
 	}
 
 	return &c
