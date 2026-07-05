@@ -3,9 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ldproxy/xtrasync/app"
 	"github.com/ldproxy/xtrasync/app/jobs"
+	"github.com/ldproxy/xtrasync/app/jobs/counterdemo"
+	"github.com/ldproxy/xtrasync/app/jobs/tileseedingdemo"
 )
 
 type Jobs struct {
@@ -13,6 +16,66 @@ type Jobs struct {
 	Status JobsStatusCmd `cmd:"" help:"Print status/progress of a job set"`
 	Get    JobsGetCmd    `cmd:"" help:"Print full details of a job set as JSON"`
 	List   JobsListCmd   `cmd:"" help:"List all job sets"`
+	Demo   JobsDemo      `cmd:"" help:"Run demo job processors (not for production use)"`
+}
+
+type JobsDemo struct {
+	Tileseeding JobsDemoTileseedingCmd `cmd:"" help:"Simulated tile-seeding run: setup splits into sub-jobs, workers fake-render them, cleanup writes a report"`
+	Counter     JobsDemoCounterCmd     `cmd:"" help:"Minimal single-job run: no setup/cleanup, no progressDetails - proves the core doesn't assume the tile-seeding shape"`
+}
+
+type JobsDemoCounterCmd struct {
+	Steps   int           `help:"How many steps to count" default:"5"`
+	Step    time.Duration `name:"step-duration" help:"Simulated time per step" default:"200ms"`
+	FailAt  int           `name:"fail-at" help:"Simulate a permanent failure at this step (0 = never)" default:"0"`
+	Timeout time.Duration `help:"Give up waiting for the job set to finish after this" default:"30s"`
+}
+
+func (c *JobsDemoCounterCmd) Run(appCtx *app.AppContext) error {
+	result, err := counterdemo.Run(appCtx, counterdemo.Options{
+		Steps:        c.Steps,
+		StepDuration: c.Step,
+		FailAt:       c.FailAt,
+		Timeout:      c.Timeout,
+	})
+	if result != nil {
+		if raw, encErr := json.MarshalIndent(result, "", "  "); encErr == nil {
+			fmt.Println(string(raw))
+		}
+	}
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Msg("counter demo failed")
+		return err
+	}
+	return nil
+}
+
+type JobsDemoTileseedingCmd struct {
+	Entity   string        `help:"Entity/provider id" default:"demo-tiles"`
+	Tilesets []string      `help:"Tileset names" default:"vineyards" sep:","`
+	Timeout  time.Duration `help:"Give up waiting for the job set to finish after this" default:"30s"`
+	Tile     time.Duration `name:"tile-duration" help:"Simulated time per tile" default:"50ms"`
+	FollowUp bool          `name:"with-follow-up" help:"Attach a second job set as a followUp, to exercise that code path too"`
+}
+
+func (c *JobsDemoTileseedingCmd) Run(appCtx *app.AppContext) error {
+	result, err := tileseedingdemo.Run(appCtx, tileseedingdemo.Options{
+		Entity:       c.Entity,
+		TileSets:     c.Tilesets,
+		Timeout:      c.Timeout,
+		TileDuration: c.Tile,
+		WithFollowUp: c.FollowUp,
+	})
+	if result != nil {
+		if raw, encErr := json.MarshalIndent(result, "", "  "); encErr == nil {
+			fmt.Println(string(raw))
+		}
+	}
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Msg("tile-seeding demo failed")
+		return err
+	}
+	return nil
 }
 
 type JobsPushCmd struct {

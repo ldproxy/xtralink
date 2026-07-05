@@ -17,7 +17,11 @@ type Backend interface {
 	// Take removes and returns the highest-priority open Job of the given
 	// type, marking it started for executor.
 	Take(jobType, executor string) (*Job, error)
-	// Done marks a taken Job as finished successfully.
+	// Done marks a taken Job as finished successfully. If the Job belongs to
+	// a JobSet, this also runs the setup/cleanup/followUps decision (Diagram
+	// §1/§2, mirrors JobSet.done(job) in Java): a finishing regular sub-Job
+	// may push the cleanup Job once the set is done, and a finishing cleanup
+	// Job pushes the set's followUps.
 	Done(jobID string) error
 	// Error marks a taken Job as failed; if retry is true it is re-queued
 	// instead.
@@ -28,6 +32,19 @@ type Backend interface {
 	GetOpen(jobType string) ([]*Job, error)
 	GetTaken() ([]*Job, error)
 	GetFailed() ([]*Job, error)
+
+	// StartJobSet sets JobSet.startedAt to now, if not already started
+	// (Diagram: JobSet.start()). Called by the Runner for the first
+	// non-setup Job of a set that gets taken.
+	StartJobSet(jobSetID string) error
+	// SetProgressDetails overwrites JobSet.progressDetails wholesale. This is
+	// the one-time, type-specific initial build (Diagram §4: "der initiale
+	// Aufbau von progressDetails ... bleibt typspezifisch im Setup") - ongoing
+	// per-delta updates go through InitJobSet/UpdateJobSet/UpdateJob instead.
+	SetProgressDetails(jobSetID string, details any) error
+	// SetOutput writes a single JobSet.outputs entry - typically called once
+	// by a cleanup step to publish its result (Diagram §5.4).
+	SetOutput(jobSetID, key string, value OutputValue) error
 
 	// InitJobSet grows JobSet.total by totalDelta and applies the same delta
 	// to progressDetails via the declarative updates (Diagram §4).

@@ -175,21 +175,27 @@ func NewJobSet(id, jobType string, priority int, label, entity string, inputs js
 // Status derives the OGC-facing lifecycle status (Diagram §5.1).
 func (j *JobSet) Status() Status {
 	switch {
+	case j.FinishedAt > 0:
+		// Checked first, ahead of StartedAt: a permanently failed setup Job
+		// (RedisBackend.forceFail) can finish a JobSet that was never
+		// formally "started" (no sub-Job was ever taken). Finished always
+		// wins, regardless of whether it was ever running.
+		if j.HasErrors() {
+			return StatusFailed
+		}
+		return StatusSuccessful
 	case j.StartedAt <= 0:
 		return StatusAccepted
-	case j.FinishedAt <= 0:
-		return StatusRunning
-	case j.HasErrors():
-		return StatusFailed
 	default:
-		return StatusSuccessful
+		return StatusRunning
 	}
 }
 
 // Message returns a short human-readable status text (Diagram §5.1/§5.3).
-// Phase-specific messages (e.g. naming the tileset currently being seeded)
-// require the JobRunner/JobProcessor machinery and are not yet implemented;
-// this is a generic placeholder per status.
+// This is a generic placeholder per status; phase-specific messages (e.g.
+// naming the tileset currently being seeded, per the diagram's example)
+// would need the JobSet to carry some notion of "current phase", which
+// nothing in the model does yet.
 func (j *JobSet) Message() string {
 	switch j.Status() {
 	case StatusAccepted:
