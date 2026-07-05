@@ -261,6 +261,9 @@ func (b *RedisBackend) onJobDone(ctx context.Context, job *Job) error {
 		if err := b.syncEmbeddedJob(ctx, js.ID, "cleanup", job); err != nil {
 			return err
 		}
+		if err := b.clearProgressDetailsOnSuccess(ctx, js.ID); err != nil {
+			return err
+		}
 		return b.pushFollowUps(js)
 	}
 
@@ -387,7 +390,27 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, js *JobSet) error {
 	if js.Cleanup != nil {
 		return b.PushJob(js.Cleanup, false)
 	}
+	// No cleanup step, so this is the final outcome - decide now instead of
+	// waiting for a cleanup Job that will never come.
+	if err := b.clearProgressDetailsOnSuccess(ctx, js.ID); err != nil {
+		return err
+	}
 	return b.pushFollowUps(js)
+}
+
+// clearProgressDetailsOnSuccess discards JobSet.progressDetails once a
+// JobSet has fully finished without errors (Diagram §5.4: "wird beim
+// cleanup verworfen") - it is deliberately kept intact on failure, for
+// diagnosis (Diagram §5.5: "intern aufgehoben für Diagnose").
+func (b *RedisBackend) clearProgressDetailsOnSuccess(ctx context.Context, jobSetID string) error {
+	js, err := b.getJobSet(ctx, jobSetID)
+	if err != nil || js == nil {
+		return err
+	}
+	if js.HasErrors() {
+		return nil
+	}
+	return b.jsonSet(ctx, keySet+jobSetID, "$.progressDetails", nil)
 }
 
 // forceFail marks a JobSet as finished-with-errors regardless of isDone() -
