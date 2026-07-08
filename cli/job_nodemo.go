@@ -7,7 +7,7 @@ package cli
 // entirely, not merely non-functional. The example job processors
 // (app/jobs/tileseedingdemo, app/jobs/counterdemo) are proof-of-concept code
 // for showing lib/jobs generalizes beyond tile-seeding, not meant to ship in
-// production - see Umsetzungsstand-Job-Queue.md.
+// production.
 type Job struct {
 	JobBase
 }

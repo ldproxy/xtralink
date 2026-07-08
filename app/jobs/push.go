@@ -11,7 +11,7 @@ import (
 )
 
 // Push builds a new JobSet from CLI input and pushes it onto the queue. A
-// caller pushes a JobSet (the "Auftrag"), not a raw Job (Diagram §1).
+// caller pushes a JobSet (the "order"), not a raw Job.
 func Push(appCtx *app.AppContext, jobType, label, entity string, priority int, inputsRaw string) (*jobs.JobSet, error) {
 	var inputs json.RawMessage
 	if inputsRaw != "" {

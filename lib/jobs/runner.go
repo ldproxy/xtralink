@@ -114,7 +114,7 @@ func (r *Runner) orderedTypes() []string {
 
 // process runs a single Job through its processor and applies the result,
 // including the JobSet.start() call for the first non-setup Job of a set
-// (Diagram: mirrors handleJobSetStartup in JobRunner.java).
+// (mirrors handleJobSetStartup in JobRunner.java).
 func (r *Runner) process(ctx context.Context, job *Job, processor JobProcessor) {
 	var jobSet *JobSet
 	if job.PartOf != "" {

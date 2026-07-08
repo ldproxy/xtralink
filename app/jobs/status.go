@@ -16,7 +16,7 @@ type StatusView struct {
 	Message string      `json:"message"`
 }
 
-// Status looks up a JobSet by id and returns its derived status (Diagram §5.1).
+// Status looks up a JobSet by id and returns its derived status.
 func Status(appCtx *app.AppContext, id string) (*StatusView, error) {
 	js, err := appCtx.Jobs.GetSet(id)
 	if err != nil {

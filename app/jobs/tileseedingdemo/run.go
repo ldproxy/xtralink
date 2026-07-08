@@ -21,9 +21,9 @@ type Options struct {
 	Timeout      time.Duration
 	TileDuration time.Duration
 	// WithFollowUp attaches a second, independent tile-seeding JobSet as a
-	// followUp of the main one (Diagram §2/§4: getFollowUps()), to exercise
-	// the followUps-push path in RedisBackend.onJobDone, which nothing else
-	// in this demo triggers otherwise.
+	// followUp of the main one, to exercise the followUps-push path in
+	// RedisBackend.onJobDone, which nothing else in this demo triggers
+	// otherwise.
 	WithFollowUp bool
 }
 
@@ -120,7 +120,7 @@ func Run(appCtx *app.AppContext, opts Options) (*Result, error) {
 }
 
 // waitForCompletion polls a JobSet until it is finished. finishedAt is set
-// as soon as every sub-Job is done (Diagram: mirrors JobSet.done()), which
+// as soon as every sub-Job is done (mirrors JobSet.done() in Java), which
 // happens *before* the cleanup Job that was just pushed actually runs - so
 // this also gives cleanup a brief grace period to write its output before
 // treating the run as over. If a permanently failed setup Job forced

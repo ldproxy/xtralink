@@ -1,6 +1,5 @@
-// Package jobs implements the internal Job/JobSet model and queue backend
-// described in Job-Queue-Example-Diagram.md, §5 (the generalized model with
-// inputs/outputs/progressDetails), analogous to xtraplatform-jobs in Java.
+// Package jobs implements the internal Job/JobSet queue model
+// (inputs/outputs/progressDetails), analogous to xtraplatform-jobs in Java.
 package jobs
 
 import (
@@ -8,7 +7,7 @@ import (
 	"time"
 )
 
-// Status is the derived lifecycle status of a JobSet (Diagram §5.1).
+// Status is the derived lifecycle status of a JobSet.
 type Status string
 
 const (
@@ -19,7 +18,7 @@ const (
 )
 
 // ProgressOp is the operation applied to a progressDetails JSON path when a
-// sub-Job reports progress (Diagram §4).
+// sub-Job reports progress.
 type ProgressOp string
 
 const (
@@ -28,15 +27,14 @@ const (
 )
 
 // ProgressUpdate declares, relative to JobSet.progressDetails, a JSON path
-// and operation that a Job.current delta should also be applied to. This is
-// the generic update descriptor from Diagram §4: it lets the queue core
-// update progressDetails without knowing the job type.
+// and operation that a Job.current delta should also be applied to - it lets
+// the queue core update progressDetails without knowing the job type.
 type ProgressUpdate struct {
 	Path string     `json:"path"`
 	Op   ProgressOp `json:"op"`
 }
 
-// BaseJob holds the properties shared by Job and JobSet (Diagram §1).
+// BaseJob holds the properties shared by Job and JobSet.
 type BaseJob struct {
 	ID         string   `json:"id"`
 	Type       string   `json:"type"`
@@ -66,8 +64,7 @@ func nowMillis() int64 {
 	return time.Now().UnixMilli()
 }
 
-// Percent returns BaseJob.percent (Diagram §3 read notes): derived from
-// current/total, not stored in the model.
+// Percent is derived from current/total on read, not stored in the model.
 func (b *BaseJob) Percent() int {
 	if b.Total <= 0 {
 		if b.StartedAt <= 0 {
@@ -108,19 +105,19 @@ func (b *BaseJob) Update(delta int) {
 	b.UpdatedAt = nowMillis()
 }
 
-// Job is a single unit of work a worker actually executes (Diagram §1: "Job").
+// Job is a single unit of work a worker actually executes.
 type Job struct {
 	BaseJob
 	PartOf   string  `json:"partOf,omitempty"`
 	Executor *string `json:"executor,omitempty"`
 	OnHold   bool    `json:"onHold,omitempty"`
 
-	// Details is opaque and process-specific (Diagram §4: sub-job structure
-	// is internal sharding and must not leak into the public contract).
+	// Details is opaque and process-specific - sub-job structure is internal
+	// sharding and must not leak into the public contract.
 	Details json.RawMessage `json:"details,omitempty"`
 
-	// UpdateTargets is the declarative progress-update descriptor (Diagram
-	// §4) attached to a sub-Job when it is created in setup.
+	// UpdateTargets is the declarative progress-update descriptor attached
+	// to a sub-Job when it is created in setup.
 	UpdateTargets []ProgressUpdate `json:"updateTargets,omitempty"`
 }
 
@@ -131,8 +128,8 @@ func NewJob(id, jobType string, priority int, partOf string) *Job {
 	}
 }
 
-// OutputValue is a JobSet output (Diagram §4/§5): either a literal value, a
-// by-reference href, or both.
+// OutputValue is a JobSet output: either a literal value, a by-reference
+// href, or both.
 type OutputValue struct {
 	Value any    `json:"value,omitempty"`
 	Href  string `json:"href,omitempty"`
@@ -140,14 +137,14 @@ type OutputValue struct {
 }
 
 // JobSet is the order a caller pushes; it orchestrates Jobs and carries
-// metadata/progress (Diagram §1: "jobset").
+// metadata/progress.
 type JobSet struct {
 	BaseJob
 	Label       string `json:"label,omitempty"`
 	Description string `json:"description,omitempty"`
 	Entity      string `json:"entity,omitempty"`
 
-	// Inputs mirrors the OGC Execute request body 1:1 (Diagram §4/§5).
+	// Inputs mirrors the OGC Execute request body 1:1.
 	Inputs json.RawMessage `json:"inputs,omitempty"`
 	// Outputs is populated by the last lifecycle step (e.g. cleanup).
 	Outputs map[string]OutputValue `json:"outputs"`
@@ -160,7 +157,7 @@ type JobSet struct {
 	FollowUps []*JobSet `json:"followUps"`
 }
 
-// NewJobSet creates a JobSet in the "accepted" state (Diagram §5.2).
+// NewJobSet creates a JobSet in the "accepted" state.
 func NewJobSet(id, jobType string, priority int, label, entity string, inputs json.RawMessage) *JobSet {
 	return &JobSet{
 		BaseJob:   NewBaseJob(id, jobType, priority),
@@ -172,7 +169,7 @@ func NewJobSet(id, jobType string, priority int, label, entity string, inputs js
 	}
 }
 
-// Status derives the OGC-facing lifecycle status (Diagram §5.1).
+// Status derives the OGC-facing lifecycle status.
 func (j *JobSet) Status() Status {
 	switch {
 	case j.FinishedAt > 0:
@@ -191,11 +188,10 @@ func (j *JobSet) Status() Status {
 	}
 }
 
-// Message returns a short human-readable status text (Diagram §5.1/§5.3).
-// This is a generic placeholder per status; phase-specific messages (e.g.
-// naming the tileset currently being seeded, per the diagram's example)
-// would need the JobSet to carry some notion of "current phase", which
-// nothing in the model does yet.
+// Message returns a short human-readable status text. This is a generic
+// placeholder per status; phase-specific messages (e.g. naming the tileset
+// currently being seeded) would need the JobSet to carry some notion of
+// "current phase", which nothing in the model does yet.
 func (j *JobSet) Message() string {
 	switch j.Status() {
 	case StatusAccepted:

@@ -14,10 +14,10 @@ import (
 
 // Job (this build: compiled with -tags demo) adds the Demo command on top
 // of JobBase. JobDemo wires up the example job processors that prove
-// lib/jobs generalizes beyond tile-seeding - see Umsetzungsstand-Job-Queue.md.
-// Not meant for production use, which is why it - and the
-// tileseedingdemo/counterdemo packages it depends on - only exist in the
-// binary (and only show up in --help) when explicitly built with -tags demo.
+// lib/jobs generalizes beyond tile-seeding. Not meant for production use,
+// which is why it - and the tileseedingdemo/counterdemo packages it depends
+// on - only exist in the binary (and only show up in --help) when explicitly
+// built with -tags demo.
 type Job struct {
 	JobBase
 	Demo JobDemo `cmd:"" help:"Run demo job processors (not for production use)"`

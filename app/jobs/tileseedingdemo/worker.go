@@ -13,9 +13,9 @@ import (
 // VectorWorkerProcessor mirrors VectorSeedingJobProcessor.java, but instead
 // of real tile rendering it simulates "tile-by-tile" work. It reports
 // progress with a single UpdateJob(job.ID, 1) call per tile - the fan-out to
-// JobSet.progressDetails happens generically via job.UpdateTargets (Diagram
-// §4); unlike the current Java version, this worker needs no
-// tile-seeding-specific update call of its own.
+// JobSet.progressDetails happens generically via job.UpdateTargets; unlike
+// the current Java version, this worker needs no tile-seeding-specific
+// update call of its own.
 type VectorWorkerProcessor struct {
 	TileDuration time.Duration
 }

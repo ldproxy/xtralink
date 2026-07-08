@@ -42,9 +42,9 @@ func (p SetupProcessor) Process(job *jobs.Job, jobSet *jobs.JobSet, backend jobs
 }
 
 // setup splits inputs.tileSets into a couple of fake sub-matrices per
-// tileset (fakeLevels), initializes progressDetails once (type-specific,
-// Diagram §4), and pushes one sub-Job per (tileset, level) with the
-// declarative progress-update descriptor attached.
+// tileset (fakeLevels), initializes progressDetails once (type-specific),
+// and pushes one sub-Job per (tileset, level) with the declarative
+// progress-update descriptor attached.
 func (p SetupProcessor) setup(jobSet *jobs.JobSet, backend jobs.Backend) jobs.JobResult {
 	var inputs Inputs
 	if err := json.Unmarshal(jobSet.Inputs, &inputs); err != nil {

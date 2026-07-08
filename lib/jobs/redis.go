@@ -243,11 +243,16 @@ func (b *RedisBackend) Done(jobID string) error {
 }
 
 // onJobDone mirrors JobSet.done(job) + AbstractJobQueueBackend.onJobFinished
-// in Java: the setup Job finishing syncs its embedded snapshot (the setup
-// processor already pushed the sub-Jobs itself, nothing else to do here);
-// the cleanup Job finishing syncs its snapshot and pushes the set's
-// followUps; any other (regular) sub-Job finishing merges its errors into
-// the JobSet and hands off to finalizeIfDone.
+// in Java: a finishing setup Job just syncs its embedded snapshot (it already
+// pushed its sub-Jobs itself); a finishing cleanup Job syncs its snapshot and
+// pushes followUps; any other sub-Job finishing hands off to finalizeIfDone.
+//
+// job.Errors is deliberately NOT merged into the JobSet here: Error(...,
+// retry=true) appends a message on every retry attempt, so a Job that fails
+// twice and then succeeds still carries those messages - merging them here
+// would mark the JobSet failed despite every Job having succeeded. Only a
+// Job's permanent failure (onJobPermanentlyFailed) should surface errors on
+// the JobSet.
 func (b *RedisBackend) onJobDone(ctx context.Context, job *Job) error {
 	js, err := b.getJobSet(ctx, job.PartOf)
 	if err != nil || js == nil {
@@ -267,9 +272,6 @@ func (b *RedisBackend) onJobDone(ctx context.Context, job *Job) error {
 		return b.pushFollowUps(js)
 	}
 
-	if err := b.mergeErrors(ctx, js.ID, job.Errors); err != nil {
-		return err
-	}
 	if err := b.jsonSet(ctx, keySet+js.ID, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
@@ -278,12 +280,9 @@ func (b *RedisBackend) onJobDone(ctx context.Context, job *Job) error {
 }
 
 // syncEmbeddedJob patches the JobSet's embedded setup/cleanup snapshot with
-// the just-finished Job's final state. Without this, the snapshot stays
-// frozen at whatever it looked like when the JobSet was first created:
-// finished Job state is never persisted standalone (Done() deletes the Job
-// document, matching JobQueueBackendRedis.doneJob), so the embedded copy is
-// the only place this state could still show up - but only if something
-// writes it there before the standalone document disappears.
+// the just-finished Job's final state, since Done() deletes the standalone
+// Job document (matching JobQueueBackendRedis.doneJob) - without this, the
+// embedded copy would stay frozen at its initial state forever.
 func (b *RedisBackend) syncEmbeddedJob(ctx context.Context, jobSetID, field string, job *Job) error {
 	done := *job
 	done.UpdatedAt = nowMillis()
@@ -293,19 +292,16 @@ func (b *RedisBackend) syncEmbeddedJob(ctx context.Context, jobSetID, field stri
 	return b.jsonSet(ctx, keySet+jobSetID, "$."+field, done)
 }
 
-// onJobPermanentlyFailed handles a Job that Error() gave up retrying on
-// (retry exhausted or retry=false). Diagram/Java don't cover this case -
-// AbstractJobQueueBackend.error() never calls onJobFinished either, so a
-// permanently failed regular sub-Job's JobSet would otherwise hang forever
-// (current can never reach total). Since nothing will ever again report
-// progress for this Job, its unfinished share (total-current) is subtracted
-// from the JobSet's total so current can still catch up.
+// onJobPermanentlyFailed handles a Job that Error() gave up retrying on. Java
+// has no equivalent (AbstractJobQueueBackend.error() never calls
+// onJobFinished), so without this a permanently failed sub-Job's JobSet
+// would hang forever (current can never reach total) - its unfinished share
+// (total-current) is subtracted from the JobSet's total instead.
 //
-// If the permanently failed Job is Setup itself, no sub-Jobs were ever
-// created, so isDone() can never trigger either - forceFail() ends the
-// JobSet as failed directly. If it is Cleanup, the JobSet is already
-// finished (that's what caused cleanup to be pushed); its error just needs
-// to be merged so Status() reports failed instead of successful.
+// A failed Setup Job never created any sub-Jobs, so isDone() can never
+// trigger either - forceFail() ends the JobSet as failed directly. A failed
+// Cleanup Job means the JobSet is already finished; its error just needs
+// merging so Status() reports failed instead of successful.
 func (b *RedisBackend) onJobPermanentlyFailed(ctx context.Context, job *Job) error {
 	js, err := b.getJobSet(ctx, job.PartOf)
 	if err != nil || js == nil {
@@ -315,20 +311,16 @@ func (b *RedisBackend) onJobPermanentlyFailed(ctx context.Context, job *Job) err
 		if err := b.syncEmbeddedJob(ctx, js.ID, "setup", job); err != nil {
 			return err
 		}
-		// Setup failing means no sub-Jobs were ever created, so current can
-		// never reach total and finalizeIfDone's isDone() check would never
-		// fire - without this, the JobSet would hang at "accepted" forever
-		// instead of ending up "failed".
+		// No sub-Jobs exist to trigger finalizeIfDone's isDone() check, so
+		// force the JobSet to a failed end state directly.
 		return b.forceFail(ctx, js, job.Errors)
 	}
 	if js.Cleanup != nil && js.Cleanup.ID == job.ID {
 		if err := b.syncEmbeddedJob(ctx, js.ID, "cleanup", job); err != nil {
 			return err
 		}
-		// The JobSet is already finished (finalizeIfDone ran when the last
-		// sub-Job completed, which is what caused cleanup to be pushed) -
-		// just make sure this error surfaces so Status() reports failed
-		// instead of successful.
+		// JobSet is already finished; just surface the error so Status()
+		// reports failed instead of successful.
 		return b.mergeErrors(ctx, js.ID, job.Errors)
 	}
 
@@ -347,26 +339,32 @@ func (b *RedisBackend) onJobPermanentlyFailed(ctx context.Context, job *Job) err
 	return b.finalizeIfDone(ctx, js)
 }
 
+// mergeErrors appends to JobSet.errors via the atomic JSON.ARRAPPEND command,
+// so concurrent permanent failures on different sub-Jobs of the same JobSet
+// can never lose an error message to a stale read - a GET-then-SET
+// read-modify-write (the previous implementation) could.
 func (b *RedisBackend) mergeErrors(ctx context.Context, jobSetID string, errors []string) error {
 	if len(errors) == 0 {
 		return nil
 	}
-	js, err := b.getJobSet(ctx, jobSetID)
-	if err != nil || js == nil {
-		return err
+	values := make([]interface{}, len(errors))
+	for i, e := range errors {
+		encoded, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		values[i] = string(encoded)
 	}
-	merged := append(append([]string{}, js.Errors...), errors...)
-	return b.jsonSet(ctx, keySet+jobSetID, "$.errors", merged)
+	return b.client.JSONArrAppend(ctx, keySet+jobSetID, "$.errors", values...).Err()
 }
 
 // finalizeIfDone re-reads the JobSet (to see current/total after any
 // concurrent atomic updates elsewhere) and, if every sub-Job is now
-// accounted for, atomically claims the right to finalize it via a Redis
-// SETNX lock - if two sub-Jobs finish at the exact same instant, only one of
-// them wins this and proceeds to set finishedAt and push the cleanup Job (or
-// followUps if there is none); the other is a no-op. This closes the
-// double-push race that a plain "finishedAt <= 0" check in Go could not
-// (both goroutines could observe "not yet finished" before either writes).
+// accounted for, claims the right to finalize it via a Redis SETNX lock -
+// if two sub-Jobs finish at the same instant, only one wins and proceeds to
+// set finishedAt and push cleanup/followUps; the other is a no-op. A plain
+// "finishedAt <= 0" check in Go can't close this race, since both goroutines
+// could observe "not yet finished" before either writes.
 func (b *RedisBackend) finalizeIfDone(ctx context.Context, js *JobSet) error {
 	fresh, err := b.getJobSet(ctx, js.ID)
 	if err != nil || fresh == nil {
@@ -399,9 +397,8 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, js *JobSet) error {
 }
 
 // clearProgressDetailsOnSuccess discards JobSet.progressDetails once a
-// JobSet has fully finished without errors (Diagram §5.4: "wird beim
-// cleanup verworfen") - it is deliberately kept intact on failure, for
-// diagnosis (Diagram §5.5: "intern aufgehoben für Diagnose").
+// JobSet has fully finished without errors - it is deliberately kept intact
+// on failure, for diagnosis.
 func (b *RedisBackend) clearProgressDetailsOnSuccess(ctx context.Context, jobSetID string) error {
 	js, err := b.getJobSet(ctx, jobSetID)
 	if err != nil || js == nil {
@@ -443,7 +440,7 @@ func (b *RedisBackend) pushFollowUps(js *JobSet) error {
 	return nil
 }
 
-// StartJobSet sets JobSet.startedAt to now (Diagram: JobSet.start()).
+// StartJobSet sets JobSet.startedAt to now (mirrors JobSet.start() in Java).
 func (b *RedisBackend) StartJobSet(jobSetID string) error {
 	return b.jsonSet(context.Background(), keySet+jobSetID, "$.startedAt", nowMillis())
 }
@@ -607,12 +604,12 @@ func (b *RedisBackend) UpdateJobSet(jobSetID string, currentDelta int, updates [
 	return b.applyProgressUpdates(ctx, key, currentDelta, updates)
 }
 
-// applyProgressUpdates is the generic, job-type-agnostic mechanism from
-// Diagram §4: it applies the same delta reported for Job.current to each
-// declared progressDetails path via an atomic JSON.NUMINCRBY, without the
-// queue core needing to know the job type. The paths must already exist
-// (initialized by the type-specific setup step, e.g.
-// tileseedingdemo.SetupProcessor.setup via SetProgressDetails).
+// applyProgressUpdates is the generic, job-type-agnostic mechanism: it
+// applies the same delta reported for Job.current to each declared
+// progressDetails path via an atomic JSON.NUMINCRBY, without the queue core
+// needing to know the job type. The paths must already exist (initialized
+// by the type-specific setup step, e.g. tileseedingdemo.SetupProcessor.setup
+// via SetProgressDetails).
 func (b *RedisBackend) applyProgressUpdates(ctx context.Context, key string, delta int, updates []ProgressUpdate) error {
 	for _, u := range updates {
 		d := delta
@@ -628,10 +625,10 @@ func (b *RedisBackend) applyProgressUpdates(ctx context.Context, key string, del
 
 // UpdateJob reports progress for a single Job: it applies currentDelta to
 // Job.current and, if the Job carries a progress-update descriptor (attached
-// at creation time in setup, Diagram §4), applies the same delta to its
-// JobSet's current/progressDetails. This is the single generic entry point
-// a JobProcessor calls with just (jobID, delta) - the core never needs to
-// know the job type, only what the Job's own UpdateTargets declare.
+// at creation time in setup), applies the same delta to its JobSet's
+// current/progressDetails. This is the single generic entry point a
+// JobProcessor calls with just (jobID, delta) - the core never needs to know
+// the job type, only what the Job's own UpdateTargets declare.
 func (b *RedisBackend) UpdateJob(jobID string, currentDelta int) error {
 	ctx := context.Background()
 	key := keyJob + jobID
