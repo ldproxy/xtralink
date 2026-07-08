@@ -1,3 +1,5 @@
+//go:build demo
+
 // Package counterdemo is a second, deliberately minimal example job type -
 // the structural opposite of tileseedingdemo. Where tile-seeding has a
 // setup phase that fans out into many parallel sub-Jobs with a JSON-path

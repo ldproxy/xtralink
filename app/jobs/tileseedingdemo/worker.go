@@ -1,3 +1,5 @@
+//go:build demo
+
 package tileseedingdemo
 
 import (

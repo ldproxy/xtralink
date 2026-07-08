@@ -1,3 +1,5 @@
+//go:build demo
+
 // Package tileseedingdemo is a simulated stand-in for xtraplatform-tiles'
 // TileSeedingJobSet/TileSeedingJobCreator/VectorSeedingJobProcessor (the
 // example the concept diagram is built around). xtrasync has no tile
