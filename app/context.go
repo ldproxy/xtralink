@@ -8,6 +8,7 @@ import (
 
 	"github.com/ldproxy/xtrasync/lib/drivers"
 	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtrasync/lib/lock"
 	"github.com/rs/zerolog"
 )
 
@@ -21,6 +22,7 @@ type AppContext struct {
 
 	Drivers *drivers.Factory
 	Jobs    jobs.Backend
+	Locks   lock.Locker
 }
 
 // NewAppContext returns an initialized context.
@@ -62,6 +64,7 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 		Settings: settings,
 		Drivers:  drivers.NewFactoryWithLogger(logger),
 		Jobs:     jobs.NewRedisBackend(redisAddr),
+		Locks:    lock.NewRedisLocker(redisAddr),
 	}
 
 	return &c

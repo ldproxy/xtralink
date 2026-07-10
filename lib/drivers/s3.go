@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,14 +17,16 @@ import (
 
 type s3Driver struct{ logger zerolog.Logger }
 
-func NewS3Driver(logger zerolog.Logger) SyncDriver {
+func NewS3Driver(logger zerolog.Logger) *s3Driver {
 	return &s3Driver{logger: logger}
 }
 
-func (d *s3Driver) Sync(remote Remote) error {
+// resolveClient builds an S3 client plus the bucket/key resolved from
+// remote, shared by Sync and SyncBack.
+func (d *s3Driver) resolveClient(remote Remote) (client *simples3.S3, bucket, key string, err error) {
 	bucket, key, endpointFromURL, err := parseS3Location(remote.URL)
 	if err != nil {
-		return err
+		return nil, "", "", err
 	}
 	if strings.TrimSpace(remote.Path) != "" {
 		key = strings.TrimPrefix(strings.TrimSpace(remote.Path), "/")
@@ -37,16 +40,25 @@ func (d *s3Driver) Sync(remote Remote) error {
 	access := strings.TrimSpace(remote.User)
 	secret := strings.TrimSpace(remote.Password)
 	if access == "" || secret == "" {
-		return fmt.Errorf("s3 requires credentials in resolved remote.user/remote.password")
+		return nil, "", "", fmt.Errorf("s3 requires credentials in resolved remote.user/remote.password")
 	}
 
-	client := simples3.New(region, access, secret)
+	client = simples3.New(region, access, secret)
 	endpoint := firstEnv("XTRA_SYNC_S3_ENDPOINT")
 	if endpoint == "" {
 		endpoint = endpointFromURL
 	}
 	if endpoint != "" {
 		client.SetEndpoint(endpoint)
+	}
+
+	return client, bucket, key, nil
+}
+
+func (d *s3Driver) Sync(remote Remote) error {
+	client, bucket, key, err := d.resolveClient(remote)
+	if err != nil {
+		return err
 	}
 
 	objects, prefix, err := d.resolveObjects(client, bucket, key)
@@ -123,6 +135,96 @@ func (d *s3Driver) Sync(remote Remote) error {
 		Str("target", remote.ResolvedLocalPath).
 		Int("object_count", len(objects)).
 		Msg("synced s3 objects")
+	return nil
+}
+
+// SyncBack mirrors remote.ResolvedLocalPath back to its S3 bucket/prefix:
+// every local file is (re-)uploaded, and any object under the prefix with no
+// matching local file is deleted - a full reconciliation rather than an
+// incremental diff (package directories are small config bundles, not bulk
+// data, so re-uploading everything on every call is simpler and still
+// cheap). This is what makes pkg:mv_file's move-with-deletion semantics
+// work against a real S3 package.
+func (d *s3Driver) SyncBack(remote Remote) error {
+	client, bucket, key, err := d.resolveClient(remote)
+	if err != nil {
+		return err
+	}
+
+	prefix := key
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	localFiles := map[string]bool{}
+	uploaded := 0
+
+	err = filepath.WalkDir(remote.ResolvedLocalPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(remote.ResolvedLocalPath, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		localFiles[rel] = true
+
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		if _, err := client.FileUpload(simples3.UploadInput{
+			Bucket:    bucket,
+			ObjectKey: prefix + rel,
+			FileName:  entry.Name(),
+			Body:      f,
+		}); err != nil {
+			return fmt.Errorf("s3 upload failed for %s: %w", prefix+rel, err)
+		}
+		uploaded++
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("local directory does not exist: %s", remote.ResolvedLocalPath)
+		}
+		return fmt.Errorf("could not sync fs directory back to s3://%s/%s: %w", bucket, prefix, err)
+	}
+
+	listing, err := client.List(simples3.ListInput{Bucket: bucket, Prefix: prefix})
+	if err != nil {
+		return fmt.Errorf("s3 list failed while syncing back to s3://%s/%s: %w", bucket, prefix, err)
+	}
+
+	deleted := 0
+	for _, obj := range listing.Objects {
+		if strings.HasSuffix(obj.Key, "/") {
+			continue
+		}
+		rel := strings.TrimPrefix(obj.Key, prefix)
+		if localFiles[rel] {
+			continue
+		}
+		if err := client.FileDelete(simples3.DeleteInput{Bucket: bucket, ObjectKey: obj.Key}); err != nil {
+			return fmt.Errorf("s3 delete failed for %s: %w", obj.Key, err)
+		}
+		deleted++
+	}
+
+	d.logger.Info().
+		Str("bucket", bucket).
+		Str("prefix", prefix).
+		Str("source", remote.ResolvedLocalPath).
+		Int("uploaded", uploaded).
+		Int("deleted", deleted).
+		Msg("synced s3 objects back")
 	return nil
 }
 

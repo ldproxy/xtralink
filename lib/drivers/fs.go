@@ -8,7 +8,35 @@ import (
 	"path/filepath"
 
 	dirsync "github.com/Varjelus/dirsync"
+	"github.com/rs/zerolog"
 )
+
+// fsDriver treats remote.URL as a plain local directory - no network, no
+// mock server, only useful for testing the package/workflow machinery. It
+// implements both SyncDriver (pull: URL -> ResolvedLocalPath) and
+// SyncBackDriver (push: ResolvedLocalPath -> URL) with the same
+// syncPathMirror helper, just in opposite directions.
+type fsDriver struct{ logger zerolog.Logger }
+
+func NewFSDriver(logger zerolog.Logger) *fsDriver {
+	return &fsDriver{logger: logger}
+}
+
+func (d *fsDriver) Sync(remote Remote) error {
+	if err := syncPathMirror(remote.URL, remote.ResolvedLocalPath); err != nil {
+		return fmt.Errorf("could not mirror fs source to target (%s -> %s): %w", remote.URL, remote.ResolvedLocalPath, err)
+	}
+	d.logger.Info().Str("source", remote.URL).Str("target", remote.ResolvedLocalPath).Msg("synced fs directory")
+	return nil
+}
+
+func (d *fsDriver) SyncBack(remote Remote) error {
+	if err := syncPathMirror(remote.ResolvedLocalPath, remote.URL); err != nil {
+		return fmt.Errorf("could not mirror fs target back to source (%s -> %s): %w", remote.ResolvedLocalPath, remote.URL, err)
+	}
+	d.logger.Info().Str("source", remote.ResolvedLocalPath).Str("target", remote.URL).Msg("synced fs directory back")
+	return nil
+}
 
 // syncPathMirror synchronizes a source directory into dst.
 func syncPathMirror(src, dst string) error {

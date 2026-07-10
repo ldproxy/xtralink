@@ -40,21 +40,25 @@ func Pull(appCtx *app.AppContext, pkgId string) error {
 			return fmt.Errorf("remote[%d] driver resolution failed: %w", i, err)
 		}
 
-		remote := drivers.Remote{
-			Type:              r.Type,
-			ID:                r.Id,
-			URL:               r.URL,
-			Tag:               r.Tag,
-			User:              r.User,
-			Password:          r.Password,
-			Path:              r.Path,
-			ResolvedLocalPath: r.ResolvedLocalPath,
-		}
-
-		if err := driver.Sync(remote); err != nil {
+		if err := driver.Sync(RemoteFor(r)); err != nil {
 			return fmt.Errorf("remote[%d] fetch failed: %w", i, err)
 		}
 	}
 
 	return nil
+}
+
+// RemoteFor builds the lib/drivers.Remote for a configured Package - shared
+// by Pull and by pkg:mv_file's implicit SyncBack.
+func RemoteFor(p app.Package) drivers.Remote {
+	return drivers.Remote{
+		Type:              p.Type,
+		ID:                p.Id,
+		URL:               p.URL,
+		Tag:               p.Tag,
+		User:              p.User,
+		Password:          p.Password,
+		Path:              p.Path,
+		ResolvedLocalPath: p.ResolvedLocalPath,
+	}
 }
