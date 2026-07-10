@@ -175,6 +175,17 @@ func validateWorkflows(wfs []workflows.Workflow) error {
 		}
 		seenWorkflowIds[wf.Id] = true
 
+		seenParamNames := map[string]bool{}
+		for pi, p := range wf.Params {
+			if p.Name == "" {
+				return fmt.Errorf("workflows[%d] (%s): params[%d].name is required", wi, wf.Id, pi)
+			}
+			if seenParamNames[p.Name] {
+				return fmt.Errorf("workflows[%d] (%s): duplicate param name %q", wi, wf.Id, p.Name)
+			}
+			seenParamNames[p.Name] = true
+		}
+
 		seenStepIds := map[string]bool{}
 		for si, step := range wf.Steps {
 			id := step.EffectiveId(si)

@@ -139,7 +139,7 @@ workflows:
 		Locks:    lock.NoopLocker{},
 	}
 
-	if err := Run(appCtx, "check-ldm"); err != nil {
+	if err := Run(appCtx, "check-ldm", nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -179,11 +179,177 @@ workflows:
 	}
 }
 
+// TestRun_ParamsOverrideAndDefault runs check-ldm again, but this time the
+// package id is a workflow param (${params.pkg}) supplied via --input at
+// invocation, and the glob pattern is a param with a default that's left
+// unset. Verifies both the override path and the default-fallback path in
+// one real Run() call, through the same fan-out/mv_file/job:push pipeline
+// as TestRun_CheckLdmExample.
+func TestRun_ParamsOverrideAndDefault(t *testing.T) {
+	targetDir := t.TempDir()
+	fooRemote := t.TempDir()
+	barRemote := t.TempDir()
+
+	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
+
+	config := `
+targetDir: ` + targetDir + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + fooRemote + `
+  - id: bar
+    type: FS
+    url: ` + barRemote + `
+
+workflows:
+  - id: check-ldm
+    params:
+      - name: pkg
+        type: string
+        required: true
+      - name: path
+        type: string
+        default: "*.zip"
+    steps:
+      - id: input
+        action: pkg:find_each
+        pkg: ${params.pkg}
+        path: ${params.path}
+      - action: pkg:mv_file
+        from: ${params.pkg}
+        to: bar
+        path: ${outputs.input.path}
+      - action: job:push
+        type: nba-apply
+        inputs:
+          - name: file
+            value: ${outputs.input.path}
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	backend := &fakeBackend{}
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     backend,
+		Locks:    lock.NoopLocker{},
+	}
+
+	// "pkg" is overridden via --input, "path" is left to its default.
+	if err := Run(appCtx, "check-ldm", map[string]string{"pkg": "foo"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertMissing(t, filepath.Join(fooRemote, "a.zip"))
+	assertContent(t, filepath.Join(barRemote, "a.zip"), "a")
+
+	if len(backend.pushedJobSets) != 1 {
+		t.Fatalf("expected 1 pushed job set, got %d", len(backend.pushedJobSets))
+	}
+}
+
+// TestRun_MissingRequiredParamAbortsBeforeAnythingRuns verifies a missing
+// required param is rejected immediately - before the lock is claimed and
+// before any step (including the implicit pull) runs.
+func TestRun_MissingRequiredParamAbortsBeforeAnythingRuns(t *testing.T) {
+	targetDir := t.TempDir()
+	fooRemote := t.TempDir()
+	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
+
+	config := `
+targetDir: ` + targetDir + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + fooRemote + `
+
+workflows:
+  - id: needs-pkg
+    params:
+      - name: pkg
+        type: string
+        required: true
+    steps:
+      - action: pkg:find_any
+        pkg: ${params.pkg}
+        path: "*.zip"
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	if err := Run(appCtx, "needs-pkg", nil); err == nil {
+		t.Fatal("expected an error for a missing required param")
+	}
+
+	// Nothing should have been pulled/touched - the pull would have
+	// mirrored fooRemote into targetDir/foo, which must not exist.
+	if _, err := os.Stat(filepath.Join(targetDir, "foo")); !os.IsNotExist(err) {
+		t.Errorf("expected no pull to have happened, but %s exists", filepath.Join(targetDir, "foo"))
+	}
+}
+
+func TestParseOverrides_SplitsOnFirstEquals(t *testing.T) {
+	got, err := ParseOverrides([]string{"pkg=foo", "path=foo/*.zip", "expr=a=b=c"})
+	if err != nil {
+		t.Fatalf("ParseOverrides: %v", err)
+	}
+	want := map[string]string{"pkg": "foo", "path": "foo/*.zip", "expr": "a=b=c"}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("got[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestParseOverrides_MissingEqualsIsError(t *testing.T) {
+	if _, err := ParseOverrides([]string{"no-equals-sign"}); err == nil {
+		t.Fatal("expected an error for an entry without '='")
+	}
+}
+
+func TestParseOverrides_EmptyInputIsEmptyMap(t *testing.T) {
+	got, err := ParseOverrides(nil)
+	if err != nil {
+		t.Fatalf("ParseOverrides: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %+v, want empty map", got)
+	}
+}
+
 func TestRun_UnknownWorkflowIdIsError(t *testing.T) {
 	settings := &app.Settings{TargetDir: t.TempDir()}
 	appCtx := &app.AppContext{Logger: zerolog.Nop(), Settings: settings, Drivers: drivers.NewFactory(), Jobs: &fakeBackend{}, Locks: lock.NoopLocker{}}
 
-	if err := Run(appCtx, "does-not-exist"); err == nil {
+	if err := Run(appCtx, "does-not-exist", nil); err == nil {
 		t.Fatal("expected an error for an unknown workflow id")
 	}
 }

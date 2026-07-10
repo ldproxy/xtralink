@@ -90,6 +90,37 @@ workflows:
 	}
 }
 
+func TestLoadSettings_RejectsDuplicateParamName(t *testing.T) {
+	path := writeConfig(t, minimalPackage+`
+workflows:
+  - id: wf
+    params:
+      - name: pkg
+      - name: pkg
+    steps:
+      - action: job:push
+`)
+
+	if _, err := LoadSettings(path); err == nil {
+		t.Fatal("expected an error for duplicate param names")
+	}
+}
+
+func TestLoadSettings_RejectsMissingParamName(t *testing.T) {
+	path := writeConfig(t, minimalPackage+`
+workflows:
+  - id: wf
+    params:
+      - type: string
+    steps:
+      - action: job:push
+`)
+
+	if _, err := LoadSettings(path); err == nil {
+		t.Fatal("expected an error for a param without a name")
+	}
+}
+
 func TestLoadSettings_RejectsDuplicateStepId(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
 workflows:

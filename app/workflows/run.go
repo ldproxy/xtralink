@@ -25,14 +25,22 @@ func NewRegistry(appCtx *app.AppContext) *workflows.Registry {
 	return registry
 }
 
-// Run resolves workflowId from appCtx.Settings, validates it, claims the
-// per-workflow-ID lock (two different workflow IDs may run at the same
-// time, the same one may not run twice concurrently), and executes it - the
-// single entry point cli/flow.go calls.
-func Run(appCtx *app.AppContext, workflowId string) error {
+// Run resolves workflowId from appCtx.Settings, resolves params (overrides
+// merged with declared defaults - a missing required param aborts here,
+// before anything else happens, not after the lock is already claimed),
+// validates the workflow, claims the per-workflow-ID lock (two different
+// workflow IDs may run at the same time, the same one may not run twice
+// concurrently), and executes it - the single entry point cli/flow.go
+// calls.
+func Run(appCtx *app.AppContext, workflowId string, overrides map[string]string) error {
 	wf, err := appCtx.Settings.GetWorkflow(workflowId)
 	if err != nil {
 		return err
+	}
+
+	params, err := workflows.ResolveParams(*wf, overrides)
+	if err != nil {
+		return fmt.Errorf("workflow %q: %w", workflowId, err)
 	}
 
 	registry := NewRegistry(appCtx)
@@ -49,8 +57,25 @@ func Run(appCtx *app.AppContext, workflowId string) error {
 	}
 	defer release()
 
-	vars := map[string]any{"packages": packageVars(appCtx.Settings.Packages)}
+	vars := map[string]any{
+		"packages": packageVars(appCtx.Settings.Packages),
+		"params":   params,
+	}
 	return workflows.Run(*wf, registry, vars)
+}
+
+// ParseOverrides turns "name=value" strings, as collected from repeated
+// --input flags (s. cli/flow.go), into a map for ResolveParams.
+func ParseOverrides(raw []string) (map[string]string, error) {
+	overrides := make(map[string]string, len(raw))
+	for _, entry := range raw {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid --input %q, expected name=value", entry)
+		}
+		overrides[name] = value
+	}
+	return overrides, nil
 }
 
 // Validate runs the action-aware checks app/settings.go's load-time

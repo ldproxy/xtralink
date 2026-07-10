@@ -14,8 +14,21 @@ import (
 // .xtrasync.yml "workflows:" key.
 type Workflow struct {
 	Id       string    `yaml:"id"`
+	Params   []Param   `yaml:"params,omitempty"`
 	Defaults *Defaults `yaml:"defaults,omitempty"`
 	Steps    []Step    `yaml:"steps"`
+}
+
+// Param declares one runtime input a Workflow expects, read from Steps via
+// ${params.<name>} (s. ResolveParams in params.go). Deliberately just these
+// four fields - no enum/minimum-style value validation.
+type Param struct {
+	Name string `yaml:"name"`
+	// Type is "string" (the default if omitted) or "int"/"bool" for basic
+	// coercion of CLI-provided overrides (s. ResolveParams).
+	Type     string `yaml:"type,omitempty"`
+	Default  any    `yaml:"default,omitempty"`
+	Required bool   `yaml:"required,omitempty"`
 }
 
 // Defaults holds workflow-wide fallbacks applied to every Step that doesn't

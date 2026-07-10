@@ -13,11 +13,17 @@ type Flow struct {
 }
 
 type FlowRunCmd struct {
-	Id string `arg:"" help:"Workflow id"`
+	Id     string   `arg:"" help:"Workflow id"`
+	Inputs []string `name:"input" sep:"none" help:"Parameter override as name=value (repeatable)"`
 }
 
 func (c *FlowRunCmd) Run(appCtx *app.AppContext) error {
-	if err := workflows.Run(appCtx, c.Id); err != nil {
+	overrides, err := workflows.ParseOverrides(c.Inputs)
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("invalid --input")
+		return err
+	}
+	if err := workflows.Run(appCtx, c.Id, overrides); err != nil {
 		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("workflow run failed")
 		return err
 	}
