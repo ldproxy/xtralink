@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/pkg"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/pkg"
 )
 
 type Pkg struct {
@@ -56,8 +56,8 @@ func (c *PushCmd) Run(root *CLI, appCtx *app.AppContext) error {
 }
 
 func (c *PushCmd) Help() string {
-	//return "Examples:\n xtrasync pkg push my-package-id example.com/repo/image:tag"
-	return "Example: xtrasync pkg push my-package-id example.com/repo/image:tag"
+	//return "Examples:\n xtralink pkg push my-package-id example.com/repo/image:tag"
+	return "Example: xtralink pkg push my-package-id example.com/repo/image:tag"
 }
 
 type InspectCmd struct {

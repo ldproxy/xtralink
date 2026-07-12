@@ -7,7 +7,7 @@ import (
 )
 
 type Globals struct {
-	Config  string      `short:"c" help:"Path to the configuration file" default:".xtrasync.yml"`
+	Config  string      `short:"c" help:"Path to the configuration file" default:".xtralink.yml"`
 	Verbose uint        `short:"v" type:"counter" help:"Enable verbose mode"`
 	Version VersionFlag `name:"version" help:"Print version information"`
 }

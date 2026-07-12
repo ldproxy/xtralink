@@ -33,4 +33,4 @@ go.work.sum
 # app specific
 config/
 data/
-.xtrasync.yml
+.xtralink.yml

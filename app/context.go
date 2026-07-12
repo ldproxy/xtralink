@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ldproxy/xtrasync/lib/drivers"
+	"github.com/ldproxy/xtralink/lib/drivers"
 	"github.com/rs/zerolog"
 )
 

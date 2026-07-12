@@ -16,9 +16,9 @@ func init() {
 }
 
 func TestIntegrationSync_Git(t *testing.T) {
-	url := os.Getenv("XTRASYNC_IT_GIT_URL")
+	url := os.Getenv("XTRALINK_IT_GIT_URL")
 	if url == "" {
-		t.Skip("set XTRASYNC_IT_GIT_URL to run git integration test")
+		t.Skip("set XTRALINK_IT_GIT_URL to run git integration test")
 	}
 
 	target := t.TempDir()
@@ -27,10 +27,10 @@ func TestIntegrationSync_Git(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "GIT",
 		URL:               url,
-		Tag:               firstNonEmpty(os.Getenv("XTRASYNC_IT_GIT_TAG"), "main"),
-		Path:              os.Getenv("XTRASYNC_IT_GIT_PATH"),
-		User:              os.Getenv("XTRASYNC_IT_GIT_USER"),
-		Password:          os.Getenv("XTRASYNC_IT_GIT_PASSWORD"),
+		Tag:               firstNonEmpty(os.Getenv("XTRALINK_IT_GIT_TAG"), "main"),
+		Path:              os.Getenv("XTRALINK_IT_GIT_PATH"),
+		User:              os.Getenv("XTRALINK_IT_GIT_USER"),
+		Password:          os.Getenv("XTRALINK_IT_GIT_PASSWORD"),
 		ResolvedLocalPath: target,
 	})
 	if err != nil {
@@ -43,15 +43,15 @@ func TestIntegrationSync_Git(t *testing.T) {
 }
 
 func TestIntegrationSync_S3(t *testing.T) {
-	url := os.Getenv("XTRASYNC_IT_S3_URL")
+	url := os.Getenv("XTRALINK_IT_S3_URL")
 	if url == "" {
-		t.Skip("set XTRASYNC_IT_S3_URL to run s3 integration test")
+		t.Skip("set XTRALINK_IT_S3_URL to run s3 integration test")
 	}
 
-	user := os.Getenv("XTRASYNC_IT_S3_USER")
-	password := os.Getenv("XTRASYNC_IT_S3_PASSWORD")
+	user := os.Getenv("XTRALINK_IT_S3_USER")
+	password := os.Getenv("XTRALINK_IT_S3_PASSWORD")
 	if user == "" || password == "" {
-		t.Skip("set XTRASYNC_IT_S3_USER and XTRASYNC_IT_S3_PASSWORD to run s3 integration test")
+		t.Skip("set XTRALINK_IT_S3_USER and XTRALINK_IT_S3_PASSWORD to run s3 integration test")
 	}
 
 	target := t.TempDir()
@@ -60,7 +60,7 @@ func TestIntegrationSync_S3(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "S3",
 		URL:               url,
-		Path:              os.Getenv("XTRASYNC_IT_S3_PATH"),
+		Path:              os.Getenv("XTRALINK_IT_S3_PATH"),
 		User:              user,
 		Password:          password,
 		ResolvedLocalPath: target,
@@ -75,9 +75,9 @@ func TestIntegrationSync_S3(t *testing.T) {
 }
 
 func TestIntegrationSync_OCI(t *testing.T) {
-	url := os.Getenv("XTRASYNC_IT_OCI_URL")
+	url := os.Getenv("XTRALINK_IT_OCI_URL")
 	if url == "" {
-		t.Skip("set XTRASYNC_IT_OCI_URL to run oci integration test")
+		t.Skip("set XTRALINK_IT_OCI_URL to run oci integration test")
 	}
 
 	target := t.TempDir()
@@ -86,10 +86,10 @@ func TestIntegrationSync_OCI(t *testing.T) {
 	err := driver.Sync(Remote{
 		Type:              "OCI",
 		URL:               url,
-		Tag:               firstNonEmpty(os.Getenv("XTRASYNC_IT_OCI_TAG"), "latest"),
-		Path:              os.Getenv("XTRASYNC_IT_OCI_PATH"),
-		User:              os.Getenv("XTRASYNC_IT_OCI_USER"),
-		Password:          os.Getenv("XTRASYNC_IT_OCI_PASSWORD"),
+		Tag:               firstNonEmpty(os.Getenv("XTRALINK_IT_OCI_TAG"), "latest"),
+		Path:              os.Getenv("XTRALINK_IT_OCI_PATH"),
+		User:              os.Getenv("XTRALINK_IT_OCI_USER"),
+		Password:          os.Getenv("XTRALINK_IT_OCI_PASSWORD"),
 		ResolvedLocalPath: target,
 	})
 	if err != nil {

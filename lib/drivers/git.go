@@ -101,7 +101,7 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 }
 
 func cacheRepoPath(url, ref string) (string, error) {
-	base := filepath.Join(os.TempDir(), "xtrasync-cache", "git")
+	base := filepath.Join(os.TempDir(), "xtralink-cache", "git")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", fmt.Errorf("could not create cache base directory: %w", err)
 	}

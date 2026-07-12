@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/drivers"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/drivers"
 )
 
 type InspectResult struct {
@@ -79,7 +79,7 @@ func syncPackageToInspectTemp(appCtx *app.AppContext, p app.Package) (string, fu
 		return "", nil, fmt.Errorf("drivers factory is nil")
 	}
 
-	tmpDir, err := os.MkdirTemp("", "xtrasync-inspect-")
+	tmpDir, err := os.MkdirTemp("", "xtralink-inspect-")
 	if err != nil {
 		return "", nil, fmt.Errorf("could not create inspect temp directory: %w", err)
 	}
