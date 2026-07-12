@@ -53,8 +53,15 @@ func (d *gitDriver) Sync(remote Remote) error {
 }
 
 func (d *gitDriver) syncFullRepo(remote Remote, ref string, auth *githttp.BasicAuth) error {
-	if err := d.syncOrCloneRepo(remote.ResolvedLocalPath, remote.URL, ref, auth); err != nil {
+	changed, err := d.syncOrCloneRepo(remote.ResolvedLocalPath, remote.URL, ref, auth)
+	if err != nil {
 		return err
+	}
+
+	if changed {
+		if err := resolveLFS(d.logger, remote.URL, auth, remote.ResolvedLocalPath); err != nil {
+			return fmt.Errorf("LFS resolution failed for %s: %w", remote.ResolvedLocalPath, err)
+		}
 	}
 
 	d.logger.Info().
@@ -71,7 +78,8 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 		return err
 	}
 
-	if err := d.syncOrCloneRepo(cacheRepoDir, remote.URL, ref, auth); err != nil {
+	changed, err := d.syncOrCloneRepo(cacheRepoDir, remote.URL, ref, auth)
+	if err != nil {
 		return err
 	}
 
@@ -84,6 +92,14 @@ func (d *gitDriver) syncSubpathViaCache(remote Remote, ref string, auth *githttp
 		return fmt.Errorf("source path not found (%s): %w", sourcePath, err)
 	} else if !info.IsDir() {
 		return fmt.Errorf("remote.path must point to a directory, but got file: %s", remote.Path)
+	}
+
+	// Resolve LFS pointers within the requested subpath only, so we do not
+	// download blobs from parts of the repository we are about to discard.
+	if changed {
+		if err := resolveLFS(d.logger, remote.URL, auth, sourcePath); err != nil {
+			return fmt.Errorf("LFS resolution failed for %s: %w", sourcePath, err)
+		}
 	}
 
 	if err := syncPathMirror(sourcePath, remote.ResolvedLocalPath); err != nil {
@@ -133,54 +149,57 @@ func resolveRepoSubpath(repoDir, remotePath string) (string, error) {
 	return joined, nil
 }
 
-func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.BasicAuth) error {
+// syncOrCloneRepo ensures repoDir holds an up-to-date checkout of ref. It
+// reports whether the working tree was changed (freshly cloned or pulled), so
+// callers can skip follow-up work such as LFS resolution when nothing moved.
+func (d *gitDriver) syncOrCloneRepo(repoDir, url, ref string, auth *githttp.BasicAuth) (bool, error) {
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		if !os.IsNotExist(err) {
-			return fmt.Errorf("cannot inspect %s: %w", repoDir, err)
+			return false, fmt.Errorf("cannot inspect %s: %w", repoDir, err)
 		}
 		d.logger.Debug().Str("repo_dir", repoDir).Str("url", url).Str("ref", ref).Msg("cloning repository")
 		if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
-			return fmt.Errorf("could not create parent directory for %s: %w", repoDir, err)
+			return false, fmt.Errorf("could not create parent directory for %s: %w", repoDir, err)
 		}
 		if err := cloneWithRefFallback(url, repoDir, ref, auth); err != nil {
-			return err
+			return false, err
 		}
 		d.markRepoUpdated(repoDir)
-		return nil
+		return true, nil
 	}
 
 	if d.wasRepoUpdated(repoDir) {
-		return nil
+		return false, nil
 	}
 
 	repo, err := git.PlainOpen(repoDir)
 	if err != nil {
-		return fmt.Errorf("could not open local repository (%s): %w", repoDir, err)
+		return false, fmt.Errorf("could not open local repository (%s): %w", repoDir, err)
 	}
 
 	if err := ensureOriginURL(repo, url); err != nil {
-		return err
+		return false, err
 	}
 
 	remoteHash, refName, err := resolveRemoteRefHash(url, ref, auth)
 	if err != nil {
-		return fmt.Errorf("could not resolve remote ref hash: %w", err)
+		return false, fmt.Errorf("could not resolve remote ref hash: %w", err)
 	}
 
 	localHash, err := resolveLocalRefHash(repo, refName)
 	if err == nil && localHash == remoteHash {
 		d.markRepoUpdated(repoDir)
 		d.logger.Debug().Str("repo_dir", repoDir).Str("remote_hash", remoteHash.String()).Msg("pull skipped (unchanged)")
-		return nil
+		return false, nil
 	}
 
 	if err := pullWithRefFallback(repo, ref, auth); err != nil {
-		return fmt.Errorf("git pull failed in %s: %w", repoDir, err)
+		return false, fmt.Errorf("git pull failed in %s: %w", repoDir, err)
 	}
 
 	d.markRepoUpdated(repoDir)
 	d.logger.Debug().Str("repo_dir", repoDir).Str("remote_hash", remoteHash.String()).Msg("pull successful")
-	return nil
+	return true, nil
 }
 
 func (d *gitDriver) wasRepoUpdated(repoDir string) bool {
