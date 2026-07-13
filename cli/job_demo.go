@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/jobs/counterdemo"
-	"github.com/ldproxy/xtrasync/app/jobs/tileseedingdemo"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/jobs/counterdemo"
+	"github.com/ldproxy/xtralink/app/jobs/tileseedingdemo"
 )
 
 // Job (this build: compiled with -tags demo) adds the Demo command on top

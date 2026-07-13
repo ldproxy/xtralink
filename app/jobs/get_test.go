@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 func TestGet_ReturnsJobSet(t *testing.T) {

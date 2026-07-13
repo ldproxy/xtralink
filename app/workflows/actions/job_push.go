@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/jobs"
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/jobs"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // JobPushAction implements "job:push": builds a JobSet from the Step's

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/app"
+	"github.com/ldproxy/xtralink/app"
 )
 
 func TestPush_RejectsInvalidJSON(t *testing.T) {

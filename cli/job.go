@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/jobs"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/jobs"
 )
 
 // JobBase holds the commands present in every build. The full Job type

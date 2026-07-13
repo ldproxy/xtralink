@@ -7,9 +7,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/drivers"
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/drivers"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 // fakeBackend is a minimal in-memory jobs.Backend stub, mirroring

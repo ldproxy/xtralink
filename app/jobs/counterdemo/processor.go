@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 // Type is the demo-counter job type.

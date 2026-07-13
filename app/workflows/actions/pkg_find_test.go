@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 func TestFindAnyAction_NoMatchHalts(t *testing.T) {

@@ -1,6 +1,6 @@
 package jobs
 
-import "github.com/ldproxy/xtrasync/lib/jobs"
+import "github.com/ldproxy/xtralink/lib/jobs"
 
 // fakeBackend is a minimal in-memory jobs.Backend stub used to test this
 // adapter layer (input validation, field mapping, error wrapping) in

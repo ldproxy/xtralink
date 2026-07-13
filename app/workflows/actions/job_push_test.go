@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 func TestJobPushAction_PushesJobSetWithInputs(t *testing.T) {

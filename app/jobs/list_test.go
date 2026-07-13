@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 func TestList_MapsAllJobSets(t *testing.T) {

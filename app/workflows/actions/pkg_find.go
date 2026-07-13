@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/pkg"
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/pkg"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // findMatches pulls pkgId fresh, then glob-matches pattern against its

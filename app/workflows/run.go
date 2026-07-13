@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/workflows/actions"
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/workflows/actions"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // NewRegistry builds the Action registry for the four supported Actions,

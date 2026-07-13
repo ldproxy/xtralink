@@ -3,8 +3,8 @@ package jobs
 import (
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 // StatusView is the compact status/progress view for a JobSet.

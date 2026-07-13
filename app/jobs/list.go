@@ -3,7 +3,7 @@ package jobs
 import (
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
+	"github.com/ldproxy/xtralink/app"
 )
 
 // List returns the compact status view for all known JobSets.

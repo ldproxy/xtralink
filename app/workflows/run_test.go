@@ -8,11 +8,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/drivers"
-	"github.com/ldproxy/xtrasync/lib/jobs"
-	"github.com/ldproxy/xtrasync/lib/lock"
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/drivers"
+	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/lib/lock"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // fakeBackend mirrors the ones in app/jobs and app/workflows/actions test

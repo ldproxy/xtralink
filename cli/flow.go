@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/workflows"
 )
 
 type Flow struct {

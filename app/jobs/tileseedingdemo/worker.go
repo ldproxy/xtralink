@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ldproxy/xtrasync/lib/jobs"
+	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
 // VectorWorkerProcessor mirrors VectorSeedingJobProcessor.java, but instead

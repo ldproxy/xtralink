@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/app/pkg"
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/app/pkg"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // SupportsMvFile reports whether pkgType may be used as pkg:mv_file's

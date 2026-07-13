@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/ldproxy/xtrasync/lib/workflows"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
