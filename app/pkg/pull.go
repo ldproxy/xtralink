@@ -3,8 +3,8 @@ package pkg
 import (
 	"fmt"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/lib/drivers"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/drivers"
 )
 
 // Pull processes all configured remotes.

@@ -67,7 +67,7 @@ func (d *s3Driver) Sync(remote Remote) error {
 	}
 
 	signature := objectsSignature(objects)
-	cacheRoot := filepath.Join(os.TempDir(), "xtrasync-cache", "s3", hashString(remote.URL+"|"+key))
+	cacheRoot := filepath.Join(os.TempDir(), "xtralink-cache", "s3", hashString(remote.URL+"|"+key))
 	cacheState := filepath.Join(cacheRoot, ".state")
 
 	cacheDataDir := filepath.Join(cacheRoot, "data")

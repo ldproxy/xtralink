@@ -4,13 +4,13 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/mew-sh/dotenv"
 
-	"github.com/ldproxy/xtrasync/app"
-	"github.com/ldproxy/xtrasync/cli"
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/cli"
 )
 
 const (
 	// Name is the name of the application.
-	Name = "xtrasync"
+	Name = "xtralink"
 	// Description is the description of the application.
 	Description = "A glue tool for distributed applications"
 )

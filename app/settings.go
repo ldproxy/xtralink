@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/ldproxy/xtrasync/lib/workflows"
 )
+
+var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 
 type Settings struct {
 	TargetDir string               `yaml:"targetDir,omitempty"`
@@ -209,5 +212,6 @@ func envByRemoteID(remoteID, base string) string {
 	if id == "" || b == "" {
 		return ""
 	}
+	id = nonAlphanumeric.ReplaceAllString(id, "_")
 	return strings.TrimSpace(os.Getenv(b + "_" + id))
 }

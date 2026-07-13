@@ -1,4 +1,4 @@
-module github.com/ldproxy/xtrasync
+module github.com/ldproxy/xtralink
 
 go 1.26.0
 

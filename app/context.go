@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ldproxy/xtrasync/lib/drivers"
-	"github.com/ldproxy/xtrasync/lib/jobs"
-	"github.com/ldproxy/xtrasync/lib/lock"
+	"github.com/ldproxy/xtralink/lib/drivers"
+	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/lib/lock"
 	"github.com/rs/zerolog"
 )
 
