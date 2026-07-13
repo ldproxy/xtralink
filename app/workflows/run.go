@@ -14,14 +14,17 @@ import (
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
-// NewRegistry builds the Action registry for the four supported Actions,
-// wired to appCtx.
+// NewRegistry builds the Action registry for all supported Actions, wired
+// to appCtx.
 func NewRegistry(appCtx *app.AppContext) *workflows.Registry {
 	registry := workflows.NewRegistry()
 	registry.Register(&actions.FindAnyAction{AppCtx: appCtx})
 	registry.Register(&actions.FindEachAction{AppCtx: appCtx})
 	registry.Register(&actions.MvFileAction{AppCtx: appCtx})
 	registry.Register(&actions.JobPushAction{AppCtx: appCtx})
+	registry.Register(&actions.PullAction{AppCtx: appCtx})
+	registry.Register(&actions.PushAction{AppCtx: appCtx})
+	registry.Register(&actions.CmdExecAction{})
 	return registry
 }
 
@@ -82,9 +85,9 @@ func ParseOverrides(raw []string) (map[string]string, error) {
 // validation could not perform (it would need the Action registry, which
 // in turn needs *app.AppContext - an import cycle from app/settings.go):
 // every Step's action must be registered, and pkg/from/to must reference an
-// existing package - pkg:mv_file's from/to additionally must be FS/S3.
-// Template-valued params (containing "${") are skipped - their actual value
-// is only known once earlier Steps have run.
+// existing package - pkg:mv_file's from/to and pkg:push's pkg additionally
+// must be FS/S3. Template-valued params (containing "${") are skipped -
+// their actual value is only known once earlier Steps have run.
 func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows.Registry) error {
 	for i, step := range wf.Steps {
 		if _, err := registry.Lookup(step.Action); err != nil {
@@ -92,15 +95,19 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 		}
 
 		switch step.Action {
-		case "pkg:find_any", "pkg:find_each":
+		case "pkg:find_any", "pkg:find_each", "pkg:pull":
 			if err := validatePackageRef(appCtx, step.Params, "pkg"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
 		case "pkg:mv_file":
-			if err := validateMvFilePackageRef(appCtx, step.Params, "from"); err != nil {
+			if err := validateSyncBackPackageRef(appCtx, step.Params, "from"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
-			if err := validateMvFilePackageRef(appCtx, step.Params, "to"); err != nil {
+			if err := validateSyncBackPackageRef(appCtx, step.Params, "to"); err != nil {
+				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+			}
+		case "pkg:push":
+			if err := validateSyncBackPackageRef(appCtx, step.Params, "pkg"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
 		}
@@ -122,7 +129,7 @@ func validatePackageRef(appCtx *app.AppContext, params map[string]any, key strin
 	return nil
 }
 
-func validateMvFilePackageRef(appCtx *app.AppContext, params map[string]any, key string) error {
+func validateSyncBackPackageRef(appCtx *app.AppContext, params map[string]any, key string) error {
 	if err := validatePackageRef(appCtx, params, key); err != nil {
 		return err
 	}
@@ -134,8 +141,8 @@ func validateMvFilePackageRef(appCtx *app.AppContext, params map[string]any, key
 	if err != nil {
 		return err
 	}
-	if !actions.SupportsMvFile(p.Type) {
-		return fmt.Errorf("%q references package %q of type %q - pkg:mv_file only supports FS/S3", key, v, p.Type)
+	if !actions.SupportsSyncBack(p.Type) {
+		return fmt.Errorf("%q references package %q of type %q - only FS/S3 packages support sync-back", key, v, p.Type)
 	}
 	return nil
 }

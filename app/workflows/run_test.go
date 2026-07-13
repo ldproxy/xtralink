@@ -405,3 +405,92 @@ func TestValidate_SkipsTemplatedPackageRefs(t *testing.T) {
 		t.Errorf("expected a templated pkg ref to be skipped (resolved only at runtime), got: %v", err)
 	}
 }
+
+func TestValidate_RejectsPushWithUnsupportedPackageType(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{Packages: []app.Package{
+		{Id: "gitpkg", Type: "GIT"},
+	}}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "pkg:push",
+		Params: map[string]any{"pkg": "gitpkg"},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err == nil {
+		t.Fatal("expected an error for a GIT package used with pkg:push")
+	}
+}
+
+func TestValidate_AcceptsPullOfAnyPackageType(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{Packages: []app.Package{
+		{Id: "gitpkg", Type: "GIT"},
+	}}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "pkg:pull",
+		Params: map[string]any{"pkg": "gitpkg"},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err != nil {
+		t.Errorf("pkg:pull should accept any package type, got: %v", err)
+	}
+}
+
+// TestRun_NbaTransformExample runs pkg:pull -> pkg:find_any -> cmd:exec ->
+// pkg:push end to end: pull exposes the package's local path as an output
+// (packageVars alone doesn't - that's the whole reason pkg:pull exists),
+// find_any locates the zip, cmd:exec copies it to a second file entirely
+// via a real OS command (no shell), and pkg:push mirrors the local mirror
+// (now containing both files) back to the FS "remote".
+func TestRun_NbaTransformExample(t *testing.T) {
+	targetDir := t.TempDir()
+	fooRemote := t.TempDir()
+	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
+
+	config := `
+targetDir: ` + targetDir + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + fooRemote + `
+
+workflows:
+  - id: nba-transform
+    steps:
+      - id: pulled
+        action: pkg:pull
+        pkg: foo
+      - id: found
+        action: pkg:find_any
+        pkg: foo
+        path: "*.zip"
+      - action: cmd:exec
+        cmd: cp ${outputs.pulled.path}/${outputs.found.path} ${outputs.pulled.path}/COPY_${outputs.found.path}
+      - action: pkg:push
+        pkg: foo
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	if err := Run(appCtx, "nba-transform", nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertContent(t, filepath.Join(fooRemote, "a.zip"), "a")
+	assertContent(t, filepath.Join(fooRemote, "COPY_a.zip"), "a")
+}

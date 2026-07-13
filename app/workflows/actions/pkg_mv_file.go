@@ -12,13 +12,14 @@ import (
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
-// SupportsMvFile reports whether pkgType may be used as pkg:mv_file's
-// from/to package - only FS and S3 have a SyncBack implementation; GIT and
-// OCI are a deliberate non-goal, not a gap (s. lib/drivers/driver.go's
-// SyncBackDriver doc comment). Exported so app/workflows.Validate can
-// reject a GIT/OCI reference before a workflow ever runs, not just when
-// mv_file itself hits it.
-func SupportsMvFile(pkgType string) bool {
+// SupportsSyncBack reports whether pkgType may be used as a package that is
+// synced back to its remote (pkg:mv_file's from/to, pkg:push's pkg) - only
+// FS and S3 have a SyncBack implementation; GIT and OCI are a deliberate
+// non-goal, not a gap (s. lib/drivers/driver.go's SyncBackDriver doc
+// comment). Exported so app/workflows.Validate can reject a GIT/OCI
+// reference before a workflow ever runs, not just when the action itself
+// hits it.
+func SupportsSyncBack(pkgType string) bool {
 	switch strings.ToUpper(strings.TrimSpace(pkgType)) {
 	case "FS", "S3":
 		return true
@@ -58,7 +59,7 @@ func (a *MvFileAction) Run(ctx *workflows.StepContext) (workflows.StepResult, er
 	if err != nil {
 		return workflows.StepResult{}, err
 	}
-	if !SupportsMvFile(fromPkg.Type) || !SupportsMvFile(toPkg.Type) {
+	if !SupportsSyncBack(fromPkg.Type) || !SupportsSyncBack(toPkg.Type) {
 		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file only supports FS/S3 packages, got from=%s(%s) to=%s(%s)",
 			fromId, fromPkg.Type, toId, toPkg.Type)
 	}

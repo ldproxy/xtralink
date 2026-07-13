@@ -80,11 +80,11 @@ func TestMvFileAction_RejectsUnsupportedPackageTypes(t *testing.T) {
 	}
 }
 
-func TestSupportsMvFile(t *testing.T) {
+func TestSupportsSyncBack(t *testing.T) {
 	cases := map[string]bool{"FS": true, "S3": true, "fs": true, "GIT": false, "OCI": false, "": false}
 	for typ, want := range cases {
-		if got := SupportsMvFile(typ); got != want {
-			t.Errorf("SupportsMvFile(%q) = %v, want %v", typ, got, want)
+		if got := SupportsSyncBack(typ); got != want {
+			t.Errorf("SupportsSyncBack(%q) = %v, want %v", typ, got, want)
 		}
 	}
 }
