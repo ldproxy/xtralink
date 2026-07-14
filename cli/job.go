@@ -8,12 +8,7 @@ import (
 	"github.com/ldproxy/xtralink/app/jobs"
 )
 
-// JobBase holds the commands present in every build. The full Job type
-// (JobBase plus, only with -tags demo, a Demo field) is defined per build -
-// job_demo.go or job_nodemo.go - so that without the tag, `job demo`
-// doesn't just fail at runtime but is absent from the command tree/--help
-// entirely, exactly like it never existed.
-type JobBase struct {
+type Job struct {
 	Push   JobPushCmd   `cmd:"" help:"Create a new job"`
 	Status JobStatusCmd `cmd:"" help:"Print status/progress of a job"`
 	Get    JobGetCmd    `cmd:"" help:"Print full details of a job as JSON"`
