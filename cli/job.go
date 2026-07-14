@@ -9,10 +9,11 @@ import (
 )
 
 type Job struct {
-	Push   JobPushCmd   `cmd:"" help:"Create a new job"`
-	Status JobStatusCmd `cmd:"" help:"Print status/progress of a job"`
-	Get    JobGetCmd    `cmd:"" help:"Print full details of a job as JSON"`
-	List   JobListCmd   `cmd:"" help:"List all jobs"`
+	Push    JobPushCmd    `cmd:"" help:"Create a new job"`
+	Status  JobStatusCmd  `cmd:"" help:"Print status/progress of a job"`
+	Get     JobGetCmd     `cmd:"" help:"Print full details of a job as JSON"`
+	List    JobListCmd    `cmd:"" help:"List all jobs"`
+	Process JobProcessCmd `cmd:"" help:"Run the job runner for one job step (or \"*\" for all) until stopped"`
 }
 
 type JobPushCmd struct {

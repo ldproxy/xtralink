@@ -14,6 +14,7 @@ import (
 	"github.com/ldproxy/xtralink/lib/drivers"
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // TestWorkflowJobProcessor_TwoStepPipelineWithImplicitAndExplicitInputs runs
@@ -230,5 +231,31 @@ jobDefinitions:
 	result := processor.Process(taken, gotJob, backend)
 	if !result.IsFailure() {
 		t.Fatal("expected a failure result for a missing required parameter")
+	}
+}
+
+// TestWorkflowJobProcessor_NilJobFailsCleanly is a regression test: found
+// via manual verification, where a PartialJob whose parent Job had already
+// been deleted (a legitimate scenario, s. tileSeedingSetupProcessor's same
+// guard) made the Runner pass job=nil into Process, which then panicked
+// deep inside resolveImplicitParams instead of failing the PartialJob
+// cleanly.
+func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{
+		Workflows: []workflows.Workflow{{Id: "wf"}},
+		JobDefinitions: []app.JobDefinition{{
+			Id:    "pipeline",
+			Steps: []app.JobStepDefinition{{Id: "step-a", Workflow: "wf"}},
+		}},
+	}}
+	processor, err := NewWorkflowJobProcessor(appCtx, "step-a")
+	if err != nil {
+		t.Fatalf("NewWorkflowJobProcessor: %v", err)
+	}
+
+	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1000, "missing-job-id")
+	result := processor.Process(partialJob, nil, jobs.NewMemoryBackend())
+	if !result.IsFailure() {
+		t.Fatal("expected a failure result instead of a panic when job is nil")
 	}
 }

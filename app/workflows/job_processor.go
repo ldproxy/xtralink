@@ -38,6 +38,14 @@ func (p *WorkflowJobProcessor) JobType() string { return p.StepId }
 func (p *WorkflowJobProcessor) Priority() int   { return 1000 }
 
 func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Job, backend jobs.Backend) jobs.JobResult {
+	if job == nil {
+		// Can legitimately happen if the Job was deleted/expired while an
+		// orphaned PartialJob for it still lingered in the queue (s. the
+		// same guard in tileSeedingSetupProcessor) - fail this PartialJob
+		// instead of panicking on a nil dereference below.
+		return jobs.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.ID, partialJob.PartOf))
+	}
+
 	wf, err := p.AppCtx.Settings.GetWorkflow(p.Step.Workflow)
 	if err != nil {
 		return jobs.Error(err.Error())
