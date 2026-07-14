@@ -167,6 +167,15 @@ func (b *RedisBackend) PushPartialJob(partialJob *PartialJob, untake bool) error
 	ctx := context.Background()
 	queue := queueKey(partialJob.Type, partialJob.Priority)
 
+	// Only a fresh push registers a Sequence slot - untake is a re-queue of
+	// a PartialJob already counted once at its original push, incrementing
+	// again would double-count it.
+	if !untake {
+		if err := b.registerSequence(ctx, partialJob.PartOf, partialJob.Sequence, 1); err != nil {
+			return err
+		}
+	}
+
 	if err := b.registerPriority(ctx, partialJob.Type, partialJob.Priority); err != nil {
 		return err
 	}
@@ -183,6 +192,11 @@ func (b *RedisBackend) PushPartialJob(partialJob *PartialJob, untake bool) error
 	return b.client.LPush(ctx, queue, partialJob.ID).Err()
 }
 
+// Take scans partialJobType's queue, highest priority first, for the first
+// PartialJob whose sequence gate is currently open (s. sequenceReady) -
+// almost always just the very next one, unless its parent Job has
+// Parallel=false and it isn't its Sequence's turn yet, in which case it is
+// skipped in favor of a later (but eligible) one.
 func (b *RedisBackend) Take(partialJobType, executor string) (*PartialJob, error) {
 	ctx := context.Background()
 
@@ -193,19 +207,71 @@ func (b *RedisBackend) Take(partialJobType, executor string) (*PartialJob, error
 
 	for _, p := range priorities {
 		queue := queueKey(partialJobType, p)
-		partialJobID, err := b.client.LMove(ctx, queue, keyTaken, "RIGHT", "LEFT").Result()
-		if err == redis.Nil {
-			continue
+		partialJob, err := b.takeEligibleFromQueue(ctx, queue, executor)
+		if err != nil {
+			return nil, err
 		}
+		if partialJob != nil {
+			return partialJob, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// takeEligibleFromQueue scans queue in pop order (tail first, the order
+// LMove RIGHT used before this method existed) for the first PartialJob
+// that is currently eligible (s. sequenceReady), claims it via LREM, and
+// returns nil if nothing in queue is eligible right now - not necessarily
+// because the queue is empty, but because everything left is waiting its
+// turn. LRANGE-then-LREM (rather than the single atomic LMove this
+// replaces) leaves a narrow window where a concurrent Take() could claim
+// the same id first; LREM reporting 0 removed detects that and simply
+// re-scans.
+func (b *RedisBackend) takeEligibleFromQueue(ctx context.Context, queue, executor string) (*PartialJob, error) {
+	for {
+		ids, err := b.client.LRange(ctx, queue, 0, -1).Result()
 		if err != nil {
 			return nil, err
 		}
 
-		partialJob, err := b.getPartialJob(ctx, partialJobID)
-		if err != nil || partialJob == nil {
+		claimedID := ""
+		for i := len(ids) - 1; i >= 0; i-- {
+			partialJob, err := b.getPartialJob(ctx, ids[i])
+			if err != nil {
+				return nil, err
+			}
+			if partialJob == nil {
+				continue
+			}
+			ready, err := b.sequenceReady(ctx, partialJob)
+			if err != nil {
+				return nil, err
+			}
+			if ready {
+				claimedID = ids[i]
+				break
+			}
+		}
+		if claimedID == "" {
+			return nil, nil
+		}
+
+		n, err := b.client.LRem(ctx, queue, 1, claimedID).Result()
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			continue // someone else claimed it between LRange and LRem - rescan
+		}
+		if err := b.client.LPush(ctx, keyTaken, claimedID).Err(); err != nil {
 			return nil, err
 		}
 
+		partialJob, err := b.getPartialJob(ctx, claimedID)
+		if err != nil || partialJob == nil {
+			return nil, err
+		}
 		now := nowMillis()
 		partialJob.Executor = &executor
 		partialJob.StartedAt = now
@@ -215,8 +281,25 @@ func (b *RedisBackend) Take(partialJobType, executor string) (*PartialJob, error
 		}
 		return partialJob, nil
 	}
+}
 
-	return nil, nil
+// sequenceReady reports whether partialJob may run right now: always true
+// for a standalone PartialJob (no parent Job) or one whose parent Job has
+// Parallel=true (the default, plain sharding - no ordering constraint);
+// otherwise only once its parent's CurrentSequence has reached its own
+// Sequence.
+func (b *RedisBackend) sequenceReady(ctx context.Context, partialJob *PartialJob) (bool, error) {
+	if partialJob.PartOf == "" {
+		return true, nil
+	}
+	job, err := b.getJob(ctx, partialJob.PartOf)
+	if err != nil {
+		return false, err
+	}
+	if job == nil || job.Parallel {
+		return true, nil
+	}
+	return partialJob.Sequence == job.CurrentSequence, nil
 }
 
 // Done removes partialJobID from the taken list, runs the setup/cleanup/
@@ -281,6 +364,11 @@ func (b *RedisBackend) onPartialJobDone(ctx context.Context, partialJob *Partial
 	if err := b.jsonSet(ctx, keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
+	if !job.Parallel {
+		if err := b.advanceSequence(ctx, job.ID, partialJob.Sequence); err != nil {
+			return err
+		}
+	}
 
 	return b.finalizeIfDone(ctx, job)
 }
@@ -342,6 +430,11 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 	}
 	if err := b.jsonSet(ctx, keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
 		return err
+	}
+	if !job.Parallel {
+		if err := b.advanceSequence(ctx, job.ID, partialJob.Sequence); err != nil {
+			return err
+		}
 	}
 
 	return b.finalizeIfDone(ctx, job)
@@ -661,4 +754,79 @@ func (b *RedisBackend) UpdatePartialJob(partialJobID string, currentDelta int) e
 		return b.UpdateJob(partialJob.PartOf, currentDelta, partialJob.UpdateTargets)
 	}
 	return nil
+}
+
+// registerSequence atomically applies delta to Job.sequenceRemaining[sequence]
+// for a Parallel=false Job (a no-op otherwise, and a no-op for a standalone
+// PartialJob with jobID==""), via the same JSON.NUMINCRBY technique
+// BaseJob.Total/Current already use, so PartialJobs of the same Sequence
+// finishing at once can never lose an update to a stale whole-document
+// read. JSON.SET ... NX seeds the leaf to 0 first (idempotent, a no-op if
+// another goroutine/process already did it) since NUMINCRBY refuses to
+// operate on a path that doesn't exist yet - Job.SequenceRemaining is
+// deliberately never omitted from the stored JSON (s. model.go) so that
+// parent object is always there for the leaf to be added to.
+func (b *RedisBackend) registerSequence(ctx context.Context, jobID string, sequence int, delta int) error {
+	if jobID == "" {
+		return nil
+	}
+	job, err := b.getJob(ctx, jobID)
+	if err != nil || job == nil || job.Parallel {
+		return err
+	}
+
+	key := keyJob + jobID
+	path := fmt.Sprintf("$.sequenceRemaining.%d", sequence)
+	// NX reports redis.Nil (a "null bulk reply") when the leaf already
+	// exists - that's the expected, harmless case (someone got there
+	// first), not a real error; only a different error is.
+	if err := b.client.JSONSetMode(ctx, key, path, 0, "NX").Err(); err != nil && err != redis.Nil {
+		return err
+	}
+	return b.jsonNumIncrBy(ctx, key, path, delta)
+}
+
+// advanceSequence decrements Job.sequenceRemaining[sequence] (the
+// PartialJob that just finished or permanently failed) and, once a
+// Sequence's count reaches zero, advances Job.currentSequence to the next
+// one already known (registered by an earlier PushPartialJob covering all
+// Sequences up front) - repeating in case that next Sequence turns out to
+// already be empty too. A no-op for a Parallel=true Job (checked by the
+// caller before this is ever invoked).
+//
+// The decrement itself is atomic (s. registerSequence), but the
+// read-decide-advance step that follows re-reads the whole Job and is not
+// itself atomic against another PartialJob of the very same Sequence
+// finishing at the exact same instant - a narrow race specific to
+// Parallel=false with more than one PartialJob per Sequence, accepted for
+// now (every future completion re-triggers this check, so a missed
+// advance is self-correcting as long as something eventually finishes at
+// the Sequence current-sequence is stuck on).
+func (b *RedisBackend) advanceSequence(ctx context.Context, jobID string, sequence int) error {
+	if err := b.registerSequence(ctx, jobID, sequence, -1); err != nil {
+		return err
+	}
+
+	job, err := b.getJob(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+
+	advanced := false
+	for {
+		remaining, ok := job.SequenceRemaining[job.CurrentSequence]
+		if !ok || remaining > 0 {
+			break
+		}
+		next := job.CurrentSequence + 1
+		if _, exists := job.SequenceRemaining[next]; !exists {
+			break
+		}
+		job.CurrentSequence = next
+		advanced = true
+	}
+	if !advanced {
+		return nil
+	}
+	return b.jsonSet(ctx, keyJob+jobID, "$.currentSequence", job.CurrentSequence)
 }

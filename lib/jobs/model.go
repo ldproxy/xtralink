@@ -120,6 +120,13 @@ type PartialJob struct {
 	// UpdateTargets is the declarative progress-update descriptor attached
 	// to a PartialJob when it is created in setup.
 	UpdateTargets []ProgressUpdate `json:"updateTargets,omitempty"`
+
+	// Sequence orders this PartialJob relative to its siblings when its
+	// parent Job has Parallel=false - it only becomes eligible to run once
+	// Job.CurrentSequence reaches this value. Ignored when Parallel is
+	// true (the default). Typically the index of this PartialJob within
+	// whatever ordered list created it, not chosen by hand.
+	Sequence int `json:"sequence,omitempty"`
 }
 
 func NewPartialJob(id, jobType string, priority int, partOf string) *PartialJob {
@@ -155,16 +162,35 @@ type Job struct {
 	Setup     *PartialJob `json:"setup"`
 	Cleanup   *PartialJob `json:"cleanup"`
 	FollowUps []*Job      `json:"followUps"`
+
+	// Parallel controls whether this Job's (non-setup/cleanup) PartialJobs
+	// may run in any order (true, the default - plain sharding) or must
+	// run one Sequence at a time (false).
+	Parallel bool `json:"parallel"`
+	// CurrentSequence is the PartialJob.Sequence value currently allowed
+	// to run, when Parallel is false. Ignored when Parallel is true.
+	CurrentSequence int `json:"currentSequence,omitempty"`
+	// SequenceRemaining counts, per Sequence value, how many PartialJobs
+	// pushed at that Sequence have not yet finished (successfully or
+	// permanently failed) - only meaningful when Parallel is false.
+	// Internal bookkeeping, analogous to BaseJob.Total/Current but
+	// partitioned per Sequence instead of aggregated; never part of the
+	// external OGC wire format. Deliberately not omitempty: the backends
+	// need this object to already exist in the stored JSON document (even
+	// empty) so a later per-sequence key can be added to it.
+	SequenceRemaining map[int]int `json:"sequenceRemaining"`
 }
 
 // NewJob creates a Job in the "accepted" state.
 func NewJob(id, jobType string, priority int, label string, inputs json.RawMessage) *Job {
 	return &Job{
-		BaseJob:   NewBaseJob(id, jobType, priority),
-		Label:     label,
-		Inputs:    inputs,
-		Outputs:   map[string]OutputValue{},
-		FollowUps: []*Job{},
+		BaseJob:           NewBaseJob(id, jobType, priority),
+		Label:             label,
+		Inputs:            inputs,
+		Outputs:           map[string]OutputValue{},
+		FollowUps:         []*Job{},
+		Parallel:          true,
+		SequenceRemaining: map[int]int{},
 	}
 }
 

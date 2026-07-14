@@ -779,3 +779,163 @@ func TestRedisBackend_RetriedThenSucceededSubJobDoesNotFailJobSet(t *testing.T) 
 		t.Errorf("expected no errors on the JobSet from a job that ultimately succeeded, got %v", final.Errors)
 	}
 }
+
+// TestRedisBackend_SequentialPartialJobsGatedByCurrentSequence is the Redis
+// counterpart to the MemoryBackend test of the same shape: one PartialJob
+// per step, Parallel=false, so each step only becomes takeable once the
+// previous one's Done() has advanced Job.CurrentSequence.
+func TestRedisBackend_SequentialPartialJobsGatedByCurrentSequence(t *testing.T) {
+	b := requireRedis(t)
+	jobType := uniqueType("sequential")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	job.Parallel = false
+	cleanupJob(t, b, job.ID)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+
+	step0Type := jobType + ":step0"
+	step1Type := jobType + ":step1"
+	step2Type := jobType + ":step2"
+
+	step0 := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
+	step0.Sequence = 0
+	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.ID)
+	step1.Sequence = 1
+	step2 := NewPartialJob(uuid.NewString(), step2Type, 1000, job.ID)
+	step2.Sequence = 2
+	for _, pj := range []*PartialJob{step0, step1, step2} {
+		cleanupPartialJob(t, b, pj.ID)
+		if err := b.PushPartialJob(pj, false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
+		}
+	}
+
+	if taken, err := b.Take(step1Type, "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step1) before step0 is done = %+v, %v, want nil, nil", taken, err)
+	}
+	if taken, err := b.Take(step2Type, "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step2) before step0 is done = %+v, %v, want nil, nil", taken, err)
+	}
+
+	taken0, err := b.Take(step0Type, "test")
+	if err != nil || taken0 == nil || taken0.ID != step0.ID {
+		t.Fatalf("Take(step0): %v, %+v", err, taken0)
+	}
+	if err := b.Done(taken0.ID); err != nil {
+		t.Fatalf("Done(step0): %v", err)
+	}
+
+	got, err := b.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.CurrentSequence != 1 {
+		t.Errorf("CurrentSequence = %d, want 1 after step0 finished", got.CurrentSequence)
+	}
+	if taken, err := b.Take(step2Type, "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step2) before step1 is done = %+v, %v, want nil, nil", taken, err)
+	}
+
+	taken1, err := b.Take(step1Type, "test")
+	if err != nil || taken1 == nil || taken1.ID != step1.ID {
+		t.Fatalf("Take(step1): %v, %+v", err, taken1)
+	}
+	if err := b.Done(taken1.ID); err != nil {
+		t.Fatalf("Done(step1): %v", err)
+	}
+
+	got, err = b.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.CurrentSequence != 2 {
+		t.Errorf("CurrentSequence = %d, want 2 after step1 finished", got.CurrentSequence)
+	}
+
+	taken2, err := b.Take(step2Type, "test")
+	if err != nil || taken2 == nil || taken2.ID != step2.ID {
+		t.Fatalf("Take(step2): %v, %+v", err, taken2)
+	}
+}
+
+// TestRedisBackend_SequenceAdvancesOnlyWhenAllItsPartialJobsAreDone covers
+// fan-out within a single Sequence - the next Sequence must stay gated
+// until every PartialJob of the current one has finished, not just one.
+func TestRedisBackend_SequenceAdvancesOnlyWhenAllItsPartialJobsAreDone(t *testing.T) {
+	b := requireRedis(t)
+	jobType := uniqueType("fanout-sequence")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	job.Parallel = false
+	cleanupJob(t, b, job.ID)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+
+	step0Type := jobType + ":step0"
+	step1Type := jobType + ":step1"
+
+	step0a := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
+	step0a.Sequence = 0
+	step0b := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
+	step0b.Sequence = 0
+	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.ID)
+	step1.Sequence = 1
+	for _, pj := range []*PartialJob{step0a, step0b, step1} {
+		cleanupPartialJob(t, b, pj.ID)
+		if err := b.PushPartialJob(pj, false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
+		}
+	}
+
+	takenA, err := b.Take(step0Type, "test")
+	if err != nil || takenA == nil {
+		t.Fatalf("Take(step0 #1): %v, %+v", err, takenA)
+	}
+	if err := b.Done(takenA.ID); err != nil {
+		t.Fatalf("Done(step0 #1): %v", err)
+	}
+	if taken, err := b.Take(step1Type, "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step1) before both step0 partials are done = %+v, %v", taken, err)
+	}
+
+	takenB, err := b.Take(step0Type, "test")
+	if err != nil || takenB == nil {
+		t.Fatalf("Take(step0 #2): %v, %+v", err, takenB)
+	}
+	if err := b.Done(takenB.ID); err != nil {
+		t.Fatalf("Done(step0 #2): %v", err)
+	}
+
+	taken1, err := b.Take(step1Type, "test")
+	if err != nil || taken1 == nil || taken1.ID != step1.ID {
+		t.Fatalf("Take(step1) after both step0 partials done: %v, %+v", err, taken1)
+	}
+}
+
+// TestRedisBackend_ParallelJobIgnoresSequenceGating confirms Sequence is a
+// no-op unless the parent Job explicitly opts into Parallel=false.
+func TestRedisBackend_ParallelJobIgnoresSequenceGating(t *testing.T) {
+	b := requireRedis(t)
+	jobType := uniqueType("parallel-with-sequence")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, job.ID)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+
+	late := NewPartialJob(uuid.NewString(), jobType+":late", 1000, job.ID)
+	late.Sequence = 5 // would never be "its turn" under gating (CurrentSequence starts at 0)
+	cleanupPartialJob(t, b, late.ID)
+	if err := b.PushPartialJob(late, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	taken, err := b.Take(late.Type, "test")
+	if err != nil || taken == nil || taken.ID != late.ID {
+		t.Fatalf("expected Parallel=true to ignore Sequence gating entirely, got %v, %+v", err, taken)
+	}
+}

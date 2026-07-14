@@ -103,6 +103,15 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *PartialJob, untake bool
 	stored := clonePartialJob(partialJob)
 	b.partial[stored.ID] = stored
 
+	// Only a fresh push registers a Sequence slot - untake is a re-queue of
+	// a PartialJob already counted once at its original push, incrementing
+	// again would double-count it.
+	if !untake && stored.PartOf != "" {
+		if job := b.jobs[stored.PartOf]; job != nil && !job.Parallel {
+			job.SequenceRemaining[stored.Sequence]++
+		}
+	}
+
 	byPriority := b.queues[stored.Type]
 	if byPriority == nil {
 		byPriority = map[int][]string{}
@@ -118,6 +127,12 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *PartialJob, untake bool
 	return nil
 }
 
+// Take scans partialJobType's queue, highest priority first, for the first
+// PartialJob whose sequence gate is currently open (s.
+// sequenceReadyLocked) - almost always just the very next one, unless its
+// parent Job has Parallel=false and it isn't its Sequence's turn yet, in
+// which case it is skipped in favor of a later (but eligible) one, leaving
+// the rest of the queue's relative order untouched.
 func (b *MemoryBackend) Take(partialJobType, executor string) (*PartialJob, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -129,27 +144,45 @@ func (b *MemoryBackend) Take(partialJobType, executor string) (*PartialJob, erro
 
 	for _, p := range descendingPriorities(byPriority) {
 		ids := byPriority[p]
-		if len(ids) == 0 {
-			continue
+		for i := len(ids) - 1; i >= 0; i-- {
+			id := ids[i]
+			partialJob := b.partial[id]
+			if partialJob == nil || !b.sequenceReadyLocked(partialJob) {
+				continue
+			}
+
+			remaining := make([]string, 0, len(ids)-1)
+			remaining = append(remaining, ids[:i]...)
+			remaining = append(remaining, ids[i+1:]...)
+			byPriority[p] = remaining
+
+			b.taken[id] = true
+			now := nowMillis()
+			partialJob.Executor = &executor
+			partialJob.StartedAt = now
+			partialJob.UpdatedAt = now
+
+			return clonePartialJob(partialJob), nil
 		}
-		id := ids[len(ids)-1]
-		byPriority[p] = ids[:len(ids)-1]
-
-		partialJob := b.partial[id]
-		if partialJob == nil {
-			continue
-		}
-
-		b.taken[id] = true
-		now := nowMillis()
-		partialJob.Executor = &executor
-		partialJob.StartedAt = now
-		partialJob.UpdatedAt = now
-
-		return clonePartialJob(partialJob), nil
 	}
 
 	return nil, nil
+}
+
+// sequenceReadyLocked reports whether partialJob may run right now: always
+// true for a standalone PartialJob (no parent Job) or one whose parent Job
+// has Parallel=true (the default, plain sharding - no ordering
+// constraint); otherwise only once its parent's CurrentSequence has
+// reached its own Sequence.
+func (b *MemoryBackend) sequenceReadyLocked(partialJob *PartialJob) bool {
+	if partialJob.PartOf == "" {
+		return true
+	}
+	job := b.jobs[partialJob.PartOf]
+	if job == nil || job.Parallel {
+		return true
+	}
+	return partialJob.Sequence == job.CurrentSequence
 }
 
 func descendingPriorities(byPriority map[int][]string) []int {
@@ -199,6 +232,9 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *PartialJob) error {
 	}
 
 	job.UpdatedAt = nowMillis()
+	if !job.Parallel {
+		b.advanceSequenceLocked(job, partialJob.Sequence)
+	}
 	return b.finalizeIfDoneLocked(job)
 }
 
@@ -239,8 +275,33 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *PartialJ
 	}
 	job.Errors = append(job.Errors, partialJob.Errors...)
 	job.UpdatedAt = nowMillis()
+	if !job.Parallel {
+		b.advanceSequenceLocked(job, partialJob.Sequence)
+	}
 
 	return b.finalizeIfDoneLocked(job)
+}
+
+// advanceSequenceLocked mirrors RedisBackend.advanceSequence: decrements
+// Job.SequenceRemaining[sequence] (the PartialJob that just finished or
+// permanently failed) and, once a Sequence's count reaches zero, advances
+// Job.CurrentSequence to the next one already known (registered by an
+// earlier PushPartialJob covering all Sequences up front) - repeating in
+// case that next Sequence turns out to already be empty too.
+func (b *MemoryBackend) advanceSequenceLocked(job *Job, sequence int) {
+	job.SequenceRemaining[sequence]--
+
+	for {
+		remaining, ok := job.SequenceRemaining[job.CurrentSequence]
+		if !ok || remaining > 0 {
+			return
+		}
+		next := job.CurrentSequence + 1
+		if _, exists := job.SequenceRemaining[next]; !exists {
+			return
+		}
+		job.CurrentSequence = next
+	}
 }
 
 // finalizeIfDoneLocked mirrors RedisBackend.finalizeIfDone, minus the SETNX
