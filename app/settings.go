@@ -16,11 +16,12 @@ import (
 var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 
 type Settings struct {
-	TargetDir string               `yaml:"targetDir,omitempty"`
-	Packages  []Package            `yaml:"packages"`
-	Workflows []workflows.Workflow `yaml:"workflows,omitempty"`
-	Jobs      JobsConfig           `yaml:"jobs,omitempty"`
-	Redis     RedisConfig          `yaml:"redis,omitempty"`
+	TargetDir      string               `yaml:"targetDir,omitempty"`
+	Packages       []Package            `yaml:"packages"`
+	Workflows      []workflows.Workflow `yaml:"workflows,omitempty"`
+	Jobs           JobsConfig           `yaml:"jobs,omitempty"`
+	Redis          RedisConfig          `yaml:"redis,omitempty"`
+	JobDefinitions []JobDefinition      `yaml:"jobDefinitions,omitempty"`
 }
 
 // JobsConfig selects and sizes the job queue backend, mirroring
@@ -178,6 +179,10 @@ func validateAndNormalize(settings *Settings) error {
 	}
 
 	if err := validateAndNormalizeJobs(&settings.Jobs, &settings.Redis); err != nil {
+		return err
+	}
+
+	if err := validateJobDefinitions(settings); err != nil {
 		return err
 	}
 

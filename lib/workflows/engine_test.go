@@ -335,3 +335,51 @@ func TestRun_PackagesVarsAreVisibleToFirstStep(t *testing.T) {
 		t.Errorf("got %v, want s3://bucket", seenURL)
 	}
 }
+
+func TestRunWithResults_LinearWorkflowReturnsExactlyOneLeaf(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register(&funcAction{actionType: "find", run: func(ctx *StepContext) (StepResult, error) {
+		return one(map[string]any{"path": "a.zip"}), nil
+	}})
+
+	wf := Workflow{Steps: []Step{{Id: "input", Action: "find"}}}
+
+	leaves, err := RunWithResults(wf, registry, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunWithResults: %v", err)
+	}
+	if len(leaves) != 1 {
+		t.Fatalf("expected exactly 1 leaf, got %d", len(leaves))
+	}
+	outputs, _ := leaves[0]["outputs"].(map[string]any)
+	input, _ := outputs["input"].(map[string]any)
+	if input["path"] != "a.zip" {
+		t.Errorf("leaf outputs.input.path = %v, want a.zip", input["path"])
+	}
+}
+
+func TestRunWithResults_ForkingWorkflowReturnsOneLeafPerBranch(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register(&funcAction{actionType: "find_each", run: func(ctx *StepContext) (StepResult, error) {
+		return one(map[string]any{"path": "a.zip"}, map[string]any{"path": "b.zip"}), nil
+	}})
+
+	wf := Workflow{Steps: []Step{{Id: "input", Action: "find_each"}}}
+
+	leaves, err := RunWithResults(wf, registry, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunWithResults: %v", err)
+	}
+	if len(leaves) != 2 {
+		t.Fatalf("expected 2 leaves (one per fork branch), got %d", len(leaves))
+	}
+	seen := map[string]bool{}
+	for _, leaf := range leaves {
+		outputs, _ := leaf["outputs"].(map[string]any)
+		input, _ := outputs["input"].(map[string]any)
+		seen[input["path"].(string)] = true
+	}
+	if !seen["a.zip"] || !seen["b.zip"] {
+		t.Errorf("expected leaves for both a.zip and b.zip, got %v", seen)
+	}
+}

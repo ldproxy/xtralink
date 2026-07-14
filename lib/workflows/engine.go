@@ -12,6 +12,18 @@ import (
 // locking a concurrent run of the same workflow out - that is an
 // orchestration concern above this package (s. app/workflows/run.go).
 func Run(workflow Workflow, registry *Registry, vars map[string]any) error {
+	_, err := RunWithResults(workflow, registry, vars)
+	return err
+}
+
+// RunWithResults behaves exactly like Run, but additionally returns the
+// vars tree at every leaf continuation reached - normally exactly one,
+// unless some Step forked (s. StepResult's 0/1/N output-set model), in
+// which case there's one per branch. A caller that wraps a Workflow (e.g. a
+// Job whose steps each run one) needs this to resolve an output-mapping
+// template expression against the workflow's own final outputs once it
+// finishes - Run's plain error-only result can't answer that.
+func RunWithResults(workflow Workflow, registry *Registry, vars map[string]any) ([]map[string]any, error) {
 	seeded := cloneTopLevel(vars)
 	if _, ok := seeded["outputs"]; !ok {
 		seeded["outputs"] = map[string]any{}
@@ -19,14 +31,15 @@ func Run(workflow Workflow, registry *Registry, vars map[string]any) error {
 	return runFrom(workflow.Steps, 0, workflow.Defaults, registry, seeded)
 }
 
-// runFrom recursively executes steps[index:] against vars. Every Step whose
-// Action returns N output sets forks: the remaining steps run once per
-// output set, independently, each with outputs.<stepId> set to that one
-// output set (s. StepResult doc comment). Nested forks are allowed and fall
-// out of this naturally - no special-casing needed.
-func runFrom(steps []Step, index int, defaults *Defaults, registry *Registry, vars map[string]any) error {
+// runFrom recursively executes steps[index:] against vars, returning the
+// vars tree at every leaf reached. Every Step whose Action returns N output
+// sets forks: the remaining steps run once per output set, independently,
+// each with outputs.<stepId> set to that one output set (s. StepResult doc
+// comment) and contributing its own leaves to the result. Nested forks are
+// allowed and fall out of this naturally - no special-casing needed.
+func runFrom(steps []Step, index int, defaults *Defaults, registry *Registry, vars map[string]any) ([]map[string]any, error) {
 	if index >= len(steps) {
-		return nil
+		return []map[string]any{vars}, nil
 	}
 
 	step := steps[index]
@@ -34,20 +47,23 @@ func runFrom(steps []Step, index int, defaults *Defaults, registry *Registry, va
 
 	result, err := runStepWithRetry(step, defaults, registry, vars)
 	if err != nil {
-		return fmt.Errorf("step %d (id=%s, action=%s): %w", index, stepId, step.Action, err)
+		return nil, fmt.Errorf("step %d (id=%s, action=%s): %w", index, stepId, step.Action, err)
 	}
 
+	var leaves []map[string]any
 	for _, outputSet := range result.Outputs {
 		branchVars := withOutput(vars, stepId, outputSet)
-		if err := runFrom(steps, index+1, defaults, registry, branchVars); err != nil {
+		branchLeaves, err := runFrom(steps, index+1, defaults, registry, branchVars)
+		if err != nil {
 			if len(result.Outputs) > 1 {
-				return fmt.Errorf("branch %s=%v: %w", stepId, outputSet, err)
+				return nil, fmt.Errorf("branch %s=%v: %w", stepId, outputSet, err)
 			}
-			return err
+			return nil, err
 		}
+		leaves = append(leaves, branchLeaves...)
 	}
 
-	return nil
+	return leaves, nil
 }
 
 // runStepWithRetry resolves the Step's Action and parameters, then runs it,
