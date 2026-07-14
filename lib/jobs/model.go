@@ -1,4 +1,4 @@
-// Package jobs implements the internal Job/JobSet queue model
+// Package jobs implements the internal Job/PartialJob queue model
 // (inputs/outputs/progressDetails), analogous to xtraplatform-jobs in Java.
 package jobs
 
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Status is the derived lifecycle status of a JobSet.
+// Status is the derived lifecycle status of a Job.
 type Status string
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // ProgressOp is the operation applied to a progressDetails JSON path when a
-// sub-Job reports progress.
+// PartialJob reports progress.
 type ProgressOp string
 
 const (
@@ -26,15 +26,15 @@ const (
 	ProgressOpSubtract ProgressOp = "subtract"
 )
 
-// ProgressUpdate declares, relative to JobSet.progressDetails, a JSON path
-// and operation that a Job.current delta should also be applied to - it lets
-// the queue core update progressDetails without knowing the job type.
+// ProgressUpdate declares, relative to Job.progressDetails, a JSON path
+// and operation that a PartialJob.current delta should also be applied to -
+// it lets the queue core update progressDetails without knowing the job type.
 type ProgressUpdate struct {
 	Path string     `json:"path"`
 	Op   ProgressOp `json:"op"`
 }
 
-// BaseJob holds the properties shared by Job and JobSet.
+// BaseJob holds the properties shared by PartialJob and Job.
 type BaseJob struct {
 	ID         string   `json:"id"`
 	Type       string   `json:"type"`
@@ -105,8 +105,9 @@ func (b *BaseJob) Update(delta int) {
 	b.UpdatedAt = nowMillis()
 }
 
-// Job is a single unit of work a worker actually executes.
-type Job struct {
+// PartialJob is a single unit of work a worker actually executes (formerly
+// named Job - renamed to stop it colliding with Job, formerly JobSet).
+type PartialJob struct {
 	BaseJob
 	PartOf   string  `json:"partOf,omitempty"`
 	Executor *string `json:"executor,omitempty"`
@@ -117,32 +118,31 @@ type Job struct {
 	Details json.RawMessage `json:"details,omitempty"`
 
 	// UpdateTargets is the declarative progress-update descriptor attached
-	// to a sub-Job when it is created in setup.
+	// to a PartialJob when it is created in setup.
 	UpdateTargets []ProgressUpdate `json:"updateTargets,omitempty"`
 }
 
-func NewJob(id, jobType string, priority int, partOf string) *Job {
-	return &Job{
+func NewPartialJob(id, jobType string, priority int, partOf string) *PartialJob {
+	return &PartialJob{
 		BaseJob: NewBaseJob(id, jobType, priority),
 		PartOf:  partOf,
 	}
 }
 
-// OutputValue is a JobSet output: either a literal value, a by-reference
-// href, or both.
+// OutputValue is a Job output: either a literal value, a by-reference href,
+// or both.
 type OutputValue struct {
 	Value any    `json:"value,omitempty"`
 	Href  string `json:"href,omitempty"`
 	Type  string `json:"type,omitempty"`
 }
 
-// JobSet is the order a caller pushes; it orchestrates Jobs and carries
-// metadata/progress.
-type JobSet struct {
+// Job is the order a caller pushes; it orchestrates PartialJobs and carries
+// metadata/progress (formerly named JobSet - renamed).
+type Job struct {
 	BaseJob
 	Label       string `json:"label,omitempty"`
 	Description string `json:"description,omitempty"`
-	Entity      string `json:"entity,omitempty"`
 
 	// Inputs mirrors the OGC Execute request body 1:1.
 	Inputs json.RawMessage `json:"inputs,omitempty"`
@@ -152,31 +152,30 @@ type JobSet struct {
 	// JobSetDetails); it is never part of the external OGC wire format.
 	ProgressDetails json.RawMessage `json:"progressDetails,omitempty"`
 
-	Setup     *Job      `json:"setup"`
-	Cleanup   *Job      `json:"cleanup"`
-	FollowUps []*JobSet `json:"followUps"`
+	Setup     *PartialJob `json:"setup"`
+	Cleanup   *PartialJob `json:"cleanup"`
+	FollowUps []*Job      `json:"followUps"`
 }
 
-// NewJobSet creates a JobSet in the "accepted" state.
-func NewJobSet(id, jobType string, priority int, label, entity string, inputs json.RawMessage) *JobSet {
-	return &JobSet{
+// NewJob creates a Job in the "accepted" state.
+func NewJob(id, jobType string, priority int, label string, inputs json.RawMessage) *Job {
+	return &Job{
 		BaseJob:   NewBaseJob(id, jobType, priority),
 		Label:     label,
-		Entity:    entity,
 		Inputs:    inputs,
 		Outputs:   map[string]OutputValue{},
-		FollowUps: []*JobSet{},
+		FollowUps: []*Job{},
 	}
 }
 
 // Status derives the OGC-facing lifecycle status.
-func (j *JobSet) Status() Status {
+func (j *Job) Status() Status {
 	switch {
 	case j.FinishedAt > 0:
-		// Checked first, ahead of StartedAt: a permanently failed setup Job
-		// (RedisBackend.forceFail) can finish a JobSet that was never
-		// formally "started" (no sub-Job was ever taken). Finished always
-		// wins, regardless of whether it was ever running.
+		// Checked first, ahead of StartedAt: a permanently failed setup
+		// PartialJob (RedisBackend.forceFail) can finish a Job that was
+		// never formally "started" (no PartialJob was ever taken). Finished
+		// always wins, regardless of whether it was ever running.
 		if j.HasErrors() {
 			return StatusFailed
 		}
@@ -190,9 +189,9 @@ func (j *JobSet) Status() Status {
 
 // Message returns a short human-readable status text. This is a generic
 // placeholder per status; phase-specific messages (e.g. naming the tileset
-// currently being seeded) would need the JobSet to carry some notion of
+// currently being seeded) would need the Job to carry some notion of
 // "current phase", which nothing in the model does yet.
-func (j *JobSet) Message() string {
+func (j *Job) Message() string {
 	switch j.Status() {
 	case StatusAccepted:
 		return "Job accepted"

@@ -28,22 +28,22 @@ var fakeLevels = []struct {
 	{Level: 6, Tiles: 5},
 }
 
-// Inputs mirrors JobSet.inputs: tileSets normalized to a plain list of
-// names, isReseed -> reseed.
+// Inputs mirrors Job.inputs: tileSets normalized to a plain list of names,
+// isReseed -> reseed.
 type Inputs struct {
 	TileProvider string   `json:"tileProvider"`
 	TileSets     []string `json:"tileSets"`
 	Reseed       bool     `json:"reseed"`
 }
 
-// SetupDetails is the Job.details flag distinguishing setup from cleanup -
-// both phases share the TypeSetup job type.
+// SetupDetails is the PartialJob.details flag distinguishing setup from
+// cleanup - both phases share the TypeSetup partial job type.
 type SetupDetails struct {
 	IsCleanup bool `json:"isCleanup"`
 }
 
-// WorkerDetails is attached to each vector sub-Job so the worker knows what
-// it is (simulated) rendering, for logging/error messages only.
+// WorkerDetails is attached to each vector PartialJob so the worker knows
+// what it is (simulated) rendering, for logging/error messages only.
 type WorkerDetails struct {
 	TileSet string `json:"tileSet"`
 	Level   int    `json:"level"`
@@ -64,7 +64,7 @@ type LevelProgress struct {
 	Levels  map[string][]int `json:"levels"`
 }
 
-// SeedingReport is written to JobSet.outputs by the cleanup step.
+// SeedingReport is written to Job.outputs by the cleanup step.
 type SeedingReport struct {
 	TileProvider   string `json:"tileProvider"`
 	TilesGenerated int    `json:"tilesGenerated"`

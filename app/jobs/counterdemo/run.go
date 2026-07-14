@@ -21,23 +21,23 @@ type Options struct {
 	Timeout      time.Duration
 }
 
-// Run pushes a JobSet with no Setup/Cleanup - just a single Job, pushed
-// directly via Backend.PushJob, since PushJobSet only auto-pushes a Setup
-// Job (which this job type doesn't have) - and drives it to completion with
-// a Runner registered with CounterProcessor.
-func Run(appCtx *app.AppContext, opts Options) (*jobs.JobSet, error) {
-	js := jobs.NewJobSet(uuid.NewString(), Type, 1000, "Counter demo", "", nil)
-	if err := appCtx.Jobs.PushJobSet(js); err != nil {
-		return nil, fmt.Errorf("could not push job set: %w", err)
+// Run pushes a Job with no Setup/Cleanup - just a single PartialJob, pushed
+// directly via Backend.PushPartialJob, since PushJob only auto-pushes a
+// Setup PartialJob (which this job type doesn't have) - and drives it to
+// completion with a Runner registered with CounterProcessor.
+func Run(appCtx *app.AppContext, opts Options) (*jobs.Job, error) {
+	job := jobs.NewJob(uuid.NewString(), Type, 1000, "Counter demo", nil)
+	if err := appCtx.Jobs.PushJob(job); err != nil {
+		return nil, fmt.Errorf("could not push job: %w", err)
 	}
 
-	job := jobs.NewJob(uuid.NewString(), Type, js.Priority, js.ID)
-	job.Total = opts.Steps
-	if err := appCtx.Jobs.InitJobSet(js.ID, opts.Steps, nil); err != nil {
-		return nil, fmt.Errorf("could not init job set total: %w", err)
+	partialJob := jobs.NewPartialJob(uuid.NewString(), Type, job.Priority, job.ID)
+	partialJob.Total = opts.Steps
+	if err := appCtx.Jobs.InitJob(job.ID, opts.Steps, nil); err != nil {
+		return nil, fmt.Errorf("could not init job total: %w", err)
 	}
-	if err := appCtx.Jobs.PushJob(job, false); err != nil {
-		return nil, fmt.Errorf("could not push job: %w", err)
+	if err := appCtx.Jobs.PushPartialJob(partialJob, false); err != nil {
+		return nil, fmt.Errorf("could not push partial job: %w", err)
 	}
 
 	runner := jobs.NewRunner(appCtx.Jobs, "demo")
@@ -58,11 +58,11 @@ func Run(appCtx *app.AppContext, opts Options) (*jobs.JobSet, error) {
 	for {
 		select {
 		case <-ticker.C:
-			current, err := appCtx.Jobs.GetSet(js.ID)
+			current, err := appCtx.Jobs.GetJob(job.ID)
 			if err != nil {
 				return nil, err
 			}
-			// No Cleanup Job exists for this job type, so unlike
+			// No Cleanup PartialJob exists for this job type, so unlike
 			// tileseedingdemo there is no extra step to wait for once
 			// finishedAt is set.
 			if current != nil && current.FinishedAt > 0 {
@@ -72,8 +72,8 @@ func Run(appCtx *app.AppContext, opts Options) (*jobs.JobSet, error) {
 			}
 		case <-ctx.Done():
 			<-runnerDone
-			final, _ := appCtx.Jobs.GetSet(js.ID)
-			return final, fmt.Errorf("timed out after %s waiting for job set to finish", opts.Timeout)
+			final, _ := appCtx.Jobs.GetJob(job.ID)
+			return final, fmt.Errorf("timed out after %s waiting for job to finish", opts.Timeout)
 		}
 	}
 }

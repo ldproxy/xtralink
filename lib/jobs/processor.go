@@ -24,12 +24,12 @@ func (r JobResult) IsFailure() bool {
 }
 
 // JobProcessor is the worker-plugin contract, analogous to JobProcessor.java:
-// a processor declares which job type it handles and does the actual work.
-// Unlike Java's JobProcessor<T,U>, there is no generic details type - a
-// processor parses Job.Details/JobSet.Inputs itself, since both are already
-// opaque json.RawMessage in this model.
+// a processor declares which PartialJob type it handles and does the actual
+// work. Unlike Java's JobProcessor<T,U>, there is no generic details type -
+// a processor parses PartialJob.Details/Job.Inputs itself, since both are
+// already opaque json.RawMessage in this model.
 type JobProcessor interface {
 	JobType() string
 	Priority() int
-	Process(job *Job, jobSet *JobSet, backend Backend) JobResult
+	Process(partialJob *PartialJob, job *Job, backend Backend) JobResult
 }

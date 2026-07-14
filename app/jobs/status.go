@@ -7,7 +7,7 @@ import (
 	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
-// StatusView is the compact status/progress view for a JobSet.
+// StatusView is the compact status/progress view for a Job.
 type StatusView struct {
 	ID      string      `json:"id"`
 	Type    string      `json:"type"`
@@ -16,21 +16,21 @@ type StatusView struct {
 	Message string      `json:"message"`
 }
 
-// Status looks up a JobSet by id and returns its derived status.
+// Status looks up a Job by id and returns its derived status.
 func Status(appCtx *app.AppContext, id string) (*StatusView, error) {
-	js, err := appCtx.Jobs.GetSet(id)
+	job, err := appCtx.Jobs.GetJob(id)
 	if err != nil {
-		return nil, fmt.Errorf("could not get job set %s: %w", id, err)
+		return nil, fmt.Errorf("could not get job %s: %w", id, err)
 	}
-	if js == nil {
-		return nil, fmt.Errorf("job set not found: %s", id)
+	if job == nil {
+		return nil, fmt.Errorf("job not found: %s", id)
 	}
 
 	return &StatusView{
-		ID:      js.ID,
-		Type:    js.Type,
-		Status:  js.Status(),
-		Percent: js.Percent(),
-		Message: js.Message(),
+		ID:      job.ID,
+		Type:    job.Type,
+		Status:  job.Status(),
+		Percent: job.Percent(),
+		Message: job.Message(),
 	}, nil
 }

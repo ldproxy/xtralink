@@ -111,8 +111,8 @@ func TestNewBaseJob(t *testing.T) {
 	}
 }
 
-func TestNewJob(t *testing.T) {
-	j := NewJob("job-1", "worker", 1000, "set-1")
+func TestNewPartialJob(t *testing.T) {
+	j := NewPartialJob("job-1", "worker", 1000, "set-1")
 	if j.PartOf != "set-1" {
 		t.Errorf("PartOf = %q, want set-1", j.PartOf)
 	}
@@ -121,24 +121,24 @@ func TestNewJob(t *testing.T) {
 	}
 }
 
-func TestNewJobSet(t *testing.T) {
+func TestNewJob(t *testing.T) {
 	inputs := json.RawMessage(`{"foo":"bar"}`)
-	js := NewJobSet("set-1", "demo", 1000, "Label", "entity-1", inputs)
-	if js.Label != "Label" || js.Entity != "entity-1" {
-		t.Errorf("unexpected fields: %+v", js)
+	job := NewJob("set-1", "demo", 1000, "Label", inputs)
+	if job.Label != "Label" {
+		t.Errorf("unexpected fields: %+v", job)
 	}
-	if js.Outputs == nil {
+	if job.Outputs == nil {
 		t.Error("expected Outputs to be initialized")
 	}
-	if js.FollowUps == nil {
+	if job.FollowUps == nil {
 		t.Error("expected FollowUps to be initialized")
 	}
-	if js.Setup != nil || js.Cleanup != nil {
+	if job.Setup != nil || job.Cleanup != nil {
 		t.Error("expected Setup/Cleanup to be nil by default")
 	}
 }
 
-func TestJobSetStatus(t *testing.T) {
+func TestJobStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		startedAt  int64
@@ -151,41 +151,41 @@ func TestJobSetStatus(t *testing.T) {
 		{"running with errors mid-flight", 1, -1, []string{"transient"}, StatusRunning},
 		{"successful", 1, 2, nil, StatusSuccessful},
 		{"failed", 1, 2, []string{"boom"}, StatusFailed},
-		// Regression: a permanently failed setup Job can finish a JobSet
-		// that was never started (RedisBackend.forceFail) - finished must
-		// win over the "never started -> accepted" rule, or the JobSet
+		// Regression: a permanently failed setup PartialJob can finish a
+		// Job that was never started (RedisBackend.forceFail) - finished
+		// must win over the "never started -> accepted" rule, or the Job
 		// would incorrectly show "accepted" forever.
 		{"finished without ever starting, no errors", -1, 5, nil, StatusSuccessful},
 		{"finished without ever starting, with errors", -1, 5, []string{"setup failed"}, StatusFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			js := &JobSet{BaseJob: BaseJob{StartedAt: tt.startedAt, FinishedAt: tt.finishedAt, Errors: tt.errors}}
-			if got := js.Status(); got != tt.want {
+			job := &Job{BaseJob: BaseJob{StartedAt: tt.startedAt, FinishedAt: tt.finishedAt, Errors: tt.errors}}
+			if got := job.Status(); got != tt.want {
 				t.Errorf("Status() = %s, want %s", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestJobSetMessage(t *testing.T) {
+func TestJobMessage(t *testing.T) {
 	tests := []struct {
 		name string
-		js   *JobSet
+		job  *Job
 		want string
 	}{
-		{"accepted", &JobSet{BaseJob: BaseJob{StartedAt: -1, FinishedAt: -1}}, "Job accepted"},
-		{"running", &JobSet{BaseJob: BaseJob{StartedAt: 1, FinishedAt: -1}}, "Job running"},
-		{"successful", &JobSet{BaseJob: BaseJob{StartedAt: 1, FinishedAt: 2}}, "Job completed successfully"},
+		{"accepted", &Job{BaseJob: BaseJob{StartedAt: -1, FinishedAt: -1}}, "Job accepted"},
+		{"running", &Job{BaseJob: BaseJob{StartedAt: 1, FinishedAt: -1}}, "Job running"},
+		{"successful", &Job{BaseJob: BaseJob{StartedAt: 1, FinishedAt: 2}}, "Job completed successfully"},
 		{
 			"failed uses last error",
-			&JobSet{BaseJob: BaseJob{StartedAt: 1, FinishedAt: 2, Errors: []string{"first", "last"}}},
+			&Job{BaseJob: BaseJob{StartedAt: 1, FinishedAt: 2, Errors: []string{"first", "last"}}},
 			"last",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.js.Message(); got != tt.want {
+			if got := tt.job.Message(); got != tt.want {
 				t.Errorf("Message() = %q, want %q", got, tt.want)
 			}
 		})

@@ -9,9 +9,9 @@ import (
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
-// JobPushAction implements "job:push": builds a JobSet from the Step's
-// inputs list and pushes it via the existing app/jobs.Push - fire-and-
-// forget, it never waits for the Job to finish.
+// JobPushAction implements "job:push": builds a Job from the Step's inputs
+// list and pushes it via the existing app/jobs.Push - fire-and-forget, it
+// never waits for the Job to finish.
 type JobPushAction struct {
 	AppCtx *app.AppContext
 }
@@ -24,7 +24,6 @@ func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 		return workflows.StepResult{}, fmt.Errorf(`job:push: "type" parameter is required`)
 	}
 	label, _ := ctx.Params["label"].(string)
-	entity, _ := ctx.Params["entity"].(string)
 	priority := 1000
 	switch v := ctx.Params["priority"].(type) {
 	case int:
@@ -38,7 +37,7 @@ func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 		return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
 	}
 
-	if _, err := jobs.Push(a.AppCtx, jobType, label, entity, priority, inputsJSON); err != nil {
+	if _, err := jobs.Push(a.AppCtx, jobType, label, priority, inputsJSON); err != nil {
 		return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
 	}
 

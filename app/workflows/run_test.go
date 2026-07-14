@@ -16,39 +16,43 @@ import (
 )
 
 // fakeBackend mirrors the ones in app/jobs and app/workflows/actions test
-// files - job:push only needs PushJobSet, nothing else is exercised here.
+// files - job:push only needs PushJob, nothing else is exercised here.
 type fakeBackend struct {
-	pushedJobSets []*jobs.JobSet
+	pushedJobs []*jobs.Job
 }
 
 func (f *fakeBackend) IsEnabled() bool { return true }
-func (f *fakeBackend) PushJobSet(js *jobs.JobSet) error {
-	f.pushedJobSets = append(f.pushedJobSets, js)
+func (f *fakeBackend) PushJob(job *jobs.Job) error {
+	f.pushedJobs = append(f.pushedJobs, job)
 	return nil
 }
-func (f *fakeBackend) PushJob(job *jobs.Job, untake bool) error         { return nil }
-func (f *fakeBackend) Take(jobType, executor string) (*jobs.Job, error) { return nil, nil }
-func (f *fakeBackend) Done(jobID string) error                          { return nil }
-func (f *fakeBackend) Error(jobID, message string, retry bool) error    { return nil }
-func (f *fakeBackend) GetSets() ([]*jobs.JobSet, error)                 { return nil, nil }
-func (f *fakeBackend) GetSet(id string) (*jobs.JobSet, error)           { return nil, nil }
-func (f *fakeBackend) GetOpen(jobType string) ([]*jobs.Job, error)      { return nil, nil }
-func (f *fakeBackend) GetTaken() ([]*jobs.Job, error)                   { return nil, nil }
-func (f *fakeBackend) GetFailed() ([]*jobs.Job, error)                  { return nil, nil }
-func (f *fakeBackend) StartJobSet(jobSetID string) error                { return nil }
-func (f *fakeBackend) SetProgressDetails(jobSetID string, details any) error {
+func (f *fakeBackend) PushPartialJob(partialJob *jobs.PartialJob, untake bool) error { return nil }
+func (f *fakeBackend) Take(partialJobType, executor string) (*jobs.PartialJob, error) {
+	return nil, nil
+}
+func (f *fakeBackend) Done(partialJobID string) error                       { return nil }
+func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
+func (f *fakeBackend) GetJobs() ([]*jobs.Job, error)                        { return nil, nil }
+func (f *fakeBackend) GetJob(id string) (*jobs.Job, error)                  { return nil, nil }
+func (f *fakeBackend) GetOpen(partialJobType string) ([]*jobs.PartialJob, error) {
+	return nil, nil
+}
+func (f *fakeBackend) GetTaken() ([]*jobs.PartialJob, error)  { return nil, nil }
+func (f *fakeBackend) GetFailed() ([]*jobs.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) StartJob(jobID string) error            { return nil }
+func (f *fakeBackend) SetProgressDetails(jobID string, details any) error {
 	return nil
 }
-func (f *fakeBackend) SetOutput(jobSetID, key string, value jobs.OutputValue) error {
+func (f *fakeBackend) SetOutput(jobID, key string, value jobs.OutputValue) error {
 	return nil
 }
-func (f *fakeBackend) InitJobSet(jobSetID string, totalDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
-func (f *fakeBackend) UpdateJobSet(jobSetID string, currentDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
-func (f *fakeBackend) UpdateJob(jobID string, currentDelta int) error { return nil }
+func (f *fakeBackend) UpdatePartialJob(partialJobID string, currentDelta int) error { return nil }
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -149,12 +153,12 @@ workflows:
 	assertContent(t, filepath.Join(barRemote, "b.zip"), "b")
 	assertContent(t, filepath.Join(fooRemote, "c.txt"), "not a zip") // never matched, untouched
 
-	if len(backend.pushedJobSets) != 2 {
-		t.Fatalf("expected 2 pushed job sets (one per zip), got %d", len(backend.pushedJobSets))
+	if len(backend.pushedJobs) != 2 {
+		t.Fatalf("expected 2 pushed job sets (one per zip), got %d", len(backend.pushedJobs))
 	}
 
 	var files []string
-	for _, js := range backend.pushedJobSets {
+	for _, js := range backend.pushedJobs {
 		if js.Type != "nba-apply" {
 			t.Errorf("Type = %q, want nba-apply", js.Type)
 		}
@@ -253,8 +257,8 @@ workflows:
 	assertMissing(t, filepath.Join(fooRemote, "a.zip"))
 	assertContent(t, filepath.Join(barRemote, "a.zip"), "a")
 
-	if len(backend.pushedJobSets) != 1 {
-		t.Fatalf("expected 1 pushed job set, got %d", len(backend.pushedJobSets))
+	if len(backend.pushedJobs) != 1 {
+		t.Fatalf("expected 1 pushed job set, got %d", len(backend.pushedJobs))
 	}
 }
 

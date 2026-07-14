@@ -20,24 +20,24 @@ type Options struct {
 	TileSets     []string
 	Timeout      time.Duration
 	TileDuration time.Duration
-	// WithFollowUp attaches a second, independent tile-seeding JobSet as a
+	// WithFollowUp attaches a second, independent tile-seeding Job as a
 	// followUp of the main one, to exercise the followUps-push path in
-	// RedisBackend.onJobDone, which nothing else in this demo triggers
-	// otherwise.
+	// RedisBackend.onPartialJobDone, which nothing else in this demo
+	// triggers otherwise.
 	WithFollowUp bool
 }
 
 // Result is the outcome of a demo Run.
 type Result struct {
-	JobSet *jobs.JobSet `json:"jobSet"`
+	Job *jobs.Job `json:"job"`
 	// FollowUp is set only if Options.WithFollowUp was requested; it starts
-	// out nil and only becomes populated once the main JobSet's cleanup Job
-	// has pushed it (RedisBackend.onJobDone).
-	FollowUp *jobs.JobSet `json:"followUp,omitempty"`
+	// out nil and only becomes populated once the main Job's cleanup
+	// PartialJob has pushed it (RedisBackend.onPartialJobDone).
+	FollowUp *jobs.Job `json:"followUp,omitempty"`
 }
 
-// Run pushes a simulated tile-seeding JobSet, drives it (and, if requested,
-// its followUp) to completion with a Runner registered with
+// Run pushes a simulated tile-seeding Job, drives it (and, if requested, its
+// followUp) to completion with a Runner registered with
 // SetupProcessor/VectorWorkerProcessor, and returns the final state -
 // successful/failed, or whatever was reached by the timeout.
 func Run(appCtx *app.AppContext, opts Options) (*Result, error) {
@@ -50,35 +50,35 @@ func Run(appCtx *app.AppContext, opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	newJobSet := func(label string) (*jobs.JobSet, error) {
+	newJob := func(label string) (*jobs.Job, error) {
 		inputs, err := json.Marshal(Inputs{TileProvider: opts.Entity, TileSets: opts.TileSets})
 		if err != nil {
 			return nil, err
 		}
-		js := jobs.NewJobSet(uuid.NewString(), TypeSet, 1000, label, opts.Entity, inputs)
-		js.Setup = jobs.NewJob(uuid.NewString(), TypeSetup, js.Priority, js.ID)
-		js.Setup.Details = setupDetails
-		js.Cleanup = jobs.NewJob(uuid.NewString(), TypeSetup, js.Priority, js.ID)
-		js.Cleanup.Details = cleanupDetails
-		return js, nil
+		job := jobs.NewJob(uuid.NewString(), TypeSet, 1000, label, inputs)
+		job.Setup = jobs.NewPartialJob(uuid.NewString(), TypeSetup, job.Priority, job.ID)
+		job.Setup.Details = setupDetails
+		job.Cleanup = jobs.NewPartialJob(uuid.NewString(), TypeSetup, job.Priority, job.ID)
+		job.Cleanup.Details = cleanupDetails
+		return job, nil
 	}
 
-	js, err := newJobSet("Tile cache seeding")
+	job, err := newJob("Tile cache seeding")
 	if err != nil {
 		return nil, err
 	}
 
-	var followUp *jobs.JobSet
+	var followUp *jobs.Job
 	if opts.WithFollowUp {
-		followUp, err = newJobSet("Tile cache seeding (follow-up)")
+		followUp, err = newJob("Tile cache seeding (follow-up)")
 		if err != nil {
 			return nil, err
 		}
-		js.FollowUps = []*jobs.JobSet{followUp}
+		job.FollowUps = []*jobs.Job{followUp}
 	}
 
-	if err := appCtx.Jobs.PushJobSet(js); err != nil {
-		return nil, fmt.Errorf("could not push demo job set: %w", err)
+	if err := appCtx.Jobs.PushJob(job); err != nil {
+		return nil, fmt.Errorf("could not push demo job: %w", err)
 	}
 
 	runner := jobs.NewRunner(appCtx.Jobs, "demo")
@@ -96,8 +96,8 @@ func Run(appCtx *app.AppContext, opts Options) (*Result, error) {
 
 	result := &Result{}
 
-	main, err := waitForCompletion(ctx, appCtx.Jobs, js.ID, opts.Timeout)
-	result.JobSet = main
+	main, err := waitForCompletion(ctx, appCtx.Jobs, job.ID, opts.Timeout)
+	result.Job = main
 	if err != nil {
 		cancel()
 		<-runnerDone
@@ -119,15 +119,16 @@ func Run(appCtx *app.AppContext, opts Options) (*Result, error) {
 	return result, nil
 }
 
-// waitForCompletion polls a JobSet until it is finished. finishedAt is set
-// as soon as every sub-Job is done (mirrors JobSet.done() in Java), which
-// happens *before* the cleanup Job that was just pushed actually runs - so
-// this also gives cleanup a brief grace period to write its output before
-// treating the run as over. If a permanently failed setup Job forced
-// finishedAt instead (RedisBackend.forceFail - no sub-Jobs were ever
-// created, so cleanup is never pushed at all), that grace period just
-// expires unused and the result is returned without cleanup output.
-func waitForCompletion(ctx context.Context, backend jobs.Backend, id string, timeout time.Duration) (*jobs.JobSet, error) {
+// waitForCompletion polls a Job until it is finished. finishedAt is set as
+// soon as every PartialJob is done (mirrors JobSet.done() in Java), which
+// happens *before* the cleanup PartialJob that was just pushed actually
+// runs - so this also gives cleanup a brief grace period to write its
+// output before treating the run as over. If a permanently failed setup
+// PartialJob forced finishedAt instead (RedisBackend.forceFail - no
+// PartialJobs were ever created, so cleanup is never pushed at all), that
+// grace period just expires unused and the result is returned without
+// cleanup output.
+func waitForCompletion(ctx context.Context, backend jobs.Backend, id string, timeout time.Duration) (*jobs.Job, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -137,7 +138,7 @@ func waitForCompletion(ctx context.Context, backend jobs.Backend, id string, tim
 	for {
 		select {
 		case <-ticker.C:
-			current, err := backend.GetSet(id)
+			current, err := backend.GetJob(id)
 			if err != nil {
 				return nil, err
 			}
@@ -152,8 +153,8 @@ func waitForCompletion(ctx context.Context, backend jobs.Backend, id string, tim
 				return current, nil
 			}
 		case <-ctx.Done():
-			final, _ := backend.GetSet(id)
-			return final, fmt.Errorf("timed out after %s waiting for job set %s to finish", timeout, id)
+			final, _ := backend.GetJob(id)
+			return final, fmt.Errorf("timed out after %s waiting for job %s to finish", timeout, id)
 		}
 	}
 }

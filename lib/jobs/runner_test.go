@@ -15,13 +15,13 @@ import (
 type funcProcessor struct {
 	jobType  string
 	priority int
-	process  func(job *Job, jobSet *JobSet, backend Backend) JobResult
+	process  func(partialJob *PartialJob, job *Job, backend Backend) JobResult
 }
 
 func (p *funcProcessor) JobType() string { return p.jobType }
 func (p *funcProcessor) Priority() int   { return p.priority }
-func (p *funcProcessor) Process(job *Job, jobSet *JobSet, backend Backend) JobResult {
-	return p.process(job, jobSet, backend)
+func (p *funcProcessor) Process(partialJob *PartialJob, job *Job, backend Backend) JobResult {
+	return p.process(partialJob, job, backend)
 }
 
 // runRunner starts r.Run in a goroutine, waits for waitFor to return true (or
@@ -49,16 +49,16 @@ func TestRunner_DispatchesToRegisteredProcessor(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("dispatch")
 
-	job := NewJob(uuid.NewString(), jobType, 1000, "")
-	cleanupJob(t, b, job.ID)
-	if err := b.PushJob(job, false); err != nil {
-		t.Fatalf("PushJob: %v", err)
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	cleanupPartialJob(t, b, partialJob.ID)
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
 	}
 
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 20 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*Job, *JobSet, Backend) JobResult {
+	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*PartialJob, *Job, Backend) JobResult {
 		atomic.AddInt32(&processed, 1)
 		return Success()
 	}})
@@ -66,10 +66,10 @@ func TestRunner_DispatchesToRegisteredProcessor(t *testing.T) {
 	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
 
 	if atomic.LoadInt32(&processed) != 1 {
-		t.Errorf("expected the job to be processed exactly once, got %d", processed)
+		t.Errorf("expected the partial job to be processed exactly once, got %d", processed)
 	}
-	if got, _ := b.getJob(context.Background(), job.ID); got != nil {
-		t.Error("expected job to be deleted (Done()) after successful processing")
+	if got, _ := b.getPartialJob(context.Background(), partialJob.ID); got != nil {
+		t.Error("expected partial job to be deleted (Done()) after successful processing")
 	}
 }
 
@@ -79,22 +79,22 @@ func TestRunner_TriesHigherPriorityProcessorFirst(t *testing.T) {
 	lowType := base + "-low"
 	highType := base + "-high"
 
-	lowJob := NewJob(uuid.NewString(), lowType, 1000, "")
-	highJob := NewJob(uuid.NewString(), highType, 1000, "")
-	cleanupJob(t, b, lowJob.ID)
-	cleanupJob(t, b, highJob.ID)
-	if err := b.PushJob(lowJob, false); err != nil {
-		t.Fatalf("PushJob(low): %v", err)
+	lowJob := NewPartialJob(uuid.NewString(), lowType, 1000, "")
+	highJob := NewPartialJob(uuid.NewString(), highType, 1000, "")
+	cleanupPartialJob(t, b, lowJob.ID)
+	cleanupPartialJob(t, b, highJob.ID)
+	if err := b.PushPartialJob(lowJob, false); err != nil {
+		t.Fatalf("PushPartialJob(low): %v", err)
 	}
-	if err := b.PushJob(highJob, false); err != nil {
-		t.Fatalf("PushJob(high): %v", err)
+	if err := b.PushPartialJob(highJob, false); err != nil {
+		t.Fatalf("PushPartialJob(high): %v", err)
 	}
 
 	var mu sync.Mutex
 	var order []string
 
-	record := func(name string) func(*Job, *JobSet, Backend) JobResult {
-		return func(*Job, *JobSet, Backend) JobResult {
+	record := func(name string) func(*PartialJob, *Job, Backend) JobResult {
+		return func(*PartialJob, *Job, Backend) JobResult {
 			mu.Lock()
 			order = append(order, name)
 			mu.Unlock()
@@ -130,10 +130,10 @@ func TestRunner_ConcurrencyLimitsParallelExecution(t *testing.T) {
 	const concurrency = 2
 
 	for i := 0; i < jobCount; i++ {
-		job := NewJob(uuid.NewString(), jobType, 1000, "")
-		cleanupJob(t, b, job.ID)
-		if err := b.PushJob(job, false); err != nil {
-			t.Fatalf("PushJob: %v", err)
+		partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+		cleanupPartialJob(t, b, partialJob.ID)
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
 		}
 	}
 
@@ -143,7 +143,7 @@ func TestRunner_ConcurrencyLimitsParallelExecution(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.Concurrency = concurrency
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*Job, *JobSet, Backend) JobResult {
+	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*PartialJob, *Job, Backend) JobResult {
 		n := atomic.AddInt32(&current, 1)
 		for {
 			max := atomic.LoadInt32(&maxObserved)
@@ -160,50 +160,50 @@ func TestRunner_ConcurrencyLimitsParallelExecution(t *testing.T) {
 	runRunnerUntil(t, r, 5*time.Second, func() bool { return atomic.LoadInt32(&completed) == jobCount })
 
 	if got := atomic.LoadInt32(&completed); got != jobCount {
-		t.Fatalf("expected all %d jobs to complete, got %d", jobCount, got)
+		t.Fatalf("expected all %d partial jobs to complete, got %d", jobCount, got)
 	}
 	if max := atomic.LoadInt32(&maxObserved); max > concurrency {
-		t.Errorf("observed %d jobs running at once, want at most %d", max, concurrency)
+		t.Errorf("observed %d partial jobs running at once, want at most %d", max, concurrency)
 	}
 }
 
-func TestRunner_StartsJobSetOnFirstNonSetupJob(t *testing.T) {
+func TestRunner_StartsJobOnFirstNonSetupPartialJob(t *testing.T) {
 	b := requireRedis(t)
-	jobType := uniqueType("start-jobset")
+	jobType := uniqueType("start-job")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
-		t.Fatalf("PushJobSet: %v", err)
-	}
-	job := NewJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
-	job.Total = 1
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
 	cleanupJob(t, b, job.ID)
-	if err := b.InitJobSet(js.ID, 1, nil); err != nil {
-		t.Fatalf("InitJobSet: %v", err)
-	}
-	if err := b.PushJob(job, false); err != nil {
+	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
+	}
+	partialJob := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.ID)
+	partialJob.Total = 1
+	cleanupPartialJob(t, b, partialJob.ID)
+	if err := b.InitJob(job.ID, 1, nil); err != nil {
+		t.Fatalf("InitJob: %v", err)
+	}
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
 	}
 
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(j *Job, jobSet *JobSet, backend Backend) JobResult {
-		_ = backend.UpdateJob(j.ID, 1)
-		_ = backend.UpdateJobSet(jobSet.ID, 1, nil)
+	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(p *PartialJob, j *Job, backend Backend) JobResult {
+		_ = backend.UpdatePartialJob(p.ID, 1)
+		_ = backend.UpdateJob(j.ID, 1, nil)
 		atomic.AddInt32(&processed, 1)
 		return Success()
 	}})
 
 	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(job.ID)
 	if err != nil {
-		t.Fatalf("GetSet: %v", err)
+		t.Fatalf("GetJob: %v", err)
 	}
 	if !got.IsStarted() {
-		t.Error("expected JobSet to be started once its first non-setup job was taken")
+		t.Error("expected Job to be started once its first non-setup partial job was taken")
 	}
 }
 
@@ -211,17 +211,17 @@ func TestRunner_OnHoldRetriesAfterInterval(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("onhold")
 
-	job := NewJob(uuid.NewString(), jobType, 1000, "")
-	cleanupJob(t, b, job.ID)
-	if err := b.PushJob(job, false); err != nil {
-		t.Fatalf("PushJob: %v", err)
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	cleanupPartialJob(t, b, partialJob.ID)
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
 	}
 
 	var attempts int32
 	r := NewRunner(b, "test")
 	r.OnHoldRetryInterval = 100 * time.Millisecond
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*Job, *JobSet, Backend) JobResult {
+	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*PartialJob, *Job, Backend) JobResult {
 		if atomic.AddInt32(&attempts, 1) == 1 {
 			return OnHold()
 		}
@@ -233,7 +233,7 @@ func TestRunner_OnHoldRetriesAfterInterval(t *testing.T) {
 	if got := atomic.LoadInt32(&attempts); got != 2 {
 		t.Errorf("expected exactly 2 attempts (initial OnHold + retry), got %d", got)
 	}
-	if got, _ := b.getJob(context.Background(), job.ID); got != nil {
-		t.Error("expected job to be deleted (Done()) once the retried attempt succeeded")
+	if got, _ := b.getPartialJob(context.Background(), partialJob.ID); got != nil {
+		t.Error("expected partial job to be deleted (Done()) once the retried attempt succeeded")
 	}
 }

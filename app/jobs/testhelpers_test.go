@@ -8,53 +8,55 @@ import "github.com/ldproxy/xtralink/lib/jobs"
 // dedicated integration tests in lib/jobs; these tests are not about the
 // queue itself, only about the thin CLI-facing functions on top of it.
 type fakeBackend struct {
-	pushedJobSet  *jobs.JobSet
-	pushJobSetErr error
+	pushedJob  *jobs.Job
+	pushJobErr error
 
-	getSetResult *jobs.JobSet
-	getSetErr    error
+	getJobResult *jobs.Job
+	getJobErr    error
 
-	getSetsResult []*jobs.JobSet
-	getSetsErr    error
+	getJobsResult []*jobs.Job
+	getJobsErr    error
 }
 
 func (f *fakeBackend) IsEnabled() bool { return true }
 
-func (f *fakeBackend) PushJobSet(js *jobs.JobSet) error {
-	f.pushedJobSet = js
-	return f.pushJobSetErr
+func (f *fakeBackend) PushJob(job *jobs.Job) error {
+	f.pushedJob = job
+	return f.pushJobErr
 }
 
-func (f *fakeBackend) PushJob(job *jobs.Job, untake bool) error { return nil }
+func (f *fakeBackend) PushPartialJob(partialJob *jobs.PartialJob, untake bool) error { return nil }
 
-func (f *fakeBackend) Take(jobType, executor string) (*jobs.Job, error) { return nil, nil }
+func (f *fakeBackend) Take(partialJobType, executor string) (*jobs.PartialJob, error) {
+	return nil, nil
+}
 
-func (f *fakeBackend) Done(jobID string) error { return nil }
+func (f *fakeBackend) Done(partialJobID string) error { return nil }
 
-func (f *fakeBackend) Error(jobID, message string, retry bool) error { return nil }
+func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
 
-func (f *fakeBackend) GetSets() ([]*jobs.JobSet, error) { return f.getSetsResult, f.getSetsErr }
+func (f *fakeBackend) GetJobs() ([]*jobs.Job, error) { return f.getJobsResult, f.getJobsErr }
 
-func (f *fakeBackend) GetSet(id string) (*jobs.JobSet, error) { return f.getSetResult, f.getSetErr }
+func (f *fakeBackend) GetJob(id string) (*jobs.Job, error) { return f.getJobResult, f.getJobErr }
 
-func (f *fakeBackend) GetOpen(jobType string) ([]*jobs.Job, error) { return nil, nil }
+func (f *fakeBackend) GetOpen(partialJobType string) ([]*jobs.PartialJob, error) { return nil, nil }
 
-func (f *fakeBackend) GetTaken() ([]*jobs.Job, error) { return nil, nil }
+func (f *fakeBackend) GetTaken() ([]*jobs.PartialJob, error) { return nil, nil }
 
-func (f *fakeBackend) GetFailed() ([]*jobs.Job, error) { return nil, nil }
+func (f *fakeBackend) GetFailed() ([]*jobs.PartialJob, error) { return nil, nil }
 
-func (f *fakeBackend) StartJobSet(jobSetID string) error { return nil }
+func (f *fakeBackend) StartJob(jobID string) error { return nil }
 
-func (f *fakeBackend) SetProgressDetails(jobSetID string, details any) error { return nil }
+func (f *fakeBackend) SetProgressDetails(jobID string, details any) error { return nil }
 
-func (f *fakeBackend) SetOutput(jobSetID, key string, value jobs.OutputValue) error { return nil }
+func (f *fakeBackend) SetOutput(jobID, key string, value jobs.OutputValue) error { return nil }
 
-func (f *fakeBackend) InitJobSet(jobSetID string, totalDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
 
-func (f *fakeBackend) UpdateJobSet(jobSetID string, currentDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
 
-func (f *fakeBackend) UpdateJob(jobID string, currentDelta int) error { return nil }
+func (f *fakeBackend) UpdatePartialJob(partialJobID string, currentDelta int) error { return nil }

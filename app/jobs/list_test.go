@@ -8,10 +8,10 @@ import (
 	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
-func TestList_MapsAllJobSets(t *testing.T) {
-	a := jobs.NewJobSet("id-a", "demo", 1000, "", "", nil)
-	b := jobs.NewJobSet("id-b", "demo", 1000, "", "", nil)
-	backend := &fakeBackend{getSetsResult: []*jobs.JobSet{a, b}}
+func TestList_MapsAllJobs(t *testing.T) {
+	a := jobs.NewJob("id-a", "demo", 1000, "", nil)
+	b := jobs.NewJob("id-b", "demo", 1000, "", nil)
+	backend := &fakeBackend{getJobsResult: []*jobs.Job{a, b}}
 	appCtx := &app.AppContext{Jobs: backend}
 
 	got, err := List(appCtx)
@@ -24,7 +24,7 @@ func TestList_MapsAllJobSets(t *testing.T) {
 }
 
 func TestList_EmptyReturnsEmptyNotNilSlice(t *testing.T) {
-	backend := &fakeBackend{getSetsResult: []*jobs.JobSet{}}
+	backend := &fakeBackend{getJobsResult: []*jobs.Job{}}
 	appCtx := &app.AppContext{Jobs: backend}
 
 	got, err := List(appCtx)
@@ -40,7 +40,7 @@ func TestList_EmptyReturnsEmptyNotNilSlice(t *testing.T) {
 }
 
 func TestList_WrapsBackendError(t *testing.T) {
-	backend := &fakeBackend{getSetsErr: errors.New("boom")}
+	backend := &fakeBackend{getJobsErr: errors.New("boom")}
 	appCtx := &app.AppContext{Jobs: backend}
 
 	if _, err := List(appCtx); err == nil {

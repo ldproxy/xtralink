@@ -12,14 +12,14 @@ func TestRedisBackend_PushJobSetAndGetSet(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("push-set")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "Label", "entity", json.RawMessage(`{"a":1}`))
-	cleanupJobSet(t, b, js.ID)
+	js := NewJob(uuid.NewString(), jobType, 1000, "Label", json.RawMessage(`{"a":1}`))
+	cleanupJob(t, b, js.ID)
 
-	if err := b.PushJobSet(js); err != nil {
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestRedisBackend_PushJobSetAndGetSet(t *testing.T) {
 func TestRedisBackend_GetSetReturnsNilForUnknownID(t *testing.T) {
 	b := requireRedis(t)
 
-	got, err := b.GetSet(uuid.NewString())
+	got, err := b.GetJob(uuid.NewString())
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -50,12 +50,12 @@ func TestRedisBackend_PushJobSetAutoPushesSetup(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("auto-setup")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	js.Setup = NewJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
-	cleanupJobSet(t, b, js.ID)
-	cleanupJob(t, b, js.Setup.ID)
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	js.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
+	cleanupJob(t, b, js.ID)
+	cleanupPartialJob(t, b, js.Setup.ID)
 
-	if err := b.PushJobSet(js); err != nil {
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
@@ -78,10 +78,10 @@ func TestRedisBackend_PushJobSetWithoutSetupEnqueuesNothing(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("no-setup")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	cleanupJobSet(t, b, js.ID)
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, js.ID)
 
-	if err := b.PushJobSet(js); err != nil {
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
@@ -98,16 +98,16 @@ func TestRedisBackend_TakeReturnsHighestPriorityFirst(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("priority")
 
-	low := NewJob(uuid.NewString(), jobType, 100, "")
-	high := NewJob(uuid.NewString(), jobType, 900, "")
-	cleanupJob(t, b, low.ID)
-	cleanupJob(t, b, high.ID)
+	low := NewPartialJob(uuid.NewString(), jobType, 100, "")
+	high := NewPartialJob(uuid.NewString(), jobType, 900, "")
+	cleanupPartialJob(t, b, low.ID)
+	cleanupPartialJob(t, b, high.ID)
 
-	if err := b.PushJob(low, false); err != nil {
-		t.Fatalf("PushJob(low): %v", err)
+	if err := b.PushPartialJob(low, false); err != nil {
+		t.Fatalf("PushPartialJob(low): %v", err)
 	}
-	if err := b.PushJob(high, false); err != nil {
-		t.Fatalf("PushJob(high): %v", err)
+	if err := b.PushPartialJob(high, false); err != nil {
+		t.Fatalf("PushPartialJob(high): %v", err)
 	}
 
 	taken, err := b.Take(jobType, "test")
@@ -144,9 +144,9 @@ func TestRedisBackend_DoneRemovesFromTakenAndDeletesJob(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("done")
 
-	job := NewJob(uuid.NewString(), jobType, 1000, "")
-	cleanupJob(t, b, job.ID)
-	if err := b.PushJob(job, false); err != nil {
+	job := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	cleanupPartialJob(t, b, job.ID)
+	if err := b.PushPartialJob(job, false); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 	taken, err := b.Take(jobType, "test")
@@ -168,10 +168,10 @@ func TestRedisBackend_DoneRemovesFromTakenAndDeletesJob(t *testing.T) {
 			t.Error("expected job to be removed from taken list")
 		}
 	}
-	if got, err := b.getJob(ctx, taken.ID); err != nil {
-		t.Fatalf("getJob: %v", err)
+	if got, err := b.getPartialJob(ctx, taken.ID); err != nil {
+		t.Fatalf("getPartialJob: %v", err)
 	} else if got != nil {
-		t.Errorf("expected job document to be deleted after Done(), got %+v", got)
+		t.Errorf("expected partial job document to be deleted after Done(), got %+v", got)
 	}
 }
 
@@ -186,9 +186,9 @@ func TestRedisBackend_ErrorRetriesThenPermanentlyFails(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("error-exhaust")
 
-	job := NewJob(uuid.NewString(), jobType, 1000, "")
-	cleanupJob(t, b, job.ID)
-	if err := b.PushJob(job, false); err != nil {
+	job := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	cleanupPartialJob(t, b, job.ID)
+	if err := b.PushPartialJob(job, false); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
@@ -235,20 +235,20 @@ func TestRedisBackend_InitJobSetGrowsTotal(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("init-total")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	if err := b.InitJobSet(js.ID, 5, nil); err != nil {
+	if err := b.InitJob(js.ID, 5, nil); err != nil {
 		t.Fatalf("InitJobSet: %v", err)
 	}
-	if err := b.InitJobSet(js.ID, 3, nil); err != nil {
+	if err := b.InitJob(js.ID, 3, nil); err != nil {
 		t.Fatalf("InitJobSet (2): %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -261,19 +261,19 @@ func TestRedisBackend_UpdateJobSetAppliesProgressUpdatesToProgressDetails(t *tes
 	b := requireRedis(t)
 	jobType := uniqueType("update-set-progress")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
 	js.ProgressDetails = json.RawMessage(`{"nested":{"count":0}}`)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
 	updates := []ProgressUpdate{{Path: "nested.count", Op: ProgressOpAdd}}
-	if err := b.UpdateJobSet(js.ID, 4, updates); err != nil {
+	if err := b.UpdateJob(js.ID, 4, updates); err != nil {
 		t.Fatalf("UpdateJobSet: %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -298,37 +298,37 @@ func TestRedisBackend_UpdateJobFansOutViaUpdateTargets(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("fanout")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
 	js.ProgressDetails = json.RawMessage(`{"remaining":10}`)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	job := NewJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
+	job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
 	job.Total = 5
 	job.UpdateTargets = []ProgressUpdate{{Path: "remaining", Op: ProgressOpSubtract}}
-	cleanupJob(t, b, job.ID)
-	if err := b.InitJobSet(js.ID, 5, nil); err != nil {
+	cleanupPartialJob(t, b, job.ID)
+	if err := b.InitJob(js.ID, 5, nil); err != nil {
 		t.Fatalf("InitJobSet: %v", err)
 	}
-	if err := b.PushJob(job, false); err != nil {
+	if err := b.PushPartialJob(job, false); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	if err := b.UpdateJob(job.ID, 3); err != nil {
+	if err := b.UpdatePartialJob(job.ID, 3); err != nil {
 		t.Fatalf("UpdateJob: %v", err)
 	}
 
-	gotJob, err := b.getJob(context.Background(), job.ID)
+	gotJob, err := b.getPartialJob(context.Background(), job.ID)
 	if err != nil {
-		t.Fatalf("getJob: %v", err)
+		t.Fatalf("getPartialJob: %v", err)
 	}
 	if gotJob.Current != 3 {
 		t.Errorf("job.Current = %d, want 3", gotJob.Current)
 	}
 
-	gotSet, err := b.GetSet(js.ID)
+	gotSet, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -350,10 +350,10 @@ func TestRedisBackend_OnJobDone_SetupFinishing_SyncsEmbeddedSnapshotOnly(t *test
 	b := requireRedis(t)
 	jobType := uniqueType("setup-done")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	js.Setup = NewJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	js.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
@@ -365,7 +365,7 @@ func TestRedisBackend_OnJobDone_SetupFinishing_SyncsEmbeddedSnapshotOnly(t *test
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -383,20 +383,20 @@ func TestRedisBackend_OnJobDone_LastSubJobFinalizesAndPushesCleanup(t *testing.T
 	b := requireRedis(t)
 	jobType := uniqueType("finalize-cleanup")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	js.Cleanup = NewJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	job := NewJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
+	job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
 	job.Total = 1
-	cleanupJob(t, b, job.ID)
-	if err := b.InitJobSet(js.ID, 1, nil); err != nil {
+	cleanupPartialJob(t, b, job.ID)
+	if err := b.InitJob(js.ID, 1, nil); err != nil {
 		t.Fatalf("InitJobSet: %v", err)
 	}
-	if err := b.PushJob(job, false); err != nil {
+	if err := b.PushPartialJob(job, false); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
@@ -408,23 +408,23 @@ func TestRedisBackend_OnJobDone_LastSubJobFinalizesAndPushesCleanup(t *testing.T
 	// normally what calls StartJobSet for the first non-setup Job taken.
 	// Without it, IsStarted() stays false and IsDone() can never be true
 	// even once current==total.
-	if err := b.StartJobSet(js.ID); err != nil {
+	if err := b.StartJob(js.ID); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
 	// No UpdateTargets on this job, so - like the demo processors that don't
 	// need progressDetails - the JobSet's current is grown with a direct
 	// UpdateJobSet call instead of relying on UpdateJob's fan-out.
-	if err := b.UpdateJob(taken.ID, 1); err != nil {
+	if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
 		t.Fatalf("UpdateJob: %v", err)
 	}
-	if err := b.UpdateJobSet(js.ID, 1, nil); err != nil {
+	if err := b.UpdateJob(js.ID, 1, nil); err != nil {
 		t.Fatalf("UpdateJobSet: %v", err)
 	}
 	if err := b.Done(taken.ID); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -439,27 +439,27 @@ func TestRedisBackend_OnJobDone_LastSubJobFinalizesAndPushesCleanup(t *testing.T
 	if cleanupTaken == nil || cleanupTaken.ID != js.Cleanup.ID {
 		t.Fatalf("expected cleanup job to have been pushed automatically, got %+v", cleanupTaken)
 	}
-	cleanupJob(t, b, cleanupTaken.ID)
+	cleanupPartialJob(t, b, cleanupTaken.ID)
 }
 
 func TestRedisBackend_OnJobDone_CleanupFinishing_ClearsProgressDetailsAndPushesFollowUps(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("cleanup-done")
 
-	followUp := NewJobSet(uuid.NewString(), jobType+"-followup", 1000, "", "", nil)
+	followUp := NewJob(uuid.NewString(), jobType+"-followup", 1000, "", nil)
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
 	js.ProgressDetails = json.RawMessage(`{"some":"detail"}`)
-	js.Cleanup = NewJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
-	js.FollowUps = []*JobSet{followUp}
-	cleanupJobSet(t, b, js.ID)
-	cleanupJobSet(t, b, followUp.ID)
+	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
+	js.FollowUps = []*Job{followUp}
+	cleanupJob(t, b, js.ID)
+	cleanupJob(t, b, followUp.ID)
 
-	if err := b.PushJobSet(js); err != nil {
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
-	if err := b.PushJob(js.Cleanup, false); err != nil {
-		t.Fatalf("PushJob(cleanup): %v", err)
+	if err := b.PushPartialJob(js.Cleanup, false); err != nil {
+		t.Fatalf("PushPartialJob(cleanup): %v", err)
 	}
 
 	taken, err := b.Take(jobType+":cleanup", "test")
@@ -470,7 +470,7 @@ func TestRedisBackend_OnJobDone_CleanupFinishing_ClearsProgressDetailsAndPushesF
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetSet(js.ID)
+	got, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestRedisBackend_OnJobDone_CleanupFinishing_ClearsProgressDetailsAndPushesF
 		t.Errorf("expected progressDetails cleared to null after successful cleanup, got %s", got.ProgressDetails)
 	}
 
-	pushedFollowUp, err := b.GetSet(followUp.ID)
+	pushedFollowUp, err := b.GetJob(followUp.ID)
 	if err != nil {
 		t.Fatalf("GetSet(followUp): %v", err)
 	}
@@ -491,24 +491,24 @@ func TestRedisBackend_OnJobPermanentlyFailed_ReducesTotalAndFinalizes(t *testing
 	b := requireRedis(t)
 	jobType := uniqueType("permfail-total")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	okJob := NewJob(uuid.NewString(), jobType+":ok", 1000, js.ID)
+	okJob := NewPartialJob(uuid.NewString(), jobType+":ok", 1000, js.ID)
 	okJob.Total = 3
-	badJob := NewJob(uuid.NewString(), jobType+":bad", 1000, js.ID)
+	badJob := NewPartialJob(uuid.NewString(), jobType+":bad", 1000, js.ID)
 	badJob.Total = 5
-	cleanupJob(t, b, okJob.ID)
-	cleanupJob(t, b, badJob.ID)
+	cleanupPartialJob(t, b, okJob.ID)
+	cleanupPartialJob(t, b, badJob.ID)
 
-	for _, j := range []*Job{okJob, badJob} {
-		if err := b.InitJobSet(js.ID, j.Total, nil); err != nil {
+	for _, j := range []*PartialJob{okJob, badJob} {
+		if err := b.InitJob(js.ID, j.Total, nil); err != nil {
 			t.Fatalf("InitJobSet: %v", err)
 		}
-		if err := b.PushJob(j, false); err != nil {
+		if err := b.PushPartialJob(j, false); err != nil {
 			t.Fatalf("PushJob: %v", err)
 		}
 	}
@@ -518,14 +518,14 @@ func TestRedisBackend_OnJobPermanentlyFailed_ReducesTotalAndFinalizes(t *testing
 		t.Fatalf("Take(ok): %v, %+v", err, okTaken)
 	}
 	// Bypassing the Runner here, which normally calls this automatically.
-	if err := b.StartJobSet(js.ID); err != nil {
+	if err := b.StartJob(js.ID); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
-	if err := b.UpdateJob(okTaken.ID, 3); err != nil {
-		t.Fatalf("UpdateJob(ok): %v", err)
+	if err := b.UpdatePartialJob(okTaken.ID, 3); err != nil {
+		t.Fatalf("UpdatePartialJob(ok): %v", err)
 	}
-	if err := b.UpdateJobSet(js.ID, 3, nil); err != nil {
-		t.Fatalf("UpdateJobSet(ok): %v", err)
+	if err := b.UpdateJob(js.ID, 3, nil); err != nil {
+		t.Fatalf("UpdateJob(ok): %v", err)
 	}
 	if err := b.Done(okTaken.ID); err != nil {
 		t.Fatalf("Done(ok): %v", err)
@@ -535,18 +535,18 @@ func TestRedisBackend_OnJobPermanentlyFailed_ReducesTotalAndFinalizes(t *testing
 	if err != nil || badTaken == nil {
 		t.Fatalf("Take(bad): %v, %+v", err, badTaken)
 	}
-	if err := b.UpdateJob(badTaken.ID, 2); err != nil {
-		t.Fatalf("UpdateJob(bad): %v", err)
+	if err := b.UpdatePartialJob(badTaken.ID, 2); err != nil {
+		t.Fatalf("UpdatePartialJob(bad): %v", err)
 	}
-	if err := b.UpdateJobSet(js.ID, 2, nil); err != nil {
-		t.Fatalf("UpdateJobSet(bad): %v", err)
+	if err := b.UpdateJob(js.ID, 2, nil); err != nil {
+		t.Fatalf("UpdateJob(bad): %v", err)
 	}
 	if err := b.Error(badTaken.ID, "boom", false); err != nil {
 		t.Fatalf("Error(bad): %v", err)
 	}
 	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, badTaken.ID) })
 
-	final, err := b.GetSet(js.ID)
+	final, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -568,10 +568,10 @@ func TestRedisBackend_OnJobPermanentlyFailed_SetupForcesJobSetFailed(t *testing.
 	b := requireRedis(t)
 	jobType := uniqueType("permfail-setup")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	js.Setup = NewJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	js.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, js.ID)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
@@ -584,7 +584,7 @@ func TestRedisBackend_OnJobPermanentlyFailed_SetupForcesJobSetFailed(t *testing.
 	}
 	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
 
-	final, err := b.GetSet(js.ID)
+	final, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -609,19 +609,19 @@ func TestRedisBackend_OnJobPermanentlyFailed_CleanupMergesErrorWithoutTouchingTo
 	b := requireRedis(t)
 	jobType := uniqueType("permfail-cleanup")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	js.Cleanup = NewJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 	// Simulate the set already being done before cleanup runs.
-	if err := b.InitJobSet(js.ID, 2, nil); err != nil {
+	if err := b.InitJob(js.ID, 2, nil); err != nil {
 		t.Fatalf("InitJobSet: %v", err)
 	}
 
-	if err := b.PushJob(js.Cleanup, false); err != nil {
-		t.Fatalf("PushJob(cleanup): %v", err)
+	if err := b.PushPartialJob(js.Cleanup, false); err != nil {
+		t.Fatalf("PushPartialJob(cleanup): %v", err)
 	}
 	taken, err := b.Take(jobType+":cleanup", "test")
 	if err != nil || taken == nil {
@@ -632,7 +632,7 @@ func TestRedisBackend_OnJobPermanentlyFailed_CleanupMergesErrorWithoutTouchingTo
 	}
 	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
 
-	final, err := b.GetSet(js.ID)
+	final, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
@@ -653,22 +653,22 @@ func TestRedisBackend_OnJobPermanentlyFailed_CleanupMergesErrorWithoutTouchingTo
 func TestRedisBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 	b := requireRedis(t)
 
-	run := func(t *testing.T, fail bool) *JobSet {
+	run := func(t *testing.T, fail bool) *Job {
 		jobType := uniqueType("pd-clear")
-		js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
+		js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
 		js.ProgressDetails = json.RawMessage(`{"some":"detail"}`)
-		cleanupJobSet(t, b, js.ID)
-		if err := b.PushJobSet(js); err != nil {
+		cleanupJob(t, b, js.ID)
+		if err := b.PushJob(js); err != nil {
 			t.Fatalf("PushJobSet: %v", err)
 		}
 
-		job := NewJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
+		job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
 		job.Total = 1
-		cleanupJob(t, b, job.ID)
-		if err := b.InitJobSet(js.ID, 1, nil); err != nil {
+		cleanupPartialJob(t, b, job.ID)
+		if err := b.InitJob(js.ID, 1, nil); err != nil {
 			t.Fatalf("InitJobSet: %v", err)
 		}
-		if err := b.PushJob(job, false); err != nil {
+		if err := b.PushPartialJob(job, false); err != nil {
 			t.Fatalf("PushJob: %v", err)
 		}
 
@@ -677,7 +677,7 @@ func TestRedisBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 			t.Fatalf("Take: %v, %+v", err, taken)
 		}
 		// Bypassing the Runner here, which normally calls this automatically.
-		if err := b.StartJobSet(js.ID); err != nil {
+		if err := b.StartJob(js.ID); err != nil {
 			t.Fatalf("StartJobSet: %v", err)
 		}
 		if fail {
@@ -686,10 +686,10 @@ func TestRedisBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 			}
 			t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
 		} else {
-			if err := b.UpdateJob(taken.ID, 1); err != nil {
+			if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
 				t.Fatalf("UpdateJob: %v", err)
 			}
-			if err := b.UpdateJobSet(js.ID, 1, nil); err != nil {
+			if err := b.UpdateJob(js.ID, 1, nil); err != nil {
 				t.Fatalf("UpdateJobSet: %v", err)
 			}
 			if err := b.Done(taken.ID); err != nil {
@@ -697,7 +697,7 @@ func TestRedisBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 			}
 		}
 
-		final, err := b.GetSet(js.ID)
+		final, err := b.GetJob(js.ID)
 		if err != nil {
 			t.Fatalf("GetSet: %v", err)
 		}
@@ -724,19 +724,19 @@ func TestRedisBackend_RetriedThenSucceededSubJobDoesNotFailJobSet(t *testing.T) 
 	b := requireRedis(t)
 	jobType := uniqueType("retry-then-succeed")
 
-	js := NewJobSet(uuid.NewString(), jobType, 1000, "", "", nil)
-	cleanupJobSet(t, b, js.ID)
-	if err := b.PushJobSet(js); err != nil {
+	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, js.ID)
+	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
 
-	job := NewJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
+	job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
 	job.Total = 1
-	cleanupJob(t, b, job.ID)
-	if err := b.InitJobSet(js.ID, 1, nil); err != nil {
+	cleanupPartialJob(t, b, job.ID)
+	if err := b.InitJob(js.ID, 1, nil); err != nil {
 		t.Fatalf("InitJobSet: %v", err)
 	}
-	if err := b.PushJob(job, false); err != nil {
+	if err := b.PushPartialJob(job, false); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
@@ -755,20 +755,20 @@ func TestRedisBackend_RetriedThenSucceededSubJobDoesNotFailJobSet(t *testing.T) 
 		t.Fatalf("Take (final): %v, %+v", err, taken)
 	}
 	// Bypassing the Runner here, which normally calls this automatically.
-	if err := b.StartJobSet(js.ID); err != nil {
+	if err := b.StartJob(js.ID); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
-	if err := b.UpdateJob(taken.ID, 1); err != nil {
+	if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
 		t.Fatalf("UpdateJob: %v", err)
 	}
-	if err := b.UpdateJobSet(js.ID, 1, nil); err != nil {
+	if err := b.UpdateJob(js.ID, 1, nil); err != nil {
 		t.Fatalf("UpdateJobSet: %v", err)
 	}
 	if err := b.Done(taken.ID); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	final, err := b.GetSet(js.ID)
+	final, err := b.GetJob(js.ID)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}

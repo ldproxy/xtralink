@@ -13,40 +13,44 @@ import (
 )
 
 // fakeBackend is a minimal in-memory jobs.Backend stub, mirroring
-// app/jobs/testhelpers_test.go's - these tests only ever exercise
-// PushJobSet (via JobPushAction), everything else is unused.
+// app/jobs/testhelpers_test.go's - these tests only ever exercise PushJob
+// (via JobPushAction), everything else is unused.
 type fakeBackend struct {
-	pushedJobSet *jobs.JobSet
+	pushedJob *jobs.Job
 }
 
 func (f *fakeBackend) IsEnabled() bool { return true }
-func (f *fakeBackend) PushJobSet(js *jobs.JobSet) error {
-	f.pushedJobSet = js
+func (f *fakeBackend) PushJob(job *jobs.Job) error {
+	f.pushedJob = job
 	return nil
 }
-func (f *fakeBackend) PushJob(job *jobs.Job, untake bool) error         { return nil }
-func (f *fakeBackend) Take(jobType, executor string) (*jobs.Job, error) { return nil, nil }
-func (f *fakeBackend) Done(jobID string) error                          { return nil }
-func (f *fakeBackend) Error(jobID, message string, retry bool) error    { return nil }
-func (f *fakeBackend) GetSets() ([]*jobs.JobSet, error)                 { return nil, nil }
-func (f *fakeBackend) GetSet(id string) (*jobs.JobSet, error)           { return nil, nil }
-func (f *fakeBackend) GetOpen(jobType string) ([]*jobs.Job, error)      { return nil, nil }
-func (f *fakeBackend) GetTaken() ([]*jobs.Job, error)                   { return nil, nil }
-func (f *fakeBackend) GetFailed() ([]*jobs.Job, error)                  { return nil, nil }
-func (f *fakeBackend) StartJobSet(jobSetID string) error                { return nil }
-func (f *fakeBackend) SetProgressDetails(jobSetID string, details any) error {
+func (f *fakeBackend) PushPartialJob(partialJob *jobs.PartialJob, untake bool) error { return nil }
+func (f *fakeBackend) Take(partialJobType, executor string) (*jobs.PartialJob, error) {
+	return nil, nil
+}
+func (f *fakeBackend) Done(partialJobID string) error                       { return nil }
+func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
+func (f *fakeBackend) GetJobs() ([]*jobs.Job, error)                        { return nil, nil }
+func (f *fakeBackend) GetJob(id string) (*jobs.Job, error)                  { return nil, nil }
+func (f *fakeBackend) GetOpen(partialJobType string) ([]*jobs.PartialJob, error) {
+	return nil, nil
+}
+func (f *fakeBackend) GetTaken() ([]*jobs.PartialJob, error)  { return nil, nil }
+func (f *fakeBackend) GetFailed() ([]*jobs.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) StartJob(jobID string) error            { return nil }
+func (f *fakeBackend) SetProgressDetails(jobID string, details any) error {
 	return nil
 }
-func (f *fakeBackend) SetOutput(jobSetID, key string, value jobs.OutputValue) error {
+func (f *fakeBackend) SetOutput(jobID, key string, value jobs.OutputValue) error {
 	return nil
 }
-func (f *fakeBackend) InitJobSet(jobSetID string, totalDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
-func (f *fakeBackend) UpdateJobSet(jobSetID string, currentDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []jobs.ProgressUpdate) error {
 	return nil
 }
-func (f *fakeBackend) UpdateJob(jobID string, currentDelta int) error { return nil }
+func (f *fakeBackend) UpdatePartialJob(partialJobID string, currentDelta int) error { return nil }
 
 // newTestAppContext builds a real *app.AppContext around the given
 // packages - no Redis, no network, matching the FS package type's whole

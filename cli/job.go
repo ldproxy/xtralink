@@ -14,33 +14,32 @@ import (
 // doesn't just fail at runtime but is absent from the command tree/--help
 // entirely, exactly like it never existed.
 type JobBase struct {
-	Push   JobPushCmd   `cmd:"" help:"Create a new job set"`
-	Status JobStatusCmd `cmd:"" help:"Print status/progress of a job set"`
-	Get    JobGetCmd    `cmd:"" help:"Print full details of a job set as JSON"`
-	List   JobListCmd   `cmd:"" help:"List all job sets"`
+	Push   JobPushCmd   `cmd:"" help:"Create a new job"`
+	Status JobStatusCmd `cmd:"" help:"Print status/progress of a job"`
+	Get    JobGetCmd    `cmd:"" help:"Print full details of a job as JSON"`
+	List   JobListCmd   `cmd:"" help:"List all jobs"`
 }
 
 type JobPushCmd struct {
 	Type     string `arg:"" help:"Job type"`
 	Inputs   string `help:"Inputs as JSON" default:""`
 	Label    string `help:"Human readable label"`
-	Entity   string `help:"Entity/provider id this job set belongs to"`
 	Priority int    `help:"Priority, higher runs first" default:"1000"`
 }
 
 func (c *JobPushCmd) Run(appCtx *app.AppContext) error {
-	js, err := jobs.Push(appCtx, c.Type, c.Label, c.Entity, c.Priority, c.Inputs)
+	job, err := jobs.Push(appCtx, c.Type, c.Label, c.Priority, c.Inputs)
 	if err != nil {
 		appCtx.Logger.Error().Err(err).Str("type", c.Type).Msg("push failed")
 		return err
 	}
 
-	fmt.Printf("%s\t%s\n", js.ID, js.Status())
+	fmt.Printf("%s\t%s\n", job.ID, job.Status())
 	return nil
 }
 
 type JobStatusCmd struct {
-	Id string `arg:"" help:"Job set id"`
+	Id string `arg:"" help:"Job id"`
 }
 
 func (c *JobStatusCmd) Run(appCtx *app.AppContext) error {
@@ -55,19 +54,19 @@ func (c *JobStatusCmd) Run(appCtx *app.AppContext) error {
 }
 
 type JobGetCmd struct {
-	Id string `arg:"" help:"Job set id"`
+	Id string `arg:"" help:"Job id"`
 }
 
 func (c *JobGetCmd) Run(appCtx *app.AppContext) error {
-	js, err := jobs.Get(appCtx, c.Id)
+	job, err := jobs.Get(appCtx, c.Id)
 	if err != nil {
 		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("get failed")
 		return err
 	}
 
-	raw, err := json.MarshalIndent(js, "", "  ")
+	raw, err := json.MarshalIndent(job, "", "  ")
 	if err != nil {
-		return fmt.Errorf("could not encode job set as json: %w", err)
+		return fmt.Errorf("could not encode job as json: %w", err)
 	}
 
 	fmt.Println(string(raw))

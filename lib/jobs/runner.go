@@ -8,24 +8,25 @@ import (
 )
 
 // Runner is a polling dispatch loop, analogous to JobRunner.java: for each
-// registered JobProcessor's job type (highest priority first) it takes open
-// Jobs, executes them concurrently up to Concurrency, and applies the
-// returned JobResult (Done/Error) to the Backend. Unlike Java it polls
-// instead of reacting to a push notification (no pub/sub in this iteration).
+// registered JobProcessor's PartialJob type (highest priority first) it
+// takes open PartialJobs, executes them concurrently up to Concurrency, and
+// applies the returned JobResult (Done/Error) to the Backend. Unlike Java it
+// polls instead of reacting to a push notification (no pub/sub in this
+// iteration).
 type Runner struct {
 	Backend      Backend
 	Executor     string
 	Concurrency  int
 	PollInterval time.Duration
-	// OnHoldRetryInterval is how long an OnHold Job waits before being
-	// re-queued (Job.Retry semantics reused for this, since PushJob(job,
-	// true) is the same untake+requeue used elsewhere). This is a
-	// simplified stand-in for Java's event-driven "resource became
-	// available" callback, which needs a concrete resource to hook into
-	// that this generic Runner doesn't have.
+	// OnHoldRetryInterval is how long an OnHold PartialJob waits before
+	// being re-queued (PartialJob.Retry semantics reused for this, since
+	// PushPartialJob(partialJob, true) is the same untake+requeue used
+	// elsewhere). This is a simplified stand-in for Java's event-driven
+	// "resource became available" callback, which needs a concrete
+	// resource to hook into that this generic Runner doesn't have.
 	OnHoldRetryInterval time.Duration
 	// OnError receives errors from background job processing that would
-	// otherwise be silently dropped (Take/Done/Error/StartJobSet failures).
+	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
 	OnError func(error)
 
 	processors map[string]JobProcessor
@@ -46,8 +47,8 @@ func (r *Runner) Register(p JobProcessor) {
 	r.processors[p.JobType()] = p
 }
 
-// Run dispatches jobs until ctx is cancelled, then waits for in-flight jobs
-// to finish before returning.
+// Run dispatches partial jobs until ctx is cancelled, then waits for
+// in-flight ones to finish before returning.
 func (r *Runner) Run(ctx context.Context) error {
 	sem := make(chan struct{}, r.Concurrency)
 	var wg sync.WaitGroup
@@ -62,32 +63,32 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		assigned := false
-		for _, jobType := range types {
+		for _, partialJobType := range types {
 			select {
 			case sem <- struct{}{}:
 			default:
 				continue // at concurrency limit, try the next type
 			}
 
-			job, err := r.Backend.Take(jobType, r.Executor)
+			partialJob, err := r.Backend.Take(partialJobType, r.Executor)
 			if err != nil {
 				<-sem
 				r.reportError(err)
 				continue
 			}
-			if job == nil {
+			if partialJob == nil {
 				<-sem
 				continue
 			}
 
 			assigned = true
-			processor := r.processors[jobType]
+			processor := r.processors[partialJobType]
 			wg.Add(1)
-			go func(job *Job, processor JobProcessor) {
+			go func(partialJob *PartialJob, processor JobProcessor) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				r.process(ctx, job, processor)
-			}(job, processor)
+				r.process(ctx, partialJob, processor)
+			}(partialJob, processor)
 		}
 
 		if !assigned {
@@ -112,41 +113,41 @@ func (r *Runner) orderedTypes() []string {
 	return types
 }
 
-// process runs a single Job through its processor and applies the result,
-// including the JobSet.start() call for the first non-setup Job of a set
-// (mirrors handleJobSetStartup in JobRunner.java).
-func (r *Runner) process(ctx context.Context, job *Job, processor JobProcessor) {
-	var jobSet *JobSet
-	if job.PartOf != "" {
+// process runs a single PartialJob through its processor and applies the
+// result, including the Job.start() call for the first non-setup PartialJob
+// of a Job (mirrors handleJobSetStartup in JobRunner.java).
+func (r *Runner) process(ctx context.Context, partialJob *PartialJob, processor JobProcessor) {
+	var job *Job
+	if partialJob.PartOf != "" {
 		var err error
-		jobSet, err = r.Backend.GetSet(job.PartOf)
+		job, err = r.Backend.GetJob(partialJob.PartOf)
 		r.reportError(err)
 
-		if jobSet != nil && !jobSet.IsStarted() && !(jobSet.Setup != nil && jobSet.Setup.ID == job.ID) {
-			r.reportError(r.Backend.StartJobSet(job.PartOf))
+		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.ID == partialJob.ID) {
+			r.reportError(r.Backend.StartJob(partialJob.PartOf))
 		}
 	}
 
-	result := processor.Process(job, jobSet, r.Backend)
+	result := processor.Process(partialJob, job, r.Backend)
 
 	switch {
 	case result.IsSuccess():
-		r.reportError(r.Backend.Done(job.ID))
+		r.reportError(r.Backend.Done(partialJob.ID))
 	case result.IsFailure():
-		r.reportError(r.Backend.Error(job.ID, result.Error, result.Retry))
+		r.reportError(r.Backend.Error(partialJob.ID, result.Error, result.Retry))
 	case result.OnHold:
-		r.scheduleOnHoldRetry(ctx, job)
+		r.scheduleOnHoldRetry(ctx, partialJob)
 	}
 }
 
-// scheduleOnHoldRetry re-queues job after OnHoldRetryInterval, simulating
-// "the resource became available again" without an actual event source. It
-// respects ctx so it never outlives the Runner it belongs to.
-func (r *Runner) scheduleOnHoldRetry(ctx context.Context, job *Job) {
+// scheduleOnHoldRetry re-queues partialJob after OnHoldRetryInterval,
+// simulating "the resource became available again" without an actual event
+// source. It respects ctx so it never outlives the Runner it belongs to.
+func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *PartialJob) {
 	go func() {
 		select {
 		case <-time.After(r.OnHoldRetryInterval):
-			r.reportError(r.Backend.PushJob(job, true))
+			r.reportError(r.Backend.PushPartialJob(partialJob, true))
 		case <-ctx.Done():
 		}
 	}()

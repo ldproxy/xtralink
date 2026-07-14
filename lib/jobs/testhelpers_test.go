@@ -29,31 +29,32 @@ func requireRedis(t *testing.T) *RedisBackend {
 	return b
 }
 
-// uniqueType returns a job type unique to this test/call, so concurrent
-// tests never share a priority/queue key - both are keyed by job type in
-// Redis, so two tests using e.g. "worker" would steal each other's jobs.
+// uniqueType returns a partial job type unique to this test/call, so
+// concurrent tests never share a priority/queue key - both are keyed by
+// partial job type in Redis, so two tests using e.g. "worker" would steal
+// each other's partial jobs.
 func uniqueType(base string) string {
 	return base + "-" + uuid.NewString()
 }
 
-// cleanupJobSet removes a JobSet document (and its finalize-lock key) once
-// the test using it is done.
-func cleanupJobSet(t *testing.T, b *RedisBackend, id string) {
+// cleanupJob removes a Job document (and its finalize-lock key) once the
+// test using it is done.
+func cleanupJob(t *testing.T, b *RedisBackend, id string) {
 	t.Helper()
 	t.Cleanup(func() {
-		b.client.Del(context.Background(), keySet+id, keyFinalized+id)
+		b.client.Del(context.Background(), keyJob+id, keyFinalized+id)
 	})
 }
 
-// cleanupJob removes a standalone Job document and any trace of it in the
-// taken list once the test using it is done (Done()/Error() normally do
-// this as part of the real lifecycle; tests that call Take() without
-// following through need it done explicitly).
-func cleanupJob(t *testing.T, b *RedisBackend, id string) {
+// cleanupPartialJob removes a standalone PartialJob document and any trace
+// of it in the taken list once the test using it is done (Done()/Error()
+// normally do this as part of the real lifecycle; tests that call Take()
+// without following through need it done explicitly).
+func cleanupPartialJob(t *testing.T, b *RedisBackend, id string) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx := context.Background()
 		b.client.LRem(ctx, keyTaken, 0, id)
-		b.client.Del(ctx, keyJob+id)
+		b.client.Del(ctx, keyPartial+id)
 	})
 }

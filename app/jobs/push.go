@@ -10,9 +10,9 @@ import (
 	"github.com/ldproxy/xtralink/lib/jobs"
 )
 
-// Push builds a new JobSet from CLI input and pushes it onto the queue. A
-// caller pushes a JobSet (the "order"), not a raw Job.
-func Push(appCtx *app.AppContext, jobType, label, entity string, priority int, inputsRaw string) (*jobs.JobSet, error) {
+// Push builds a new Job from CLI input and pushes it onto the queue. A
+// caller pushes a Job (the "order"), not a raw PartialJob.
+func Push(appCtx *app.AppContext, jobType, label string, priority int, inputsRaw string) (*jobs.Job, error) {
 	var inputs json.RawMessage
 	if inputsRaw != "" {
 		if !json.Valid([]byte(inputsRaw)) {
@@ -21,11 +21,11 @@ func Push(appCtx *app.AppContext, jobType, label, entity string, priority int, i
 		inputs = json.RawMessage(inputsRaw)
 	}
 
-	js := jobs.NewJobSet(uuid.NewString(), jobType, priority, label, entity, inputs)
+	job := jobs.NewJob(uuid.NewString(), jobType, priority, label, inputs)
 
-	if err := appCtx.Jobs.PushJobSet(js); err != nil {
-		return nil, fmt.Errorf("could not push job set: %w", err)
+	if err := appCtx.Jobs.PushJob(job); err != nil {
+		return nil, fmt.Errorf("could not push job: %w", err)
 	}
 
-	return js, nil
+	return job, nil
 }
