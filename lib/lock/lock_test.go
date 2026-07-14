@@ -14,7 +14,7 @@ func requireRedis(t *testing.T) *RedisLocker {
 	if addr == "" {
 		addr = "localhost:6379"
 	}
-	l := NewRedisLocker(addr)
+	l := NewRedisLocker([]string{addr})
 	if err := l.client.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("redis not reachable at %s, skipping: %v", addr, err)
 	}

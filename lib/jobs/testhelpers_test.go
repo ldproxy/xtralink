@@ -20,7 +20,7 @@ func requireRedis(t *testing.T) *RedisBackend {
 		addr = "localhost:6379"
 	}
 
-	b := NewRedisBackend(addr)
+	b := NewRedisBackend([]string{addr})
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := b.client.Ping(ctx).Err(); err != nil {

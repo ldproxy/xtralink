@@ -36,11 +36,14 @@ const (
 )
 
 type RedisLocker struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
-func NewRedisLocker(addr string) *RedisLocker {
-	return &RedisLocker{client: redis.NewClient(&redis.Options{Addr: addr})}
+// NewRedisLocker builds a client for nodes (single Redis/Valkey node, or a
+// cluster if more than one) - the same nodes list app.NewAppContext also
+// passes to jobs.NewRedisBackend, since both share one Redis instance.
+func NewRedisLocker(nodes []string) *RedisLocker {
+	return &RedisLocker{client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes})}
 }
 
 func (r *RedisLocker) Acquire(ctx context.Context, id string) (func(), bool, error) {

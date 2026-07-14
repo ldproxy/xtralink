@@ -52,20 +52,38 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 		logger = zerolog.New(os.Stdout).Level(logLevel).With().Timestamp().Logger()
 	}
 
-	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-
 	c := AppContext{
 		Logger:   logger,
 		Version:  version,
 		Dev:      isDev,
 		Settings: settings,
 		Drivers:  drivers.NewFactoryWithLogger(logger),
-		Jobs:     jobs.NewRedisBackend(redisAddr),
-		Locks:    lock.NewRedisLocker(redisAddr),
+		Jobs:     newJobsBackend(settings),
+		Locks:    newLocker(settings),
 	}
 
 	return &c
+}
+
+// newJobsBackend picks the job queue backend from Settings.Jobs.Queue -
+// "redis" connects to Settings.Redis.Nodes (single node or cluster, s.
+// jobs.NewRedisBackend), anything else (including a zero-value Settings
+// that never went through LoadSettings, e.g. in tests) defaults to the
+// in-memory backend, matching JobsConfiguration's own "LOCAL" default.
+func newJobsBackend(settings *Settings) jobs.Backend {
+	if settings != nil && strings.EqualFold(settings.Jobs.Queue, "redis") {
+		return jobs.NewRedisBackend(settings.Redis.Nodes)
+	}
+	return jobs.NewMemoryBackend()
+}
+
+// newLocker only returns a real distributed lock if Redis is actually
+// configured - without it, there is by definition only one process to
+// coordinate, so a NoopLocker is both correct and avoids depending on a
+// Redis that was never set up.
+func newLocker(settings *Settings) lock.Locker {
+	if settings != nil && len(settings.Redis.Nodes) > 0 {
+		return lock.NewRedisLocker(settings.Redis.Nodes)
+	}
+	return lock.NoopLocker{}
 }

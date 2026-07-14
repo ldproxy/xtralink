@@ -34,19 +34,24 @@ const (
 )
 
 // RedisBackend implements Backend directly against Redis (RedisJSON module
-// required), with no AbstractJobQueueBackend-style base class: there is only
-// one backend implementation, so the extra layer of Java's template-method
+// required), with no AbstractJobQueueBackend-style base class: MemoryBackend
+// is the only other implementation, and the two share nothing beyond the
+// Backend interface itself, so the extra layer of Java's template-method
 // abstraction is not reproduced.
 type RedisBackend struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisBackend connects lazily (go-redis does not dial until the first
 // command), so constructing this at startup never blocks or fails other
-// commands when Redis is unavailable.
-func NewRedisBackend(addr string) *RedisBackend {
+// commands when Redis is unavailable. nodes is host:port entries; a single
+// entry connects to one Redis/Valkey node, more than one switches to
+// cluster mode - go-redis's UniversalClient already picks the right client
+// type for either case, mirroring RedisImpl.java's manual
+// RedisClient/RedisClusterClient switch without having to reproduce it.
+func NewRedisBackend(nodes []string) *RedisBackend {
 	return &RedisBackend{
-		client: redis.NewClient(&redis.Options{Addr: addr}),
+		client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes}),
 	}
 }
 
