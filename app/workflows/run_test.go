@@ -410,6 +410,72 @@ func TestValidate_SkipsTemplatedPackageRefs(t *testing.T) {
 	}
 }
 
+func TestValidate_AcceptsJobPushPartialsReferencingExistingSteps(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{JobDefinitions: []app.JobDefinition{{
+		Id: "nba-pipeline",
+		Steps: []app.JobStepDefinition{
+			{Id: "nba-transformation", Workflow: "nba-transform"},
+		},
+	}}}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "job:push",
+		Params: map[string]any{
+			"type":     "nba-apply",
+			"partials": []any{map[string]any{"type": "nba-transformation"}},
+		},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err != nil {
+		t.Errorf("expected partials referencing an existing step id to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_RejectsJobPushPartialsReferencingUnknownStep(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "job:push",
+		Params: map[string]any{
+			"type":     "nba-apply",
+			"partials": []any{map[string]any{"type": "does-not-exist"}},
+		},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err == nil {
+		t.Fatal("expected an error for partials referencing an unknown step id")
+	}
+}
+
+func TestValidate_SkipsTemplatedJobPushPartialsType(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "job:push",
+		Params: map[string]any{
+			"type":     "nba-apply",
+			"partials": []any{map[string]any{"type": "${outputs.x.y}"}},
+		},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err != nil {
+		t.Errorf("expected a templated partials type to be skipped (resolved only at runtime), got: %v", err)
+	}
+}
+
+func TestValidate_JobPushWithoutPartialsIsFine(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{}}
+	registry := NewRegistry(appCtx)
+	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+		Action: "job:push",
+		Params: map[string]any{"type": "nba-apply"},
+	}}}
+
+	if err := Validate(appCtx, wf, registry); err != nil {
+		t.Errorf("expected job:push without partials to remain valid, got: %v", err)
+	}
+}
+
 func TestValidate_RejectsPushWithUnsupportedPackageType(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{Packages: []app.Package{
 		{Id: "gitpkg", Type: "GIT"},

@@ -110,6 +110,43 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "pkg"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
+		case "job:push":
+			if err := validateJobPushPartials(appCtx, step.Params); err != nil {
+				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+			}
+		}
+	}
+	return nil
+}
+
+// validateJobPushPartials checks a job:push Step's optional `partials:`
+// list the same way JobDefinitions themselves are checked (s.
+// validateJobDefinitions): every referenced type must already exist as a
+// step id somewhere under jobDefinitions:. A missing/absent `partials:` is
+// fine - job:push falls back to a bare Job then, unchanged from before.
+func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) error {
+	raw, ok := params["partials"]
+	if !ok {
+		return nil
+	}
+	entries, _ := raw.([]any)
+	if len(entries) == 0 {
+		return fmt.Errorf("partials: at least one entry is required")
+	}
+	for i, item := range entries {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return fmt.Errorf("partials[%d]: invalid entry", i)
+		}
+		typ, _ := entry["type"].(string)
+		if typ == "" {
+			return fmt.Errorf("partials[%d]: \"type\" is required", i)
+		}
+		if strings.Contains(typ, "${") {
+			continue // only known once earlier steps have run
+		}
+		if _, _, err := appCtx.Settings.GetJobStep(typ); err != nil {
+			return fmt.Errorf("partials[%d]: %w", i, err)
 		}
 	}
 	return nil
