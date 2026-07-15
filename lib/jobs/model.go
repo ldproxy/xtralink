@@ -169,7 +169,10 @@ type Job struct {
 	Parallel bool `json:"parallel"`
 	// CurrentSequence is the PartialJob.Sequence value currently allowed
 	// to run, when Parallel is false. Ignored when Parallel is true.
-	CurrentSequence int `json:"currentSequence,omitempty"`
+	// Deliberately not omitempty: 0 (the first Sequence) is its most common
+	// meaningful value, not "unset" - same reasoning as SequenceRemaining
+	// below.
+	CurrentSequence int `json:"currentSequence"`
 	// SequenceRemaining counts, per Sequence value, how many PartialJobs
 	// pushed at that Sequence have not yet finished (successfully or
 	// permanently failed) - only meaningful when Parallel is false.
