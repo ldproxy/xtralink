@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/pkg"
@@ -29,26 +28,19 @@ func (c *PullCmd) Run(appCtx *app.AppContext) error {
 }
 
 type PushCmd struct {
-	RemoteID  string `arg:"" name:"id" help:"Source package id" required:""`
-	ImageName string `arg:"" name:"image" help:"Target OCI artifact URL" required:""`
+	SourceRemoteId string `arg:"" name:"source" help:"Source package id" required:""`
+	TargetRemoteId string `arg:"" name:"target" help:"Target package id" required:""`
+	TargetTag      string `arg:"" name:"tag" help:"Target OCI artifact tag" required:""`
 }
 
 func (c *PushCmd) Run(root *CLI, appCtx *app.AppContext) error {
-	image := c.ImageName
-	tag := "latest"
-	if strings.Contains(c.ImageName, ":") {
-		parts := strings.SplitN(c.ImageName, ":", 2)
-		image = parts[0]
-		tag = parts[1]
-	}
-
-	if err := pkg.Push(appCtx, c.RemoteID, image, tag); err != nil {
+	if err := pkg.Push(appCtx, c.SourceRemoteId, c.TargetRemoteId, c.TargetTag); err != nil {
 		appCtx.Logger.Error().
 			Err(err).
 			Str("config", root.Config).
-			Str("remote_id", c.RemoteID).
-			Str("image", image).
-			Str("tag", tag).
+			Str("source_remote_id", c.SourceRemoteId).
+			Str("target_remote_id", c.TargetRemoteId).
+			Str("target_tag", c.TargetTag).
 			Msg("push failed")
 		return err
 	}

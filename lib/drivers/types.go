@@ -12,11 +12,7 @@ type Remote struct {
 }
 
 type PushRequest struct {
-	Repository   string
-	Reference    string
-	User         string
-	Password     string
-	Payload      []byte
-	PayloadMedia string
-	ArtifactType string
+	Source    Remote
+	Target    Remote
+	TargetTag string
 }

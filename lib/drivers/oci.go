@@ -7,8 +7,10 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,13 +19,22 @@ import (
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/rs/zerolog"
+	"oras.land/oras-go/v2"
+	orasfile "oras.land/oras-go/v2/content/file"
 	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
+const xtrapkgMediaType = "application/vnd.iide.xtrapkg"
+
 type ociDriver struct{ logger zerolog.Logger }
+
+type imagePart struct {
+	Descriptor ocispec.Descriptor
+	Blob       []byte
+}
 
 func NewOCIDriver(logger zerolog.Logger) *ociDriver {
 	return &ociDriver{logger: logger}
@@ -146,74 +157,39 @@ func (d *ociDriver) Sync(remote Remote) error {
 }
 
 func (d *ociDriver) Push(push PushRequest) error {
-	repository, err := normalizeOCIRepository(push.Repository)
+	repository, err := normalizeOCIRepository(push.Target.URL)
 	if err != nil {
 		return err
 	}
 	if repository == "" {
 		return fmt.Errorf("oci push repository is empty")
 	}
-	reference := strings.TrimSpace(push.Reference)
+
+	reference := strings.TrimSpace(push.TargetTag)
 	if reference == "" {
 		reference = "latest"
 	}
-	if len(push.Payload) == 0 {
-		return fmt.Errorf("oci push payload is empty")
-	}
-	payloadMedia := strings.TrimSpace(push.PayloadMedia)
-	if payloadMedia == "" {
-		payloadMedia = "archive/zip"
-	}
-	artifactType := strings.TrimSpace(push.ArtifactType)
-	if artifactType == "" {
-		artifactType = "application/vnd.iide.xtrapkg"
-	}
 
-	repo, err := remoteRepository(repository, push.User, push.Password)
+	repo, err := remoteRepository(repository, push.Target.User, push.Target.Password)
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
-	configBytes := []byte("{}")
-	configDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageConfig,
-		Digest:    digest.FromBytes(configBytes),
-		Size:      int64(len(configBytes)),
-	}
-	if err := repo.Push(ctx, configDesc, bytes.NewReader(configBytes)); err != nil {
-		return fmt.Errorf("push config blob failed: %w", err)
-	}
 
-	layerDesc := ocispec.Descriptor{
-		MediaType: payloadMedia,
-		Digest:    digest.FromBytes(push.Payload),
-		Size:      int64(len(push.Payload)),
-	}
-	if err := repo.Push(ctx, layerDesc, bytes.NewReader(push.Payload)); err != nil {
-		return fmt.Errorf("push layer blob failed: %w", err)
-	}
-
-	manifest := ocispec.Manifest{
-		Versioned:    specs.Versioned{SchemaVersion: 2},
-		MediaType:    ocispec.MediaTypeImageManifest,
-		ArtifactType: artifactType,
-		Config:       configDesc,
-		Layers:       []ocispec.Descriptor{layerDesc},
-	}
-	manifestBytes, err := json.Marshal(manifest)
+	manifest1, err := d.pushImage(ctx, push.Source.ResolvedLocalPath, repo, "", "amd64")
 	if err != nil {
-		return fmt.Errorf("could not encode oci manifest: %w", err)
+		return fmt.Errorf("failed to create oci image: %w", err)
 	}
 
-	manifestDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageManifest,
-		Digest:    digest.FromBytes(manifestBytes),
-		Size:      int64(len(manifestBytes)),
+	manifest2, err := d.pushImage(ctx, push.Source.ResolvedLocalPath, repo, "", "arm64")
+	if err != nil {
+		return fmt.Errorf("failed to create oci image: %w", err)
 	}
 
-	if err := repo.PushReference(ctx, manifestDesc, bytes.NewReader(manifestBytes), reference); err != nil {
-		return fmt.Errorf("push manifest failed: %w", err)
+	_, err = d.pushIndex(ctx, []ocispec.Descriptor{*manifest1, *manifest2}, xtrapkgMediaType, repo, reference)
+	if err != nil {
+		return fmt.Errorf("failed to create oci index: %w", err)
 	}
 
 	d.logger.Info().
@@ -222,6 +198,183 @@ func (d *ociDriver) Push(push PushRequest) error {
 		Msg("pushed oci artifact")
 
 	return nil
+}
+
+func (d *ociDriver) pushImage(ctx context.Context, directoryPath string, repo oras.Target, tag string, arch string) (*ocispec.Descriptor, error) {
+	store, err := orasfile.New("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	file, err := addFile(ctx, store, ".", ocispec.MediaTypeImageLayerGzip, directoryPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add file: %v", err)
+	}
+
+	contentDigest := file.Annotations["io.deis.oras.content.digest"]
+	d.logger.Debug().Str("contentDigest", contentDigest).Msg("created content digest")
+
+	config, err := d.createConfig(contentDigest, arch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create config: %v", err)
+	}
+
+	if err := store.Push(ctx, config.Descriptor, bytes.NewReader(config.Blob)); err != nil {
+		return nil, fmt.Errorf("push config blob failed: %v", err)
+	}
+	d.logger.Debug().Str("configDigest", config.Descriptor.Digest.String()).Msg("created config digest")
+
+	manifest, err := d.createManifest(config.Descriptor, file, xtrapkgMediaType, arch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manifest: %v", err)
+	}
+
+	if err := store.Push(ctx, manifest.Descriptor, bytes.NewReader(manifest.Blob)); err != nil {
+		return nil, fmt.Errorf("push manifest blob failed: %v", err)
+	}
+	d.logger.Debug().Str("manifestDigest", manifest.Descriptor.Digest.String()).Msg("created manifest digest")
+
+	if err = store.Tag(ctx, manifest.Descriptor, manifest.Descriptor.Digest.String()); err != nil {
+		return nil, fmt.Errorf("tag manifest failed: %v", err)
+	}
+
+	copyOptions := oras.DefaultCopyOptions
+
+	if _, err := oras.Copy(ctx, store, manifest.Descriptor.Digest.String(), repo, manifest.Descriptor.Digest.String(), copyOptions); err != nil {
+		return nil, fmt.Errorf("oras copy failed: %v", err)
+	}
+
+	return &manifest.Descriptor, nil
+}
+
+func (d *ociDriver) pushIndex(ctx context.Context, manifestDesc []ocispec.Descriptor, artifactType string, repo oras.Target, tag string) (*ocispec.Descriptor, error) {
+	store, err := orasfile.New("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	index, err := d.createIndex(manifestDesc, artifactType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create index: %v", err)
+	}
+
+	if err := store.Push(ctx, index.Descriptor, bytes.NewReader(index.Blob)); err != nil {
+		return nil, fmt.Errorf("push index blob failed: %v", err)
+	}
+	d.logger.Debug().Str("indexDigest", index.Descriptor.Digest.String()).Msg("created index digest")
+
+	if err = store.Tag(ctx, index.Descriptor, index.Descriptor.Digest.String()); err != nil {
+		return nil, fmt.Errorf("tag index failed: %v", err)
+	}
+
+	copyOptions := oras.DefaultCopyOptions
+
+	if _, err := oras.Copy(ctx, store, index.Descriptor.Digest.String(), repo, tag, copyOptions); err != nil {
+		return nil, fmt.Errorf("oras copy failed: %v", err)
+	}
+
+	return &index.Descriptor, nil
+}
+
+func (d *ociDriver) createIndex(manifestDesc []ocispec.Descriptor, artifactType string) (*imagePart, error) {
+	index := ocispec.Index{
+		Versioned:    specs.Versioned{SchemaVersion: 2},
+		MediaType:    ocispec.MediaTypeImageIndex,
+		ArtifactType: artifactType,
+		Manifests:    manifestDesc,
+	}
+
+	indexBytes, err := json.Marshal(index)
+	if err != nil {
+		return nil, fmt.Errorf("could not encode oci index: %v", err)
+	}
+	d.logger.Debug().Str("indexJson", string(indexBytes)).Msg("created index JSON")
+
+	indexDesc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Digest:    digest.FromBytes(indexBytes),
+		Size:      int64(len(indexBytes)),
+	}
+
+	return &imagePart{
+		Descriptor: indexDesc,
+		Blob:       indexBytes,
+	}, nil
+}
+
+func (d *ociDriver) createManifest(configDesc ocispec.Descriptor, layerDesc ocispec.Descriptor, artifactType string, arch string) (*imagePart, error) {
+	manifest := ocispec.Manifest{
+		Versioned:    specs.Versioned{SchemaVersion: 2},
+		MediaType:    ocispec.MediaTypeImageManifest,
+		ArtifactType: artifactType,
+		Config:       configDesc,
+		Layers:       []ocispec.Descriptor{layerDesc},
+	}
+
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("could not encode oci manifest: %v", err)
+	}
+	d.logger.Debug().Str("manifestJson", string(manifestBytes)).Msg("created manifest JSON")
+
+	manifestDesc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    digest.FromBytes(manifestBytes),
+		Size:      int64(len(manifestBytes)),
+		Platform: &ocispec.Platform{
+			OS:           "linux",
+			Architecture: arch,
+		},
+	}
+
+	return &imagePart{
+		Descriptor: manifestDesc,
+		Blob:       manifestBytes,
+	}, nil
+}
+
+func (d *ociDriver) createConfig(contentDigest string, arch string) (*imagePart, error) {
+	config := ocispec.Image{
+		Platform: ocispec.Platform{
+			OS:           "linux",
+			Architecture: arch,
+		},
+		RootFS: ocispec.RootFS{
+			Type:    "layers",
+			DiffIDs: []digest.Digest{digest.Digest(contentDigest)},
+		},
+	}
+
+	configJson, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("could not encode oci config: %v", err)
+	}
+	d.logger.Debug().Str("configJson", string(configJson)).Msg("created config JSON")
+
+	configDesc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageConfig,
+		Digest:    digest.FromBytes(configJson),
+		Size:      int64(len(configJson)),
+	}
+
+	return &imagePart{
+		Descriptor: configDesc,
+		Blob:       configJson,
+	}, nil
+}
+
+func addFile(ctx context.Context, store *orasfile.Store, name string, mediaType string, filename string) (ocispec.Descriptor, error) {
+	file, err := store.Add(ctx, name, mediaType, filename)
+	if err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr
+		}
+		return ocispec.Descriptor{}, fmt.Errorf("failed to add file: %v", err)
+	}
+	return file, nil
 }
 
 func normalizeOCIRepository(raw string) (string, error) {
