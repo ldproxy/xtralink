@@ -25,19 +25,28 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/retry"
+
+	"github.com/ldproxy/xtralink/lib/cache"
 )
 
 const xtrapkgMediaType = "application/vnd.iide.xtrapkg"
 
-type ociDriver struct{ logger zerolog.Logger }
+type ociDriver struct {
+	logger zerolog.Logger
+	cache  cache.Cache
+}
 
 type imagePart struct {
 	Descriptor ocispec.Descriptor
 	Blob       []byte
 }
 
-func NewOCIDriver(logger zerolog.Logger) *ociDriver {
-	return &ociDriver{logger: logger}
+// NewOCIDriver takes a Cache for the fetched layer blob (keyed by
+// repo+reference, validated against the layer digest) - shared across
+// xtralink instances via Redis (s. lib/cache), unlike the extracted files on
+// local disk below, which every instance still needs its own copy of.
+func NewOCIDriver(logger zerolog.Logger, c cache.Cache) *ociDriver {
+	return &ociDriver{logger: logger, cache: c}
 }
 
 func (d *ociDriver) Sync(remote Remote) error {
@@ -87,55 +96,64 @@ func (d *ociDriver) Sync(remote Remote) error {
 		return fmt.Errorf("first layer mediaType must be archive/zip, got: %s", firstLayer.MediaType)
 	}
 
-	cacheRoot := filepath.Join(os.TempDir(), "xtralink-cache", "oci", hashStringOCI(repoRef+"|"+reference))
-	layerDigestState := filepath.Join(cacheRoot, ".layer-digest")
-	manifestState := filepath.Join(cacheRoot, "manifest.json")
-	cacheZip := filepath.Join(cacheRoot, "layer.zip")
-	cacheExtracted := filepath.Join(cacheRoot, "data")
+	// Only the extracted files below live on local disk (packages are
+	// consumed via a real local directory, s. resolveOCISubpath/
+	// syncPathMirror) - the fetched layer blob itself lives in d.cache
+	// (Redis), shared across xtralink instances (s. NewOCIDriver's doc
+	// comment).
+	cacheKey := hashStringOCI(repoRef + "|" + reference)
+	cacheExtracted := filepath.Join(os.TempDir(), "xtralink-cache", "oci", cacheKey, "data")
+	layerDigest := firstLayer.Digest.String()
 
-	cacheFresh := ociCacheHasLayerDigest(layerDigestState, firstLayer.Digest.String())
-	if _, err := os.Stat(cacheExtracted); os.IsNotExist(err) {
-		cacheFresh = false
+	cached, hit, err := d.cache.Get(cacheKey)
+	if err != nil {
+		return fmt.Errorf("could not read oci layer cache: %w", err)
 	}
+	_, statErr := os.Stat(cacheExtracted)
+	extractedExists := statErr == nil
+	validatorMatches := hit && cached.Validator == layerDigest
 
-	if !cacheFresh {
-		if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
-			return fmt.Errorf("could not create oci cache root (%s): %w", cacheRoot, err)
-		}
-
-		layerRC, err := repo.Fetch(ctx, firstLayer)
-		if err != nil {
-			return fmt.Errorf("could not fetch oci layer %s: %w", firstLayer.Digest, err)
-		}
-		if err := writeReaderToFile(layerRC, cacheZip); err != nil {
-			layerRC.Close()
-			return fmt.Errorf("could not write oci layer zip (%s): %w", cacheZip, err)
-		}
-		layerRC.Close()
-
-		if err := os.RemoveAll(cacheExtracted); err != nil {
-			return fmt.Errorf("could not clear oci cache dir (%s): %w", cacheExtracted, err)
-		}
-		if err := unzipArchive(cacheZip, cacheExtracted); err != nil {
-			return fmt.Errorf("could not extract oci layer zip: %w", err)
-		}
-
-		if err := os.WriteFile(layerDigestState, []byte(firstLayer.Digest.String()), 0o644); err != nil {
-			return fmt.Errorf("could not write oci cache layer digest state (%s): %w", layerDigestState, err)
-		}
-		if err := os.WriteFile(manifestState, manifestRaw, 0o644); err != nil {
-			return fmt.Errorf("could not write oci manifest cache (%s): %w", manifestState, err)
-		}
-		d.logger.Info().
-			Str("repository", repoRef).
-			Str("reference", reference).
-			Str("cache_root", cacheRoot).
-			Msg("refreshed oci cache")
-	} else {
+	switch decideOCICacheAction(hit, validatorMatches, extractedExists) {
+	case ociCacheReuseLocal:
 		d.logger.Debug().
 			Str("repository", repoRef).
 			Str("reference", reference).
 			Msg("oci cache unchanged")
+	case ociCacheExtractFromCached:
+		if err := os.RemoveAll(cacheExtracted); err != nil {
+			return fmt.Errorf("could not clear oci cache dir (%s): %w", cacheExtracted, err)
+		}
+		if err := unzipArchive(cached.Value, cacheExtracted); err != nil {
+			return fmt.Errorf("could not extract cached oci layer zip: %w", err)
+		}
+		d.logger.Info().
+			Str("repository", repoRef).
+			Str("reference", reference).
+			Msg("extracted oci layer from shared cache")
+	default: // ociCacheFetchFresh
+		layerRC, err := repo.Fetch(ctx, firstLayer)
+		if err != nil {
+			return fmt.Errorf("could not fetch oci layer %s: %w", firstLayer.Digest, err)
+		}
+		layerBytes, err := io.ReadAll(layerRC)
+		layerRC.Close()
+		if err != nil {
+			return fmt.Errorf("could not read oci layer %s: %w", firstLayer.Digest, err)
+		}
+
+		if err := os.RemoveAll(cacheExtracted); err != nil {
+			return fmt.Errorf("could not clear oci cache dir (%s): %w", cacheExtracted, err)
+		}
+		if err := unzipArchive(layerBytes, cacheExtracted); err != nil {
+			return fmt.Errorf("could not extract oci layer zip: %w", err)
+		}
+		if err := d.cache.Put(cacheKey, cache.Entry{Value: layerBytes, Validator: layerDigest}, 0); err != nil {
+			return fmt.Errorf("could not write oci layer cache: %w", err)
+		}
+		d.logger.Info().
+			Str("repository", repoRef).
+			Str("reference", reference).
+			Msg("refreshed oci cache")
 	}
 
 	sourcePath, err := resolveOCISubpath(cacheExtracted, remote.Path)
@@ -487,12 +505,36 @@ func resolveOCISubpath(root, remotePath string) (string, error) {
 	return joined, nil
 }
 
-func ociCacheHasLayerDigest(stateFile, digest string) bool {
-	raw, err := os.ReadFile(stateFile)
-	if err != nil {
-		return false
+// ociCacheAction is the outcome of comparing the cache.Cache entry for a
+// repo+reference against the manifest's current layer digest and whether
+// this instance already has it extracted locally.
+type ociCacheAction int
+
+const (
+	// ociCacheFetchFresh: no cached entry, or its Validator no longer
+	// matches the current layer digest - fetch from the registry.
+	ociCacheFetchFresh ociCacheAction = iota
+	// ociCacheExtractFromCached: the cached entry is fresh (Validator
+	// matches), but this instance hasn't extracted it locally yet (e.g.
+	// another instance populated the shared cache first, or this
+	// instance's local temp dir was cleared) - extract from the cached
+	// bytes, no registry round-trip needed. This is the actual payoff of
+	// moving the layer cache to Redis (s. NewOCIDriver's doc comment).
+	ociCacheExtractFromCached
+	// ociCacheReuseLocal: cached entry is fresh AND already extracted
+	// locally - nothing to do.
+	ociCacheReuseLocal
+)
+
+func decideOCICacheAction(cacheHit, validatorMatches, extractedExists bool) ociCacheAction {
+	switch {
+	case cacheHit && validatorMatches && extractedExists:
+		return ociCacheReuseLocal
+	case cacheHit && validatorMatches:
+		return ociCacheExtractFromCached
+	default:
+		return ociCacheFetchFresh
 	}
-	return strings.TrimSpace(string(raw)) == strings.TrimSpace(digest)
 }
 
 func hashStringOCI(v string) string {
@@ -500,12 +542,11 @@ func hashStringOCI(v string) string {
 	return hex.EncodeToString(s[:])
 }
 
-func unzipArchive(zipPath, destination string) error {
-	r, err := zip.OpenReader(zipPath)
+func unzipArchive(data []byte, destination string) error {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
 	}
-	defer r.Close()
 
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return err

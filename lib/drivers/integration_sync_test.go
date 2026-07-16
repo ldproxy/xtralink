@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/mew-sh/dotenv"
 	"github.com/rs/zerolog"
+
+	"github.com/ldproxy/xtralink/lib/cache"
 )
 
 func init() {
@@ -158,7 +160,7 @@ func TestIntegrationSync_OCI(t *testing.T) {
 	}
 
 	target := t.TempDir()
-	driver := NewOCIDriver(zerolog.Nop())
+	driver := NewOCIDriver(zerolog.Nop(), cache.NoopCache{})
 
 	err := driver.Sync(Remote{
 		Type:              "OCI",

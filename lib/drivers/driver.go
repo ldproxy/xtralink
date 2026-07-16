@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
+
+	"github.com/ldproxy/xtralink/lib/cache"
 )
 
 // SyncDriver syncs a single remote source into a local destination.
@@ -42,8 +44,15 @@ func NewFactory() *Factory {
 	return NewFactoryWithLogger(zerolog.Nop())
 }
 
+// NewFactoryWithLogger builds a Factory with a NoopCache - use
+// NewFactoryWithLoggerAndCache to give the OCI driver a real, shared layer
+// cache (s. NewOCIDriver's doc comment).
 func NewFactoryWithLogger(logger zerolog.Logger) *Factory {
-	oci := NewOCIDriver(logger.With().Str("driver", "oci").Logger())
+	return NewFactoryWithLoggerAndCache(logger, cache.NoopCache{})
+}
+
+func NewFactoryWithLoggerAndCache(logger zerolog.Logger, c cache.Cache) *Factory {
+	oci := NewOCIDriver(logger.With().Str("driver", "oci").Logger(), c)
 	fs := NewFSDriver(logger.With().Str("driver", "fs").Logger())
 	s3 := NewS3Driver(logger.With().Str("driver", "s3").Logger())
 	return &Factory{

@@ -10,6 +10,8 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/rs/zerolog"
+
+	"github.com/ldproxy/xtralink/lib/cache"
 	"oras.land/oras-go/v2/content/memory"
 )
 
@@ -24,7 +26,7 @@ func TestPkgPush(t *testing.T) {
 	}
 
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
-	ociDriver := NewOCIDriver(logger)
+	ociDriver := NewOCIDriver(logger, cache.NoopCache{})
 	memoryStore := memory.New()
 
 	_, err = ociDriver.pushImage(ctx, filename, memoryStore, "latest", "amd64")

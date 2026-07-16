@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/ldproxy/xtralink/lib/cache"
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
 )
@@ -43,5 +44,21 @@ func TestNewLocker_RedisNodesUsesRedisLocker(t *testing.T) {
 	settings := &Settings{JobQueue: JobQueueConfig{Redis: []string{"localhost:6379"}}}
 	if _, ok := newLocker(settings).(*lock.RedisLocker); !ok {
 		t.Errorf("expected a *lock.RedisLocker when settings.redis is configured")
+	}
+}
+
+func TestNewCache_NoRedisNodesUsesNoop(t *testing.T) {
+	if _, ok := newCache(&Settings{}).(cache.NoopCache); !ok {
+		t.Errorf("expected a cache.NoopCache when no settings.redis are configured")
+	}
+	if _, ok := newCache(nil).(cache.NoopCache); !ok {
+		t.Errorf("expected a cache.NoopCache for nil Settings")
+	}
+}
+
+func TestNewCache_RedisNodesUsesRedisCache(t *testing.T) {
+	settings := &Settings{JobQueue: JobQueueConfig{Redis: []string{"localhost:6379"}}}
+	if _, ok := newCache(settings).(*cache.RedisCache); !ok {
+		t.Errorf("expected a *cache.RedisCache when settings.redis is configured")
 	}
 }
