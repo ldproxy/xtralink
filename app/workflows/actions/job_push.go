@@ -63,17 +63,17 @@ func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 }
 
 // resolvePartialSteps turns `partials: [{type: ...}, ...]` into the
-// JobStepDefinitions those types already reference under jobDefinitions: -
-// job:push does not declare new steps itself, it only reuses existing ones
-// (their Workflow binding, Parameters/Outputs mapping), the same way
-// job process <step-id> already resolves them.
-func resolvePartialSteps(appCtx *app.AppContext, raw any) ([]app.JobStepDefinition, error) {
+// JobDefinitions those types already reference - job:push does not declare
+// new ones itself, it only reuses existing entries (their Workflow
+// binding, Parameters/Outputs mapping), the same way job process <id>
+// already resolves them.
+func resolvePartialSteps(appCtx *app.AppContext, raw any) ([]app.JobDefinition, error) {
 	entries, _ := raw.([]any)
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("partials: at least one entry is required")
 	}
 
-	steps := make([]app.JobStepDefinition, 0, len(entries))
+	defs := make([]app.JobDefinition, 0, len(entries))
 	for i, item := range entries {
 		entry, ok := item.(map[string]any)
 		if !ok {
@@ -83,13 +83,13 @@ func resolvePartialSteps(appCtx *app.AppContext, raw any) ([]app.JobStepDefiniti
 		if typ == "" {
 			return nil, fmt.Errorf("partials[%d]: \"type\" is required", i)
 		}
-		_, step, err := appCtx.Settings.GetJobStep(typ)
+		def, err := appCtx.Settings.GetJobDefinition(typ)
 		if err != nil {
 			return nil, fmt.Errorf("partials[%d]: %w", i, err)
 		}
-		steps = append(steps, *step)
+		defs = append(defs, *def)
 	}
-	return steps, nil
+	return defs, nil
 }
 
 // buildInputsJSON turns the Step's `inputs: [{name, value}, ...]` list into

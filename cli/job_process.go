@@ -34,7 +34,7 @@ func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
 	}
 
 	runner := libjobs.NewRunner(appCtx.Jobs, executorId())
-	runner.Concurrency = appCtx.Settings.Jobs.MaxConcurrent
+	runner.Concurrency = appCtx.Settings.JobQueue.MaxConcurrent
 	runner.OnError = func(err error) {
 		appCtx.Logger.Error().Err(err).Msg("job runner error")
 	}
@@ -55,12 +55,12 @@ func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
 	return nil
 }
 
-// stepIdsToProcess resolves id ("*" for every step across every configured
-// JobDefinition, or one specific step id) into the PartialJob types job
-// process should register a WorkflowJobProcessor for.
+// stepIdsToProcess resolves id ("*" for every configured JobDefinition, or
+// one specific id) into the PartialJob types job process should register a
+// WorkflowJobProcessor for.
 func stepIdsToProcess(appCtx *app.AppContext, id string) ([]string, error) {
 	if id != "*" {
-		if _, _, err := appCtx.Settings.GetJobStep(id); err != nil {
+		if _, err := appCtx.Settings.GetJobDefinition(id); err != nil {
 			return nil, err
 		}
 		return []string{id}, nil
@@ -68,9 +68,7 @@ func stepIdsToProcess(appCtx *app.AppContext, id string) ([]string, error) {
 
 	var ids []string
 	for _, def := range appCtx.Settings.JobDefinitions {
-		for _, step := range def.Steps {
-			ids = append(ids, step.Id)
-		}
+		ids = append(ids, def.Id)
 	}
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("no jobDefinitions configured")

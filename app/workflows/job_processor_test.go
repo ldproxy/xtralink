@@ -56,19 +56,16 @@ workflows:
     steps: []
 
 jobDefinitions:
-  - id: nba-pipeline
-    parallel: false
-    steps:
-      - id: nba-transformation
-        workflow: nba-transform
-        outputs:
-          foo: ${outputs.found.path}
-      - id: nba-transaction-step
-        workflow: nba-transaction
-        parameters:
-          foo: ${parent.outputs.foo}
-        outputs:
-          bar: ${params.foo}
+  - id: nba-transformation
+    workflow: nba-transform
+    outputs:
+      foo: ${outputs.found.path}
+  - id: nba-transaction-step
+    workflow: nba-transaction
+    parameters:
+      foo: ${parent.outputs.foo}
+    outputs:
+      bar: ${params.foo}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -89,12 +86,25 @@ jobDefinitions:
 		Locks:    lock.NoopLocker{},
 	}
 
-	job, err := appjobs.Push(appCtx, "nba-pipeline", "", 1000, "")
+	// A multi-step Job is only ever built ad-hoc these days (s.
+	// job:push's `partials:`, app/workflows/actions/job_push.go) - there is
+	// no more pre-declared multi-step pipeline in jobDefinitions itself, so
+	// this test builds the same shape PushPipeline directly, exactly like
+	// that action does.
+	def1, err := settings.GetJobDefinition("nba-transformation")
 	if err != nil {
-		t.Fatalf("Push: %v", err)
+		t.Fatalf("GetJobDefinition(nba-transformation): %v", err)
+	}
+	def2, err := settings.GetJobDefinition("nba-transaction-step")
+	if err != nil {
+		t.Fatalf("GetJobDefinition(nba-transaction-step): %v", err)
+	}
+	job, err := appjobs.PushPipeline(appCtx, "nba-apply", "", 1000, "", []app.JobDefinition{*def1, *def2}, false)
+	if err != nil {
+		t.Fatalf("PushPipeline: %v", err)
 	}
 	if job.Parallel {
-		t.Error("expected Job.Parallel to be false (jobDefinitions[0].parallel: false)")
+		t.Error("expected Job.Parallel to be false")
 	}
 
 	step1, err := NewWorkflowJobProcessor(appCtx, "nba-transformation")
@@ -179,12 +189,10 @@ workflows:
     steps: []
 
 jobDefinitions:
-  - id: pipeline
-    steps:
-      - id: step-a
-        workflow: needs-param
-        parameters:
-          unrelated: "value"
+  - id: step-a
+    workflow: needs-param
+    parameters:
+      unrelated: "value"
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -242,11 +250,8 @@ jobDefinitions:
 // cleanly.
 func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
-		Workflows: []workflows.Workflow{{Id: "wf"}},
-		JobDefinitions: []app.JobDefinition{{
-			Id:    "pipeline",
-			Steps: []app.JobStepDefinition{{Id: "step-a", Workflow: "wf"}},
-		}},
+		Workflows:      []workflows.Workflow{{Id: "wf"}},
+		JobDefinitions: []app.JobDefinition{{Id: "step-a", Workflow: "wf"}},
 	}}
 	processor, err := NewWorkflowJobProcessor(appCtx, "step-a")
 	if err != nil {

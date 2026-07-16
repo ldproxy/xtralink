@@ -411,12 +411,9 @@ func TestValidate_SkipsTemplatedPackageRefs(t *testing.T) {
 }
 
 func TestValidate_AcceptsJobPushPartialsReferencingExistingSteps(t *testing.T) {
-	appCtx := &app.AppContext{Settings: &app.Settings{JobDefinitions: []app.JobDefinition{{
-		Id: "nba-pipeline",
-		Steps: []app.JobStepDefinition{
-			{Id: "nba-transformation", Workflow: "nba-transform"},
-		},
-	}}}}
+	appCtx := &app.AppContext{Settings: &app.Settings{JobDefinitions: []app.JobDefinition{
+		{Id: "nba-transformation", Workflow: "nba-transform"},
+	}}}
 	registry := NewRegistry(appCtx)
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
 		Action: "job:push",

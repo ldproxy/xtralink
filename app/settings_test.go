@@ -216,22 +216,20 @@ func TestLoadSettings_JobsDefaultsToLocalWithMaxConcurrentOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	if settings.Jobs.Queue != "local" {
-		t.Errorf("Jobs.Queue = %q, want local", settings.Jobs.Queue)
+	if settings.JobQueue.Queue != "local" {
+		t.Errorf("JobQueue.Queue = %q, want local", settings.JobQueue.Queue)
 	}
-	if settings.Jobs.MaxConcurrent != 1 {
-		t.Errorf("Jobs.MaxConcurrent = %d, want 1", settings.Jobs.MaxConcurrent)
+	if settings.JobQueue.MaxConcurrent != 1 {
+		t.Errorf("JobQueue.MaxConcurrent = %d, want 1", settings.JobQueue.MaxConcurrent)
 	}
 }
 
 func TestLoadSettings_ParsesRedisQueueConfig(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
-jobs:
+settings:
   queue: redis
   maxConcurrent: 4
-
-redis:
-  nodes:
+  redis:
     - localhost:6379
     - localhost:6380
 `)
@@ -240,56 +238,55 @@ redis:
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	if settings.Jobs.Queue != "redis" {
-		t.Errorf("Jobs.Queue = %q, want redis", settings.Jobs.Queue)
+	if settings.JobQueue.Queue != "redis" {
+		t.Errorf("JobQueue.Queue = %q, want redis", settings.JobQueue.Queue)
 	}
-	if settings.Jobs.MaxConcurrent != 4 {
-		t.Errorf("Jobs.MaxConcurrent = %d, want 4", settings.Jobs.MaxConcurrent)
+	if settings.JobQueue.MaxConcurrent != 4 {
+		t.Errorf("JobQueue.MaxConcurrent = %d, want 4", settings.JobQueue.MaxConcurrent)
 	}
-	if len(settings.Redis.Nodes) != 2 || settings.Redis.Nodes[0] != "localhost:6379" || settings.Redis.Nodes[1] != "localhost:6380" {
-		t.Errorf("Redis.Nodes = %v", settings.Redis.Nodes)
+	if len(settings.JobQueue.Redis) != 2 || settings.JobQueue.Redis[0] != "localhost:6379" || settings.JobQueue.Redis[1] != "localhost:6380" {
+		t.Errorf("JobQueue.Redis = %v", settings.JobQueue.Redis)
 	}
 }
 
 func TestLoadSettings_RejectsInvalidQueueValue(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
-jobs:
+settings:
   queue: memcached
 `)
 	if _, err := LoadSettings(path); err == nil {
-		t.Fatal("expected an error for an invalid jobs.queue value")
+		t.Fatal("expected an error for an invalid settings.queue value")
 	}
 }
 
 func TestLoadSettings_RejectsRedisQueueWithoutNodes(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
-jobs:
+settings:
   queue: redis
 `)
 	if _, err := LoadSettings(path); err == nil {
-		t.Fatal("expected an error for jobs.queue=redis without redis.nodes")
+		t.Fatal("expected an error for settings.queue=redis without settings.redis")
 	}
 }
 
 func TestLoadSettings_RejectsNegativeMaxConcurrent(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
-jobs:
+settings:
   maxConcurrent: -1
 `)
 	if _, err := LoadSettings(path); err == nil {
-		t.Fatal("expected an error for a negative jobs.maxConcurrent")
+		t.Fatal("expected an error for a negative settings.maxConcurrent")
 	}
 }
 
 func TestLoadSettings_RejectsEmptyRedisNode(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
-jobs:
+settings:
   queue: redis
-redis:
-  nodes:
+  redis:
     - ""
 `)
 	if _, err := LoadSettings(path); err == nil {
-		t.Fatal("expected an error for an empty redis.nodes entry")
+		t.Fatal("expected an error for an empty settings.redis entry")
 	}
 }

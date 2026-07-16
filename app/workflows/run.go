@@ -145,7 +145,7 @@ func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) erro
 		if strings.Contains(typ, "${") {
 			continue // only known once earlier steps have run
 		}
-		if _, _, err := appCtx.Settings.GetJobStep(typ); err != nil {
+		if _, err := appCtx.Settings.GetJobDefinition(typ); err != nil {
 			return fmt.Errorf("partials[%d]: %w", i, err)
 		}
 	}

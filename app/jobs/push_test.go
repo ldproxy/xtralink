@@ -61,24 +61,18 @@ func TestPush_WrapsBackendError(t *testing.T) {
 	}
 }
 
-func TestPush_BuildsMultiStepPipelineFromJobDefinition(t *testing.T) {
+func TestPush_MatchingJobDefinitionBuildsSinglePartialJob(t *testing.T) {
 	backend := jobs.NewMemoryBackend()
 	appCtx := &app.AppContext{
 		Jobs: backend,
 		Settings: &app.Settings{
 			JobDefinitions: []app.JobDefinition{
-				{
-					Id: "nba-pipeline",
-					Steps: []app.JobStepDefinition{
-						{Id: "nba-transformation", Workflow: "nba-transform"},
-						{Id: "nba-transaction-step", Workflow: "nba-transaction"},
-					},
-				},
+				{Id: "nba-transformation", Workflow: "nba-transform"},
 			},
 		},
 	}
 
-	job, err := Push(appCtx, "nba-pipeline", "my label", 500, "")
+	job, err := Push(appCtx, "nba-transformation", "my label", 500, "")
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -86,59 +80,12 @@ func TestPush_BuildsMultiStepPipelineFromJobDefinition(t *testing.T) {
 		t.Error("expected Parallel to default to true")
 	}
 
-	step0, err := backend.Take("nba-transformation", "test")
-	if err != nil || step0 == nil {
-		t.Fatalf("Take(nba-transformation): %v, %+v", err, step0)
+	step, err := backend.Take("nba-transformation", "test")
+	if err != nil || step == nil {
+		t.Fatalf("Take(nba-transformation): %v, %+v", err, step)
 	}
-	if step0.PartOf != job.ID || step0.Sequence != 0 {
-		t.Errorf("step0: PartOf=%q Sequence=%d, want %q/0", step0.PartOf, step0.Sequence, job.ID)
-	}
-
-	// Parallel defaults to true here (no `parallel: false` set), so step1
-	// must be immediately takeable too, not gated behind step0.
-	step1, err := backend.Take("nba-transaction-step", "test")
-	if err != nil || step1 == nil {
-		t.Fatalf("Take(nba-transaction-step): %v, %+v", err, step1)
-	}
-	if step1.Sequence != 1 {
-		t.Errorf("step1.Sequence = %d, want 1", step1.Sequence)
-	}
-}
-
-func TestPush_SequentialPipelineGatesLaterSteps(t *testing.T) {
-	backend := jobs.NewMemoryBackend()
-	parallel := false
-	appCtx := &app.AppContext{
-		Jobs: backend,
-		Settings: &app.Settings{
-			JobDefinitions: []app.JobDefinition{
-				{
-					Id:       "nba-pipeline",
-					Parallel: &parallel,
-					Steps: []app.JobStepDefinition{
-						{Id: "step-a", Workflow: "wf-a"},
-						{Id: "step-b", Workflow: "wf-b"},
-					},
-				},
-			},
-		},
-	}
-
-	job, err := Push(appCtx, "nba-pipeline", "", 1000, "")
-	if err != nil {
-		t.Fatalf("Push: %v", err)
-	}
-	if job.Parallel {
-		t.Error("expected Parallel to be false")
-	}
-
-	if taken, err := backend.Take("step-b", "test"); err != nil || taken != nil {
-		t.Fatalf("Take(step-b) before step-a is done = %+v, %v, want nil, nil", taken, err)
-	}
-
-	taken, err := backend.Take("step-a", "test")
-	if err != nil || taken == nil {
-		t.Fatalf("Take(step-a): %v, %+v", err, taken)
+	if step.PartOf != job.ID || step.Sequence != 0 {
+		t.Errorf("step: PartOf=%q Sequence=%d, want %q/0", step.PartOf, step.Sequence, job.ID)
 	}
 }
 

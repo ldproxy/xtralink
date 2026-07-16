@@ -19,29 +19,24 @@ type Settings struct {
 	TargetDir      string               `yaml:"targetDir,omitempty"`
 	Packages       []Package            `yaml:"packages"`
 	Workflows      []workflows.Workflow `yaml:"workflows,omitempty"`
-	Jobs           JobsConfig           `yaml:"jobs,omitempty"`
-	Redis          RedisConfig          `yaml:"redis,omitempty"`
+	JobQueue       JobQueueConfig       `yaml:"settings,omitempty"`
 	JobDefinitions []JobDefinition      `yaml:"jobDefinitions,omitempty"`
 }
 
-// JobsConfig selects and sizes the job queue backend, mirroring
-// xtraplatform's JobsConfiguration.
-type JobsConfig struct {
+// JobQueueConfig selects and sizes the job queue backend and configures the
+// shared Redis/Valkey connection it (and the per-workflow-id lock) uses -
+// merged into one `settings:` block, mirroring xtraplatform's
+// JobsConfiguration/RedisConfiguration.
+type JobQueueConfig struct {
 	// Queue is "local" (in-memory, single-node only) or "redis". Default:
 	// "local".
 	Queue string `yaml:"queue,omitempty"`
 	// MaxConcurrent is the maximum number of partial jobs a Runner processes
 	// at once. Default: 1.
 	MaxConcurrent int `yaml:"maxConcurrent,omitempty"`
-}
-
-// RedisConfig configures the shared Redis/Valkey connection used by both
-// the "redis" job queue backend and the per-workflow-id lock, mirroring
-// xtraplatform's RedisConfiguration.
-type RedisConfig struct {
-	// Nodes is a list of "host:port" entries. A single entry connects to
+	// Redis is a list of "host:port" entries. A single entry connects to
 	// one node; more than one switches to cluster mode.
-	Nodes []string `yaml:"nodes,omitempty"`
+	Redis []string `yaml:"redis,omitempty"`
 }
 
 type Package struct {
@@ -178,7 +173,7 @@ func validateAndNormalize(settings *Settings) error {
 		return err
 	}
 
-	if err := validateAndNormalizeJobs(&settings.Jobs, &settings.Redis); err != nil {
+	if err := validateAndNormalizeJobQueue(&settings.JobQueue); err != nil {
 		return err
 	}
 
@@ -189,32 +184,32 @@ func validateAndNormalize(settings *Settings) error {
 	return nil
 }
 
-func validateAndNormalizeJobs(jobsCfg *JobsConfig, redisCfg *RedisConfig) error {
-	jobsCfg.Queue = strings.ToLower(strings.TrimSpace(jobsCfg.Queue))
-	if jobsCfg.Queue == "" {
-		jobsCfg.Queue = "local"
+func validateAndNormalizeJobQueue(cfg *JobQueueConfig) error {
+	cfg.Queue = strings.ToLower(strings.TrimSpace(cfg.Queue))
+	if cfg.Queue == "" {
+		cfg.Queue = "local"
 	}
-	switch jobsCfg.Queue {
+	switch cfg.Queue {
 	case "local", "redis":
 	default:
-		return fmt.Errorf("jobs.queue=%q is invalid (allowed: local, redis)", jobsCfg.Queue)
+		return fmt.Errorf("settings.queue=%q is invalid (allowed: local, redis)", cfg.Queue)
 	}
 
-	if jobsCfg.MaxConcurrent == 0 {
-		jobsCfg.MaxConcurrent = 1
+	if cfg.MaxConcurrent == 0 {
+		cfg.MaxConcurrent = 1
 	}
-	if jobsCfg.MaxConcurrent < 0 {
-		return fmt.Errorf("jobs.maxConcurrent must be >= 0, got %d", jobsCfg.MaxConcurrent)
+	if cfg.MaxConcurrent < 0 {
+		return fmt.Errorf("settings.maxConcurrent must be >= 0, got %d", cfg.MaxConcurrent)
 	}
 
-	for i, n := range redisCfg.Nodes {
-		redisCfg.Nodes[i] = strings.TrimSpace(n)
-		if redisCfg.Nodes[i] == "" {
-			return fmt.Errorf("redis.nodes[%d] is empty", i)
+	for i, n := range cfg.Redis {
+		cfg.Redis[i] = strings.TrimSpace(n)
+		if cfg.Redis[i] == "" {
+			return fmt.Errorf("settings.redis[%d] is empty", i)
 		}
 	}
-	if jobsCfg.Queue == "redis" && len(redisCfg.Nodes) == 0 {
-		return fmt.Errorf("jobs.queue=redis requires at least one entry in redis.nodes")
+	if cfg.Queue == "redis" && len(cfg.Redis) == 0 {
+		return fmt.Errorf("settings.queue=redis requires at least one entry in settings.redis")
 	}
 
 	return nil

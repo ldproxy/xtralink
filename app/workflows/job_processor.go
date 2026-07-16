@@ -10,28 +10,29 @@ import (
 )
 
 // WorkflowJobProcessor makes a Job a thin wrapper around a single Workflow
-// run: one instance handles exactly one JobStepDefinition (its JobType()
-// is that step's id, s. app.JobStepDefinition), resolving the step's
-// input-parameter mapping, running the referenced Workflow, and writing the
-// step's output mapping into the shared Job's Outputs. A pipeline with
-// several steps registers one WorkflowJobProcessor per step - not one
-// processor handling all of them - so `job process <step-id>` can scale a
-// single step's workers independently of the rest of its pipeline.
+// run: one instance handles exactly one JobDefinition (its JobType() is
+// that definition's id), resolving its input-parameter mapping, running the
+// referenced Workflow, and writing its output mapping into the shared
+// Job's Outputs. A multi-step Job (several JobDefinitions composed ad-hoc,
+// s. the job:push workflow action's `partials:`) registers one
+// WorkflowJobProcessor per JobDefinition - not one processor handling all
+// of them - so `job process <id>` can scale a single PartialJob type's
+// workers independently of the rest.
 type WorkflowJobProcessor struct {
 	AppCtx *app.AppContext
 	StepId string
-	Step   *app.JobStepDefinition
+	Def    *app.JobDefinition
 }
 
 // NewWorkflowJobProcessor looks up stepId once at construction time (rather
 // than on every Process call) - Settings never change during a run, so
 // there is nothing to gain from re-resolving it each time.
 func NewWorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*WorkflowJobProcessor, error) {
-	_, step, err := appCtx.Settings.GetJobStep(stepId)
+	def, err := appCtx.Settings.GetJobDefinition(stepId)
 	if err != nil {
 		return nil, err
 	}
-	return &WorkflowJobProcessor{AppCtx: appCtx, StepId: stepId, Step: step}, nil
+	return &WorkflowJobProcessor{AppCtx: appCtx, StepId: stepId, Def: def}, nil
 }
 
 func (p *WorkflowJobProcessor) JobType() string { return p.StepId }
@@ -46,7 +47,7 @@ func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Jo
 		return jobs.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.ID, partialJob.PartOf))
 	}
 
-	wf, err := p.AppCtx.Settings.GetWorkflow(p.Step.Workflow)
+	wf, err := p.AppCtx.Settings.GetWorkflow(p.Def.Workflow)
 	if err != nil {
 		return jobs.Error(err.Error())
 	}
@@ -99,12 +100,12 @@ func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Jo
 }
 
 // resolveParams implements the two input-mapping modes from the concept:
-// implicit (Step.Parameters absent - Job.Inputs mapped onto the Workflow's
-// declared params by field name) or explicit (Step.Parameters present -
+// implicit (Def.Parameters absent - Job.Inputs mapped onto the Workflow's
+// declared params by field name) or explicit (Def.Parameters present -
 // every param comes from there, templated, nothing auto-filled from
 // Inputs).
 func (p *WorkflowJobProcessor) resolveParams(wf *workflows.Workflow, job *jobs.Job) (map[string]any, error) {
-	if len(p.Step.Parameters) == 0 {
+	if len(p.Def.Parameters) == 0 {
 		return p.resolveImplicitParams(wf, job)
 	}
 	return p.resolveExplicitParams(wf, job)
@@ -120,18 +121,18 @@ func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job
 	return applyParamDefaults(wf, provided)
 }
 
-// resolveExplicitParams resolves Step.Parameters as workflow-style
+// resolveExplicitParams resolves Def.Parameters as workflow-style
 // ${...} template expressions against packages/parent - parent.outputs is
 // the shared Job's own Outputs (s. PartialJob.PartOf), i.e. whatever an
-// earlier step of the same pipeline already wrote; there is no separate
-// "parent job" to look up, since all steps of a pipeline are PartialJobs
-// of the very same Job.
+// earlier step of the same Job already wrote; there is no separate
+// "parent job" to look up, since all steps of a Job are PartialJobs of the
+// very same Job.
 func (p *WorkflowJobProcessor) resolveExplicitParams(wf *workflows.Workflow, job *jobs.Job) (map[string]any, error) {
 	resolveVars := map[string]any{
 		"packages": packageVars(p.AppCtx.Settings.Packages),
 		"parent":   map[string]any{"outputs": outputValues(job.Outputs)},
 	}
-	resolved, err := workflows.ResolveValue(map[string]any(p.Step.Parameters), resolveVars)
+	resolved, err := workflows.ResolveValue(map[string]any(p.Def.Parameters), resolveVars)
 	if err != nil {
 		return nil, err
 	}
@@ -164,10 +165,10 @@ func applyParamDefaults(wf *workflows.Workflow, provided map[string]any) (map[st
 }
 
 func (p *WorkflowJobProcessor) writeOutputs(backend jobs.Backend, jobID string, leafVars map[string]any) error {
-	if len(p.Step.Outputs) == 0 {
+	if len(p.Def.Outputs) == 0 {
 		return nil
 	}
-	resolved, err := workflows.ResolveValue(map[string]any(p.Step.Outputs), leafVars)
+	resolved, err := workflows.ResolveValue(map[string]any(p.Def.Outputs), leafVars)
 	if err != nil {
 		return err
 	}

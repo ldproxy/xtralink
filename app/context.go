@@ -65,14 +65,14 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 	return &c
 }
 
-// newJobsBackend picks the job queue backend from Settings.Jobs.Queue -
-// "redis" connects to Settings.Redis.Nodes (single node or cluster, s.
+// newJobsBackend picks the job queue backend from Settings.JobQueue.Queue -
+// "redis" connects to Settings.JobQueue.Redis (single node or cluster, s.
 // jobs.NewRedisBackend), anything else (including a zero-value Settings
 // that never went through LoadSettings, e.g. in tests) defaults to the
 // in-memory backend, matching JobsConfiguration's own "LOCAL" default.
 func newJobsBackend(settings *Settings) jobs.Backend {
-	if settings != nil && strings.EqualFold(settings.Jobs.Queue, "redis") {
-		return jobs.NewRedisBackend(settings.Redis.Nodes)
+	if settings != nil && strings.EqualFold(settings.JobQueue.Queue, "redis") {
+		return jobs.NewRedisBackend(settings.JobQueue.Redis)
 	}
 	return jobs.NewMemoryBackend()
 }
@@ -82,8 +82,8 @@ func newJobsBackend(settings *Settings) jobs.Backend {
 // coordinate, so a NoopLocker is both correct and avoids depending on a
 // Redis that was never set up.
 func newLocker(settings *Settings) lock.Locker {
-	if settings != nil && len(settings.Redis.Nodes) > 0 {
-		return lock.NewRedisLocker(settings.Redis.Nodes)
+	if settings != nil && len(settings.JobQueue.Redis) > 0 {
+		return lock.NewRedisLocker(settings.JobQueue.Redis)
 	}
 	return lock.NoopLocker{}
 }

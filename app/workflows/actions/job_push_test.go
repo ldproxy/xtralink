@@ -72,7 +72,7 @@ func TestJobPushAction_NoInputsIsFine(t *testing.T) {
 // jobDefinitionsAppCtx builds a real *app.AppContext around a real
 // jobs.MemoryBackend (not fakeBackend, which never records PartialJobs) and
 // Settings with the given JobDefinitions - needed for `partials:`, which
-// resolves each referenced type via Settings.GetJobStep.
+// resolves each referenced type via Settings.GetJobDefinition.
 func jobDefinitionsAppCtx(defs []app.JobDefinition) (*app.AppContext, *jobs.MemoryBackend) {
 	backend := jobs.NewMemoryBackend()
 	return &app.AppContext{
@@ -83,13 +83,10 @@ func jobDefinitionsAppCtx(defs []app.JobDefinition) (*app.AppContext, *jobs.Memo
 }
 
 func nbaPipelineDefs() []app.JobDefinition {
-	return []app.JobDefinition{{
-		Id: "nba-pipeline",
-		Steps: []app.JobStepDefinition{
-			{Id: "nba-transformation", Workflow: "nba-transform"},
-			{Id: "nba-transaction-step", Workflow: "nba-transaction"},
-		},
-	}}
+	return []app.JobDefinition{
+		{Id: "nba-transformation", Workflow: "nba-transform"},
+		{Id: "nba-transaction-step", Workflow: "nba-transaction"},
+	}
 }
 
 func TestJobPushAction_PartialsBuildsMultiStepPipeline(t *testing.T) {

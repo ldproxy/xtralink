@@ -18,13 +18,10 @@ import (
 
 func TestStepIdsToProcess_SpecificId(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
-		JobDefinitions: []app.JobDefinition{{
-			Id: "pipeline",
-			Steps: []app.JobStepDefinition{
-				{Id: "step-a", Workflow: "wf-a"},
-				{Id: "step-b", Workflow: "wf-b"},
-			},
-		}},
+		JobDefinitions: []app.JobDefinition{
+			{Id: "step-a", Workflow: "wf-a"},
+			{Id: "step-b", Workflow: "wf-b"},
+		},
 	}}
 
 	ids, err := stepIdsToProcess(appCtx, "step-b")
@@ -46,8 +43,9 @@ func TestStepIdsToProcess_UnknownIdIsError(t *testing.T) {
 func TestStepIdsToProcess_WildcardReturnsEveryStep(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
 		JobDefinitions: []app.JobDefinition{
-			{Id: "pipeline-a", Steps: []app.JobStepDefinition{{Id: "step-a", Workflow: "wf-a"}}},
-			{Id: "pipeline-b", Steps: []app.JobStepDefinition{{Id: "step-b1", Workflow: "wf-b"}, {Id: "step-b2", Workflow: "wf-b"}}},
+			{Id: "step-a", Workflow: "wf-a"},
+			{Id: "step-b1", Workflow: "wf-b"},
+			{Id: "step-b2", Workflow: "wf-b"},
 		},
 	}}
 
@@ -114,12 +112,10 @@ workflows:
         path: "*.zip"
 
 jobDefinitions:
-  - id: nba-pipeline
-    steps:
-      - id: nba-transformation
-        workflow: nba-transform
-        outputs:
-          foo: ${outputs.found.path}
+  - id: nba-transformation
+    workflow: nba-transform
+    outputs:
+      foo: ${outputs.found.path}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -140,7 +136,7 @@ jobDefinitions:
 		Locks:    lock.NoopLocker{},
 	}
 
-	job, err := appjobs.Push(appCtx, "nba-pipeline", "", 1000, "")
+	job, err := appjobs.Push(appCtx, "nba-transformation", "", 1000, "")
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
