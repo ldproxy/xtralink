@@ -8,10 +8,6 @@ import (
 	"github.com/ldproxy/xtralink/lib/drivers"
 )
 
-const (
-	xtraPkgArtifactType = "application/vnd.iide.xtrapkg"
-)
-
 func Push(appCtx *app.AppContext, sourceRemoteId, targetRemoteId, targetTag string) error {
 
 	source, err := findRemoteByID(appCtx.Settings, sourceRemoteId)
