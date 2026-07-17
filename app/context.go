@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ldproxy/xtralink/lib/cache"
 	"github.com/ldproxy/xtralink/lib/drivers"
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
@@ -24,7 +23,6 @@ type AppContext struct {
 	Drivers *drivers.Factory
 	Jobs    jobs.Backend
 	Locks   lock.Locker
-	Cache   cache.Cache
 }
 
 // NewAppContext returns an initialized context.
@@ -54,16 +52,14 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 		logger = zerolog.New(os.Stdout).Level(logLevel).With().Timestamp().Logger()
 	}
 
-	appCache := newCache(settings)
 	c := AppContext{
 		Logger:   logger,
 		Version:  version,
 		Dev:      isDev,
 		Settings: settings,
-		Drivers:  drivers.NewFactoryWithLoggerAndCache(logger, appCache),
+		Drivers:  drivers.NewFactoryWithLogger(logger),
 		Jobs:     newJobsBackend(settings),
 		Locks:    newLocker(settings),
-		Cache:    appCache,
 	}
 
 	return &c
@@ -90,17 +86,4 @@ func newLocker(settings *Settings) lock.Locker {
 		return lock.NewRedisLocker(settings.JobQueue.Redis)
 	}
 	return lock.NoopLocker{}
-}
-
-// newCache only returns a real Redis-backed cache if Redis is actually
-// configured - a shared cache without shared storage behind it isn't
-// meaningful, so a NoopCache (always miss) is both correct and avoids
-// depending on a Redis that was never set up. Reuses the same
-// Settings.JobQueue.Redis nodes as the jobs backend/lock (one shared Redis
-// instance, differentiated only by key prefix, s. lib/cache's keyPrefix).
-func newCache(settings *Settings) cache.Cache {
-	if settings != nil && len(settings.JobQueue.Redis) > 0 {
-		return cache.NewRedisCache(settings.JobQueue.Redis)
-	}
-	return cache.NoopCache{}
 }
