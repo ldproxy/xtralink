@@ -332,7 +332,7 @@ func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 				if err := b.Error(taken.ID, "boom", false); err != nil {
 					t.Errorf("Error: %v", err)
 				}
-				t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
+				t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
 			} else if err := b.Done(taken.ID); err != nil {
 				t.Errorf("Done: %v", err)
 			}
@@ -415,7 +415,7 @@ func TestConcurrentPermanentFailuresKeepAllErrors(t *testing.T) {
 				t.Errorf("Error: %v", err)
 				return
 			}
-			t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
+			t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
 		}(i, msg)
 	}
 	wg.Wait()

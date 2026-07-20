@@ -8,6 +8,7 @@ package lock
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -23,8 +24,6 @@ type Locker interface {
 	Acquire(ctx context.Context, id string) (release func(), ok bool, err error)
 }
 
-const keyPrefix = "xtrasync:locks:"
-
 // ttl/interval: the lease is renewed every interval for as long as the
 // holder keeps calling nothing (a background goroutine does it), so it
 // outlives a single ttl window - but if the holding process crashes, the
@@ -37,17 +36,40 @@ const (
 
 type RedisLocker struct {
 	client redis.UniversalClient
+
+	// keyPrefix is scoped by cluster (s. NewRedisLocker), so only instances
+	// sharing the same configuration - and thus the same cluster - contend
+	// for the same lock.
+	keyPrefix string
 }
 
 // NewRedisLocker builds a client for nodes (single Redis/Valkey node, or a
 // cluster if more than one) - the same nodes list app.NewAppContext also
 // passes to jobs.NewRedisBackend, since both share one Redis instance.
-func NewRedisLocker(nodes []string) *RedisLocker {
-	return &RedisLocker{client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes})}
+//
+// cluster scopes every key this locker uses, so only instances sharing the
+// same configuration contend for the same lock; if empty, it falls back to
+// the hostname (best-effort - left empty if even that fails).
+func NewRedisLocker(nodes []string, cluster string) *RedisLocker {
+	if cluster == "" {
+		if host, err := os.Hostname(); err == nil {
+			cluster = host
+		}
+	}
+
+	prefix := "xtrasync:locks:"
+	if cluster != "" {
+		prefix += cluster + ":"
+	}
+
+	return &RedisLocker{
+		client:    redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes}),
+		keyPrefix: prefix,
+	}
 }
 
 func (r *RedisLocker) Acquire(ctx context.Context, id string) (func(), bool, error) {
-	key := keyPrefix + id
+	key := r.keyPrefix + id
 
 	claimed, err := r.client.SetNX(ctx, key, "1", ttl).Result()
 	if err != nil {

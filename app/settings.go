@@ -31,6 +31,11 @@ type JobQueueConfig struct {
 	// Queue is "local" (in-memory, single-node only) or "redis". Default:
 	// "local".
 	Queue string `yaml:"queue,omitempty"`
+	// Cluster identifies a group of instances that share state (the job
+	// queue, and the workflow lock) through Redis. Only instances with the
+	// same configuration should use the same value. If not set, falls back
+	// to the hostname.
+	Cluster string `yaml:"cluster,omitempty"`
 	// MaxConcurrent is the maximum number of partial jobs a Runner processes
 	// at once. Default: 1.
 	MaxConcurrent int `yaml:"maxConcurrent,omitempty"`
@@ -189,6 +194,7 @@ func validateAndNormalizeJobQueue(cfg *JobQueueConfig) error {
 	if cfg.Queue == "" {
 		cfg.Queue = "local"
 	}
+	cfg.Cluster = strings.TrimSpace(cfg.Cluster)
 	switch cfg.Queue {
 	case "local", "redis":
 	default:

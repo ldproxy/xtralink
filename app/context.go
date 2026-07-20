@@ -72,7 +72,7 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 // in-memory backend, matching JobsConfiguration's own "LOCAL" default.
 func newJobsBackend(settings *Settings) jobs.Backend {
 	if settings != nil && strings.EqualFold(settings.JobQueue.Queue, "redis") {
-		return jobs.NewRedisBackend(settings.JobQueue.Redis)
+		return jobs.NewRedisBackend(settings.JobQueue.Redis, settings.JobQueue.Cluster)
 	}
 	return jobs.NewMemoryBackend()
 }
@@ -83,7 +83,7 @@ func newJobsBackend(settings *Settings) jobs.Backend {
 // Redis that was never set up.
 func newLocker(settings *Settings) lock.Locker {
 	if settings != nil && len(settings.JobQueue.Redis) > 0 {
-		return lock.NewRedisLocker(settings.JobQueue.Redis)
+		return lock.NewRedisLocker(settings.JobQueue.Redis, settings.JobQueue.Cluster)
 	}
 	return lock.NoopLocker{}
 }

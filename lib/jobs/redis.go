@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,27 +12,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Redis key schema, analogous to JobQueueBackendRedis.java but namespaced
-// under xtrasync (not xtraplatform) to avoid colliding with a real
-// xtraplatform instance sharing the same Redis.
-const (
-	keyPriorities = "xtrasync:jobs:priorities:"
-	keyQueue      = "xtrasync:jobs:queue:"
-	keyPartial    = "xtrasync:jobs:partial:"
-	keyJob        = "xtrasync:jobs:job:"
-	keyTaken      = "xtrasync:jobs:taken"
-	keyFailed     = "xtrasync:jobs:failed"
-	// keyFinalized must NOT share the keyJob prefix: GetJobs() lists every
-	// key matching keyJob+"*" and JSON.GETs it, so a plain SETNX string key
-	// under that same prefix breaks it ("wrong Redis type"). Own prefix.
-	keyFinalized = "xtrasync:jobs:finalized:"
-
-	// maxRetries mirrors AbstractJobQueueBackend's retry cap. The current
-	// xtraplatform-redis Java backend has an unfinished stub for error()
-	// (always returns false, no retry) - this reimplements the intended
-	// retry-then-fail behavior from the abstract base class.
-	maxRetries = 3
-)
+// maxRetries mirrors AbstractJobQueueBackend's retry cap. The current
+// xtraplatform-redis Java backend has an unfinished stub for error()
+// (always returns false, no retry) - this reimplements the intended
+// retry-then-fail behavior from the abstract base class.
+const maxRetries = 3
 
 // RedisBackend implements Backend directly against Redis (RedisJSON module
 // required), with no AbstractJobQueueBackend-style base class: MemoryBackend
@@ -40,6 +25,22 @@ const (
 // abstraction is not reproduced.
 type RedisBackend struct {
 	client redis.UniversalClient
+
+	// Redis key schema, analogous to JobQueueBackendRedis.java but
+	// namespaced under xtrasync (not xtraplatform) to avoid colliding with a
+	// real xtraplatform instance sharing the same Redis. Each key is scoped
+	// by cluster (s. NewRedisBackend), so only instances sharing the same
+	// configuration - and thus the same cluster - share a queue.
+	keyPriorities string
+	keyQueue      string
+	keyPartial    string
+	keyJob        string
+	keyTaken      string
+	keyFailed     string
+	// keyFinalized must NOT share the keyJob prefix: GetJobs() lists every
+	// key matching keyJob+"*" and JSON.GETs it, so a plain SETNX string key
+	// under that same prefix breaks it ("wrong Redis type"). Own prefix.
+	keyFinalized string
 }
 
 // NewRedisBackend connects lazily (go-redis does not dial until the first
@@ -49,9 +50,31 @@ type RedisBackend struct {
 // cluster mode - go-redis's UniversalClient already picks the right client
 // type for either case, mirroring RedisImpl.java's manual
 // RedisClient/RedisClusterClient switch without having to reproduce it.
-func NewRedisBackend(nodes []string) *RedisBackend {
+//
+// cluster scopes every key this backend uses, so only instances sharing the
+// same configuration share a queue; if empty, it falls back to the
+// hostname (best-effort - left empty if even that fails).
+func NewRedisBackend(nodes []string, cluster string) *RedisBackend {
+	if cluster == "" {
+		if host, err := os.Hostname(); err == nil {
+			cluster = host
+		}
+	}
+
+	prefix := "xtrasync:jobs:"
+	if cluster != "" {
+		prefix += cluster + ":"
+	}
+
 	return &RedisBackend{
-		client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes}),
+		client:        redis.NewUniversalClient(&redis.UniversalOptions{Addrs: nodes}),
+		keyPriorities: prefix + "priorities:",
+		keyQueue:      prefix + "queue:",
+		keyPartial:    prefix + "partial:",
+		keyJob:        prefix + "job:",
+		keyTaken:      prefix + "taken",
+		keyFailed:     prefix + "failed",
+		keyFinalized:  prefix + "finalized:",
 	}
 }
 
@@ -59,8 +82,8 @@ func (b *RedisBackend) IsEnabled() bool {
 	return true
 }
 
-func queueKey(partialJobType string, priority int) string {
-	return keyQueue + partialJobType + ":" + strconv.Itoa(priority)
+func (b *RedisBackend) queueKey(partialJobType string, priority int) string {
+	return b.keyQueue + partialJobType + ":" + strconv.Itoa(priority)
 }
 
 // go-redis/v9 ships typed methods for the RedisJSON module (JSONSet,
@@ -104,14 +127,14 @@ func (b *RedisBackend) jsonDel(ctx context.Context, key string) error {
 }
 
 func (b *RedisBackend) registerPriority(ctx context.Context, partialJobType string, priority int) error {
-	return b.client.ZAdd(ctx, keyPriorities+partialJobType, redis.Z{
+	return b.client.ZAdd(ctx, b.keyPriorities+partialJobType, redis.Z{
 		Score:  float64(priority),
 		Member: strconv.Itoa(priority),
 	}).Err()
 }
 
 func (b *RedisBackend) priorities(ctx context.Context, partialJobType string) ([]int, error) {
-	vals, err := b.client.ZRevRange(ctx, keyPriorities+partialJobType, 0, -1).Result()
+	vals, err := b.client.ZRevRange(ctx, b.keyPriorities+partialJobType, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -127,12 +150,12 @@ func (b *RedisBackend) priorities(ctx context.Context, partialJobType string) ([
 }
 
 func (b *RedisBackend) putPartialJob(ctx context.Context, partialJob *PartialJob) error {
-	return b.jsonSet(ctx, keyPartial+partialJob.ID, "$", partialJob)
+	return b.jsonSet(ctx, b.keyPartial+partialJob.ID, "$", partialJob)
 }
 
 func (b *RedisBackend) getPartialJob(ctx context.Context, id string) (*PartialJob, error) {
 	var partialJob PartialJob
-	ok, err := b.jsonGet(ctx, keyPartial+id, &partialJob)
+	ok, err := b.jsonGet(ctx, b.keyPartial+id, &partialJob)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -140,12 +163,12 @@ func (b *RedisBackend) getPartialJob(ctx context.Context, id string) (*PartialJo
 }
 
 func (b *RedisBackend) putJob(ctx context.Context, job *Job) error {
-	return b.jsonSet(ctx, keyJob+job.ID, "$", job)
+	return b.jsonSet(ctx, b.keyJob+job.ID, "$", job)
 }
 
 func (b *RedisBackend) getJob(ctx context.Context, id string) (*Job, error) {
 	var job Job
-	ok, err := b.jsonGet(ctx, keyJob+id, &job)
+	ok, err := b.jsonGet(ctx, b.keyJob+id, &job)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -165,7 +188,7 @@ func (b *RedisBackend) PushJob(job *Job) error {
 
 func (b *RedisBackend) PushPartialJob(partialJob *PartialJob, untake bool) error {
 	ctx := context.Background()
-	queue := queueKey(partialJob.Type, partialJob.Priority)
+	queue := b.queueKey(partialJob.Type, partialJob.Priority)
 
 	// Only a fresh push registers a Sequence slot - untake is a re-queue of
 	// a PartialJob already counted once at its original push, incrementing
@@ -184,7 +207,7 @@ func (b *RedisBackend) PushPartialJob(partialJob *PartialJob, untake bool) error
 	}
 
 	if untake {
-		if err := b.client.LRem(ctx, keyTaken, 1, partialJob.ID).Err(); err != nil {
+		if err := b.client.LRem(ctx, b.keyTaken, 1, partialJob.ID).Err(); err != nil {
 			return err
 		}
 		return b.client.RPush(ctx, queue, partialJob.ID).Err()
@@ -206,7 +229,7 @@ func (b *RedisBackend) Take(partialJobType, executor string) (*PartialJob, error
 	}
 
 	for _, p := range priorities {
-		queue := queueKey(partialJobType, p)
+		queue := b.queueKey(partialJobType, p)
 		partialJob, err := b.takeEligibleFromQueue(ctx, queue, executor)
 		if err != nil {
 			return nil, err
@@ -264,7 +287,7 @@ func (b *RedisBackend) takeEligibleFromQueue(ctx context.Context, queue, executo
 		if n == 0 {
 			continue // someone else claimed it between LRange and LRem - rescan
 		}
-		if err := b.client.LPush(ctx, keyTaken, claimedID).Err(); err != nil {
+		if err := b.client.LPush(ctx, b.keyTaken, claimedID).Err(); err != nil {
 			return nil, err
 		}
 
@@ -309,7 +332,7 @@ func (b *RedisBackend) sequenceReady(ctx context.Context, partialJob *PartialJob
 func (b *RedisBackend) Done(partialJobID string) error {
 	ctx := context.Background()
 
-	n, err := b.client.LRem(ctx, keyTaken, 1, partialJobID).Result()
+	n, err := b.client.LRem(ctx, b.keyTaken, 1, partialJobID).Result()
 	if err != nil {
 		return err
 	}
@@ -327,7 +350,7 @@ func (b *RedisBackend) Done(partialJobID string) error {
 		}
 	}
 
-	return b.jsonDel(ctx, keyPartial+partialJobID)
+	return b.jsonDel(ctx, b.keyPartial+partialJobID)
 }
 
 // onPartialJobDone mirrors JobSet.done(job) + AbstractJobQueueBackend.
@@ -361,7 +384,7 @@ func (b *RedisBackend) onPartialJobDone(ctx context.Context, partialJob *Partial
 		return b.pushFollowUps(job)
 	}
 
-	if err := b.jsonSet(ctx, keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
+	if err := b.jsonSet(ctx, b.keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
 	if !job.Parallel {
@@ -384,7 +407,7 @@ func (b *RedisBackend) syncEmbeddedPartialJob(ctx context.Context, jobID, field 
 	if done.FinishedAt <= 0 {
 		done.FinishedAt = done.UpdatedAt
 	}
-	return b.jsonSet(ctx, keyJob+jobID, "$."+field, done)
+	return b.jsonSet(ctx, b.keyJob+jobID, "$."+field, done)
 }
 
 // onPartialJobPermanentlyFailed handles a PartialJob that Error() gave up
@@ -421,14 +444,14 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 	}
 
 	if remaining := partialJob.Total - partialJob.Current; remaining > 0 {
-		if err := b.jsonNumIncrBy(ctx, keyJob+job.ID, "$.total", -remaining); err != nil {
+		if err := b.jsonNumIncrBy(ctx, b.keyJob+job.ID, "$.total", -remaining); err != nil {
 			return err
 		}
 	}
 	if err := b.mergeErrors(ctx, job.ID, partialJob.Errors); err != nil {
 		return err
 	}
-	if err := b.jsonSet(ctx, keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
+	if err := b.jsonSet(ctx, b.keyJob+job.ID, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
 	if !job.Parallel {
@@ -456,7 +479,7 @@ func (b *RedisBackend) mergeErrors(ctx context.Context, jobID string, errors []s
 		}
 		values[i] = string(encoded)
 	}
-	return b.client.JSONArrAppend(ctx, keyJob+jobID, "$.errors", values...).Err()
+	return b.client.JSONArrAppend(ctx, b.keyJob+jobID, "$.errors", values...).Err()
 }
 
 // finalizeIfDone re-reads the Job (to see current/total after any
@@ -475,7 +498,7 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *Job) error {
 		return nil
 	}
 
-	claimed, err := b.client.SetNX(ctx, keyFinalized+job.ID, "1", 24*time.Hour).Result()
+	claimed, err := b.client.SetNX(ctx, b.keyFinalized+job.ID, "1", 24*time.Hour).Result()
 	if err != nil {
 		return err
 	}
@@ -483,7 +506,7 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *Job) error {
 		return nil
 	}
 
-	if err := b.jsonSet(ctx, keyJob+job.ID, "$.finishedAt", nowMillis()); err != nil {
+	if err := b.jsonSet(ctx, b.keyJob+job.ID, "$.finishedAt", nowMillis()); err != nil {
 		return err
 	}
 	if job.Cleanup != nil {
@@ -508,7 +531,7 @@ func (b *RedisBackend) clearProgressDetailsOnSuccess(ctx context.Context, jobID 
 	if job.HasErrors() {
 		return nil
 	}
-	return b.jsonSet(ctx, keyJob+jobID, "$.progressDetails", nil)
+	return b.jsonSet(ctx, b.keyJob+jobID, "$.progressDetails", nil)
 }
 
 // forceFail marks a Job as finished-with-errors regardless of isDone() -
@@ -521,7 +544,7 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *Job, errors []string)
 		return err
 	}
 
-	claimed, err := b.client.SetNX(ctx, keyFinalized+job.ID, "1", 24*time.Hour).Result()
+	claimed, err := b.client.SetNX(ctx, b.keyFinalized+job.ID, "1", 24*time.Hour).Result()
 	if err != nil {
 		return err
 	}
@@ -529,7 +552,7 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *Job, errors []string)
 		return nil
 	}
 
-	return b.jsonSet(ctx, keyJob+job.ID, "$.finishedAt", nowMillis())
+	return b.jsonSet(ctx, b.keyJob+job.ID, "$.finishedAt", nowMillis())
 }
 
 func (b *RedisBackend) pushFollowUps(job *Job) error {
@@ -543,18 +566,18 @@ func (b *RedisBackend) pushFollowUps(job *Job) error {
 
 // StartJob sets Job.startedAt to now (mirrors JobSet.start() in Java).
 func (b *RedisBackend) StartJob(jobID string) error {
-	return b.jsonSet(context.Background(), keyJob+jobID, "$.startedAt", nowMillis())
+	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.startedAt", nowMillis())
 }
 
 // SetProgressDetails overwrites Job.progressDetails wholesale - the
 // one-time, type-specific initial build done by a setup JobProcessor.
 func (b *RedisBackend) SetProgressDetails(jobID string, details any) error {
-	return b.jsonSet(context.Background(), keyJob+jobID, "$.progressDetails", details)
+	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.progressDetails", details)
 }
 
 // SetOutput writes a single outputs entry, keyed by name.
 func (b *RedisBackend) SetOutput(jobID, key string, value OutputValue) error {
-	return b.jsonSet(context.Background(), keyJob+jobID, "$.outputs."+key, value)
+	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.outputs."+key, value)
 }
 
 // Error mirrors the retry/fail semantics from AbstractJobQueueBackend.error();
@@ -563,7 +586,7 @@ func (b *RedisBackend) SetOutput(jobID, key string, value OutputValue) error {
 func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 	ctx := context.Background()
 
-	n, err := b.client.LRem(ctx, keyTaken, 1, partialJobID).Result()
+	n, err := b.client.LRem(ctx, b.keyTaken, 1, partialJobID).Result()
 	if err != nil {
 		return err
 	}
@@ -589,7 +612,7 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 	if err := b.putPartialJob(ctx, partialJob); err != nil {
 		return err
 	}
-	if err := b.client.RPush(ctx, keyFailed, partialJobID).Err(); err != nil {
+	if err := b.client.RPush(ctx, b.keyFailed, partialJobID).Err(); err != nil {
 		return err
 	}
 
@@ -602,14 +625,14 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 func (b *RedisBackend) GetJobs() ([]*Job, error) {
 	ctx := context.Background()
 
-	keys, err := b.client.Keys(ctx, keyJob+"*").Result()
+	keys, err := b.client.Keys(ctx, b.keyJob+"*").Result()
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]*Job, 0, len(keys))
 	for _, k := range keys {
-		id := strings.TrimPrefix(k, keyJob)
+		id := strings.TrimPrefix(k, b.keyJob)
 		job, err := b.getJob(ctx, id)
 		if err != nil {
 			return nil, err
@@ -635,7 +658,7 @@ func (b *RedisBackend) GetOpen(partialJobType string) ([]*PartialJob, error) {
 
 	partialJobs := make([]*PartialJob, 0)
 	for _, p := range priorities {
-		ids, err := b.client.LRange(ctx, queueKey(partialJobType, p), 0, -1).Result()
+		ids, err := b.client.LRange(ctx, b.queueKey(partialJobType, p), 0, -1).Result()
 		if err != nil {
 			return nil, err
 		}
@@ -672,16 +695,16 @@ func (b *RedisBackend) getPartialJobsByIDList(ctx context.Context, listKey strin
 }
 
 func (b *RedisBackend) GetTaken() ([]*PartialJob, error) {
-	return b.getPartialJobsByIDList(context.Background(), keyTaken)
+	return b.getPartialJobsByIDList(context.Background(), b.keyTaken)
 }
 
 func (b *RedisBackend) GetFailed() ([]*PartialJob, error) {
-	return b.getPartialJobsByIDList(context.Background(), keyFailed)
+	return b.getPartialJobsByIDList(context.Background(), b.keyFailed)
 }
 
 func (b *RedisBackend) InitJob(jobID string, totalDelta int, updates []ProgressUpdate) error {
 	ctx := context.Background()
-	key := keyJob + jobID
+	key := b.keyJob + jobID
 
 	if err := b.jsonNumIncrBy(ctx, key, "$.total", totalDelta); err != nil {
 		return err
@@ -694,7 +717,7 @@ func (b *RedisBackend) InitJob(jobID string, totalDelta int, updates []ProgressU
 
 func (b *RedisBackend) UpdateJob(jobID string, currentDelta int, updates []ProgressUpdate) error {
 	ctx := context.Background()
-	key := keyJob + jobID
+	key := b.keyJob + jobID
 
 	if err := b.jsonNumIncrBy(ctx, key, "$.current", currentDelta); err != nil {
 		return err
@@ -733,7 +756,7 @@ func (b *RedisBackend) applyProgressUpdates(ctx context.Context, key string, del
 // UpdateTargets declare.
 func (b *RedisBackend) UpdatePartialJob(partialJobID string, currentDelta int) error {
 	ctx := context.Background()
-	key := keyPartial + partialJobID
+	key := b.keyPartial + partialJobID
 
 	partialJob, err := b.getPartialJob(ctx, partialJobID)
 	if err != nil {
@@ -775,7 +798,7 @@ func (b *RedisBackend) registerSequence(ctx context.Context, jobID string, seque
 		return err
 	}
 
-	key := keyJob + jobID
+	key := b.keyJob + jobID
 	path := fmt.Sprintf("$.sequenceRemaining.%d", sequence)
 	// NX reports redis.Nil (a "null bulk reply") when the leaf already
 	// exists - that's the expected, harmless case (someone got there
@@ -828,5 +851,5 @@ func (b *RedisBackend) advanceSequence(ctx context.Context, jobID string, sequen
 	if !advanced {
 		return nil
 	}
-	return b.jsonSet(ctx, keyJob+jobID, "$.currentSequence", job.CurrentSequence)
+	return b.jsonSet(ctx, b.keyJob+jobID, "$.currentSequence", job.CurrentSequence)
 }

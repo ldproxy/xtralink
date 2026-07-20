@@ -159,7 +159,7 @@ func TestRedisBackend_DoneRemovesFromTakenAndDeletesJob(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	takenIDs, err := b.client.LRange(ctx, keyTaken, 0, -1).Result()
+	takenIDs, err := b.client.LRange(ctx, b.keyTaken, 0, -1).Result()
 	if err != nil {
 		t.Fatalf("LRange: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestRedisBackend_ErrorRetriesThenPermanentlyFails(t *testing.T) {
 	if !found {
 		t.Errorf("expected job %s in failed list", id)
 	}
-	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, id) })
+	t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, id) })
 }
 
 func TestRedisBackend_InitJobSetGrowsTotal(t *testing.T) {
@@ -544,7 +544,7 @@ func TestRedisBackend_OnJobPermanentlyFailed_ReducesTotalAndFinalizes(t *testing
 	if err := b.Error(badTaken.ID, "boom", false); err != nil {
 		t.Fatalf("Error(bad): %v", err)
 	}
-	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, badTaken.ID) })
+	t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, badTaken.ID) })
 
 	final, err := b.GetJob(js.ID)
 	if err != nil {
@@ -582,7 +582,7 @@ func TestRedisBackend_OnJobPermanentlyFailed_SetupForcesJobSetFailed(t *testing.
 	if err := b.Error(taken.ID, "setup exploded", false); err != nil {
 		t.Fatalf("Error: %v", err)
 	}
-	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
+	t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
 
 	final, err := b.GetJob(js.ID)
 	if err != nil {
@@ -630,7 +630,7 @@ func TestRedisBackend_OnJobPermanentlyFailed_CleanupMergesErrorWithoutTouchingTo
 	if err := b.Error(taken.ID, "cleanup exploded", false); err != nil {
 		t.Fatalf("Error: %v", err)
 	}
-	t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
+	t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
 
 	final, err := b.GetJob(js.ID)
 	if err != nil {
@@ -684,7 +684,7 @@ func TestRedisBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 			if err := b.Error(taken.ID, "boom", false); err != nil {
 				t.Fatalf("Error: %v", err)
 			}
-			t.Cleanup(func() { b.client.LRem(context.Background(), keyFailed, 0, taken.ID) })
+			t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
 		} else {
 			if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
 				t.Fatalf("UpdateJob: %v", err)

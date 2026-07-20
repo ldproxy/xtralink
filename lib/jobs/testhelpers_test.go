@@ -20,7 +20,7 @@ func requireRedis(t *testing.T) *RedisBackend {
 		addr = "localhost:6379"
 	}
 
-	b := NewRedisBackend([]string{addr})
+	b := NewRedisBackend([]string{addr}, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := b.client.Ping(ctx).Err(); err != nil {
@@ -42,7 +42,7 @@ func uniqueType(base string) string {
 func cleanupJob(t *testing.T, b *RedisBackend, id string) {
 	t.Helper()
 	t.Cleanup(func() {
-		b.client.Del(context.Background(), keyJob+id, keyFinalized+id)
+		b.client.Del(context.Background(), b.keyJob+id, b.keyFinalized+id)
 	})
 }
 
@@ -54,7 +54,7 @@ func cleanupPartialJob(t *testing.T, b *RedisBackend, id string) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx := context.Background()
-		b.client.LRem(ctx, keyTaken, 0, id)
-		b.client.Del(ctx, keyPartial+id)
+		b.client.LRem(ctx, b.keyTaken, 0, id)
+		b.client.Del(ctx, b.keyPartial+id)
 	})
 }
