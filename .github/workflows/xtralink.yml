@@ -31,12 +31,6 @@ jobs:
       - name: log1
         run: |
           ls -lR ./dist
-      - uses: mmatheson/ghaction-upx@v1.0.2
-        with:
-          version: v4.2.4
-          files: |
-            ./dist/*/xtralink
-          args: --best --force-macos
       - name: log2
         run: |
           ls -lR ./dist
