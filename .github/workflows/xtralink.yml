@@ -1,0 +1,138 @@
+name: xtralink
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: clone
+        uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: ./go.sum
+      - uses: bhowell2/github-substring-action@1.0.2
+        id: short-sha
+        with:
+          value: ${{ github.sha }}
+          length_from_start: 7
+      - name: build
+        env:
+          CMD_GIT_BRANCH: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitBranch=${{ github.ref_name }}
+          CMD_GIT_SHA: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitSha=${{ steps.short-sha.outputs.substring }}
+          CMD_GIT_TAG: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitTag=${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          #git config --global --add safe.directory $GITHUB_WORKSPACE
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/linux-amd64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/linux-arm64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/darwin-arm64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
+          cp Dockerfile dist/
+      - name: log1
+        run: |
+          ls -lR ./dist
+      - uses: mmatheson/ghaction-upx@v1.0.2
+        with:
+          version: v4.2.4
+          files: |
+            ./dist/*/xtralink
+          args: --best --force-macos
+      - name: log2
+        run: |
+          ls -lR ./dist
+      - name: save
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: ./dist
+          retention-days: 1
+      - name: release-github
+        if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
+        working-directory: ./dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./*/xtralink
+          tar -czvf xtralink_${{ github.ref_name }}_linux_amd64.tar.gz -C ./linux-amd64 xtralink
+          tar -czvf xtralink_${{ github.ref_name }}_linux_arm64.tar.gz -C ./linux-arm64 xtralink
+          tar -czvf xtralink_${{ github.ref_name }}_macos_arm64.tar.gz -C ./darwin-arm64 xtralink
+          gh release create ${{ github.ref_name }} --title ${{ github.ref_name }} --draft
+          gh release upload ${{ github.ref_name }} xtralink_${{ github.ref_name }}_linux_amd64.tar.gz
+          gh release upload ${{ github.ref_name }} xtralink_${{ github.ref_name }}_linux_arm64.tar.gz
+          gh release upload ${{ github.ref_name }} xtralink_${{ github.ref_name }}_macos_arm64.tar.gz
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: load
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+      - name: log0
+        run: |
+          ls -lR
+      - name: chmod
+        run: |
+          chmod +x ./*/xtralink
+      - name: log1
+        run: |
+          ls -lR
+      - uses: bhowell2/github-substring-action@1.0.2
+        id: short-sha
+        with:
+          value: ${{ github.sha }}
+          length_from_start: 7
+      - uses: bhowell2/github-substring-action@1.0.2
+        if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
+        id: short-tag
+        with:
+          value: ${{ github.ref_name }}
+          index_of_str: "v"
+      - name: login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ghcr_rw_token }}
+      - name: buildx
+        uses: docker/setup-buildx-action@v3
+      - name: push
+        if: ${{ github.ref_type == 'branch' && github.ref_name == 'main' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          tags: |
+            ghcr.io/ldproxy/xtralink:next
+            ghcr.io/ldproxy/xtralink:next-${{steps.short-sha.outputs.substring}}
+          platforms: |
+            linux/amd64
+            linux/arm64
+      - name: push-branch
+        if: ${{ github.ref_type == 'branch' && github.ref_name != 'main' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          tags: |
+            ghcr.io/ldproxy/xtralink:${{ github.ref_name }}
+            ghcr.io/ldproxy/xtralink:${{ github.ref_name }}-${{steps.short-sha.outputs.substring}}
+          platforms: |
+            linux/amd64
+            linux/arm64
+      - name: tag
+        if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          tags: |
+            ghcr.io/ldproxy/xtralink:${{ steps.short-tag.outputs.substring }}
+            ghcr.io/ldproxy/xtralink:latest
+          platforms: |
+            linux/amd64
+            linux/arm64
