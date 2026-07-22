@@ -31,10 +31,11 @@ type PushCmd struct {
 	SourceRemoteId string `arg:"" name:"source" help:"Source package id" required:""`
 	TargetRemoteId string `arg:"" name:"target" help:"Target package id" required:""`
 	TargetTag      string `arg:"" name:"tag" help:"Target OCI artifact tag" required:""`
+	NoSync         bool   `short:"n" help:"Do not synchronize the source package"`
 }
 
 func (c *PushCmd) Run(root *CLI, appCtx *app.AppContext) error {
-	if err := pkg.Push(appCtx, c.SourceRemoteId, c.TargetRemoteId, c.TargetTag); err != nil {
+	if err := pkg.Push(appCtx, c.SourceRemoteId, c.TargetRemoteId, c.TargetTag, c.NoSync); err != nil {
 		appCtx.Logger.Error().
 			Err(err).
 			Str("config", root.Config).

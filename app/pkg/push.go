@@ -8,15 +8,17 @@ import (
 	"github.com/ldproxy/xtralink/lib/drivers"
 )
 
-func Push(appCtx *app.AppContext, sourceRemoteId, targetRemoteId, targetTag string) error {
+func Push(appCtx *app.AppContext, sourceRemoteId, targetRemoteId, targetTag string, noSync bool) error {
 
 	source, err := findRemoteByID(appCtx.Settings, sourceRemoteId)
 	if err != nil {
 		return err
 	}
 
-	if err := Pull(appCtx, source.Id); err != nil {
-		return err
+	if !noSync {
+		if err := Pull(appCtx, source.Id); err != nil {
+			return err
+		}
 	}
 
 	target, err := findRemoteByID(appCtx.Settings, targetRemoteId)
