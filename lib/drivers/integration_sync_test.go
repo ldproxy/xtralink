@@ -9,12 +9,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/mew-sh/dotenv"
+	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 )
 
 func init() {
-	dotenv.Load("../../.env")
+	godotenv.Load("../../.env")
 }
 
 func TestIntegrationSync_Git(t *testing.T) {

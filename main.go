@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/alecthomas/kong"
-	"github.com/mew-sh/dotenv"
+	"github.com/joho/godotenv"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/cli"
@@ -56,7 +56,7 @@ func main() {
 }
 
 func initialize(ctx *kong.Context, config string, verbosity uint, version string) {
-	dotenv.Load()
+	godotenv.Load()
 
 	settings, err := app.LoadSettings(config)
 

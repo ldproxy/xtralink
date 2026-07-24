@@ -7,7 +7,7 @@ require (
 	github.com/alecthomas/kong v1.12.1
 	github.com/go-git/go-git/v5 v5.16.5
 	github.com/google/uuid v1.6.0
-	github.com/mew-sh/dotenv v0.0.0-20250706192342-dfbc445d205b
+	github.com/joho/godotenv v1.6.0-pre.4
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/redis/go-redis/v9 v9.21.0
