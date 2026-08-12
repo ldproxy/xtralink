@@ -24,12 +24,13 @@ export default {
 
   //schema: { label: "Example JSON Schema" },
 
-  /*java: {
+  java: {
+    path: "ffi/java/src/main/java",
     pkg: "de.ii.xtralink.jobs",
     api: {
       //pkg: "de.ii.xtraplatform.jobs",
     },
-  },*/
+  },
 } satisfies Config;
 
 export namespace GenModel {
