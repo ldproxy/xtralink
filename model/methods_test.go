@@ -1,7 +1,6 @@
-package jobs
+package model
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -24,7 +23,7 @@ func TestBaseJobPercent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := BaseJob{Total: tt.total, Current: tt.current, StartedAt: tt.started}
+			b := Job{BaseJob: BaseJob{StartedAt: tt.started, Progress: JobProgress{Total: tt.total, Current: tt.current}}}
 			if got := b.Percent(); got != tt.want {
 				t.Errorf("Percent() = %d, want %d", got, tt.want)
 			}
@@ -56,7 +55,7 @@ func TestBaseJobIsDone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := BaseJob{StartedAt: tt.started, Current: tt.current, Total: tt.total}
+			b := Job{BaseJob: BaseJob{StartedAt: tt.started, Progress: JobProgress{Current: tt.current, Total: tt.total}}}
 			if got := b.IsDone(); got != tt.want {
 				t.Errorf("IsDone() = %v, want %v", got, tt.want)
 			}
@@ -77,64 +76,24 @@ func TestBaseJobHasErrors(t *testing.T) {
 }
 
 func TestBaseJobInit(t *testing.T) {
-	b := BaseJob{Total: 5}
+	b := Job{BaseJob: BaseJob{Progress: JobProgress{Total: 5}}}
 	b.Init(3)
-	if b.Total != 8 {
-		t.Errorf("Total = %d, want 8", b.Total)
+	if b.Progress.Total != 8 {
+		t.Errorf("Total = %d, want 8", b.Progress.Total)
 	}
-	if b.UpdatedAt == 0 {
+	if b.BaseJob.UpdatedAt == 0 {
 		t.Error("expected UpdatedAt to be set")
 	}
 }
 
 func TestBaseJobUpdate(t *testing.T) {
-	b := BaseJob{Current: 2}
+	b := Job{BaseJob: BaseJob{Progress: JobProgress{Current: 2}}}
 	b.Update(3)
-	if b.Current != 5 {
-		t.Errorf("Current = %d, want 5", b.Current)
+	if b.Progress.Current != 5 {
+		t.Errorf("Current = %d, want 5", b.Progress.Current)
 	}
-	if b.UpdatedAt == 0 {
+	if b.BaseJob.UpdatedAt == 0 {
 		t.Error("expected UpdatedAt to be set")
-	}
-}
-
-func TestNewBaseJob(t *testing.T) {
-	b := NewBaseJob("id-1", "test-type", 500)
-	if b.ID != "id-1" || b.Type != "test-type" || b.Priority != 500 {
-		t.Errorf("unexpected fields: %+v", b)
-	}
-	if b.StartedAt != -1 || b.FinishedAt != -1 {
-		t.Errorf("expected StartedAt/FinishedAt = -1, got %d/%d", b.StartedAt, b.FinishedAt)
-	}
-	if b.Errors == nil {
-		t.Error("expected Errors to be initialized to a non-nil empty slice")
-	}
-}
-
-func TestNewPartialJob(t *testing.T) {
-	j := NewPartialJob("job-1", "worker", 1000, "set-1")
-	if j.PartOf != "set-1" {
-		t.Errorf("PartOf = %q, want set-1", j.PartOf)
-	}
-	if j.ID != "job-1" || j.Type != "worker" || j.Priority != 1000 {
-		t.Errorf("unexpected fields: %+v", j)
-	}
-}
-
-func TestNewJob(t *testing.T) {
-	inputs := json.RawMessage(`{"foo":"bar"}`)
-	job := NewJob("set-1", "demo", 1000, "Label", inputs)
-	if job.Label != "Label" {
-		t.Errorf("unexpected fields: %+v", job)
-	}
-	if job.Outputs == nil {
-		t.Error("expected Outputs to be initialized")
-	}
-	if job.FollowUps == nil {
-		t.Error("expected FollowUps to be initialized")
-	}
-	if job.Setup != nil || job.Cleanup != nil {
-		t.Error("expected Setup/Cleanup to be nil by default")
 	}
 }
 
@@ -146,17 +105,17 @@ func TestJobStatus(t *testing.T) {
 		errors     []string
 		want       Status
 	}{
-		{"accepted", -1, -1, nil, StatusAccepted},
-		{"running", 1, -1, nil, StatusRunning},
-		{"running with errors mid-flight", 1, -1, []string{"transient"}, StatusRunning},
-		{"successful", 1, 2, nil, StatusSuccessful},
-		{"failed", 1, 2, []string{"boom"}, StatusFailed},
+		{"accepted", -1, -1, nil, StatusACCEPTED},
+		{"running", 1, -1, nil, StatusRUNNING},
+		{"running with errors mid-flight", 1, -1, []string{"transient"}, StatusRUNNING},
+		{"successful", 1, 2, nil, StatusSUCCESSFUL},
+		{"failed", 1, 2, []string{"boom"}, StatusFAILED},
 		// Regression: a permanently failed setup PartialJob can finish a
 		// Job that was never started (RedisBackend.forceFail) - finished
 		// must win over the "never started -> accepted" rule, or the Job
 		// would incorrectly show "accepted" forever.
-		{"finished without ever starting, no errors", -1, 5, nil, StatusSuccessful},
-		{"finished without ever starting, with errors", -1, 5, []string{"setup failed"}, StatusFailed},
+		{"finished without ever starting, no errors", -1, 5, nil, StatusSUCCESSFUL},
+		{"finished without ever starting, with errors", -1, 5, []string{"setup failed"}, StatusFAILED},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,44 +148,5 @@ func TestJobMessage(t *testing.T) {
 				t.Errorf("Message() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestJobResultConstructors(t *testing.T) {
-	if !Success().IsSuccess() {
-		t.Error("Success() should be IsSuccess()")
-	}
-	if Success().IsFailure() {
-		t.Error("Success() should not be IsFailure()")
-	}
-
-	oh := OnHold()
-	if oh.IsSuccess() {
-		t.Error("OnHold() should not be IsSuccess()")
-	}
-	if oh.IsFailure() {
-		t.Error("OnHold() should not be IsFailure() (no Error set)")
-	}
-	if !oh.OnHold {
-		t.Error("OnHold() should set OnHold=true")
-	}
-
-	r := Retry("transient")
-	if !r.IsFailure() {
-		t.Error("Retry() should be IsFailure()")
-	}
-	if !r.Retry {
-		t.Error("Retry() should set Retry=true")
-	}
-	if r.Error != "transient" {
-		t.Errorf("Retry().Error = %q, want transient", r.Error)
-	}
-
-	e := Error("permanent")
-	if !e.IsFailure() {
-		t.Error("Error() should be IsFailure()")
-	}
-	if e.Retry {
-		t.Error("Error() should not set Retry")
 	}
 }

@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/ldproxy/xtralink/app"
-	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // Get returns the full Job (inputs/outputs/progressDetails included).
-func Get(appCtx *app.AppContext, id string) (*jobs.Job, error) {
+func Get(appCtx *app.AppContext, id string) (*model.Job, error) {
 	job, err := appCtx.Jobs.GetJob(id)
 	if err != nil {
 		return nil, fmt.Errorf("could not get job %s: %w", id, err)

@@ -1,12 +1,12 @@
 package workflows
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/workflows"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // WorkflowJobProcessor makes a Job a thin wrapper around a single Workflow
@@ -38,13 +38,13 @@ func NewWorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*WorkflowJo
 func (p *WorkflowJobProcessor) JobType() string { return p.StepId }
 func (p *WorkflowJobProcessor) Priority() int   { return 1000 }
 
-func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Job, backend jobs.Backend) jobs.JobResult {
+func (p *WorkflowJobProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) jobs.JobResult {
 	if job == nil {
 		// Can legitimately happen if the Job was deleted/expired while an
 		// orphaned PartialJob for it still lingered in the queue (s. the
 		// same guard in tileSeedingSetupProcessor) - fail this PartialJob
 		// instead of panicking on a nil dereference below.
-		return jobs.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.ID, partialJob.PartOf))
+		return jobs.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
 	}
 
 	wf, err := p.AppCtx.Settings.GetWorkflow(p.Def.Workflow)
@@ -80,20 +80,16 @@ func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Jo
 			"workflow %q produced %d parallel results, expected exactly 1 - job-wrapped workflows must not fork", wf.Id, len(leaves)))
 	}
 
-	if err := p.writeOutputs(backend, job.ID, leaves[0]); err != nil {
+	if err := p.writeOutputs(backend, job.Id, leaves[0]); err != nil {
 		return jobs.Error(fmt.Sprintf("writing outputs: %v", err))
 	}
 
-	// This step has no progressDetails/UpdateTargets fan-out (no
-	// intermediate progress, s. concept) - it's atomic, either fully done
-	// or not, so it reports its own +1 on both levels directly (mirrors
-	// how lib/jobs' counterProcessor test double reports progress for a
-	// job type with no fan-out descriptor either).
-	if err := backend.UpdatePartialJob(partialJob.ID, 1); err != nil {
+	// This step has no progressDetails fan-out (no intermediate progress,
+	// s. concept) - it's atomic, either fully done or not, so it reports a
+	// single +1 once. UpdatePartialJob carries that through to the Job's
+	// own current as well, so there is nothing to report separately.
+	if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
 		return jobs.Error(fmt.Sprintf("updating partial job progress: %v", err))
-	}
-	if err := backend.UpdateJob(job.ID, 1, nil); err != nil {
-		return jobs.Error(fmt.Sprintf("updating job progress: %v", err))
 	}
 
 	return jobs.Success()
@@ -104,21 +100,15 @@ func (p *WorkflowJobProcessor) Process(partialJob *jobs.PartialJob, job *jobs.Jo
 // declared params by field name) or explicit (Def.Parameters present -
 // every param comes from there, templated, nothing auto-filled from
 // Inputs).
-func (p *WorkflowJobProcessor) resolveParams(wf *workflows.Workflow, job *jobs.Job) (map[string]any, error) {
+func (p *WorkflowJobProcessor) resolveParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	if len(p.Def.Parameters) == 0 {
 		return p.resolveImplicitParams(wf, job)
 	}
 	return p.resolveExplicitParams(wf, job)
 }
 
-func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job *jobs.Job) (map[string]any, error) {
-	var provided map[string]any
-	if len(job.Inputs) > 0 {
-		if err := json.Unmarshal(job.Inputs, &provided); err != nil {
-			return nil, fmt.Errorf("invalid inputs: %w", err)
-		}
-	}
-	return applyParamDefaults(wf, provided)
+func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
+	return applyParamDefaults(wf, job.Inputs)
 }
 
 // resolveExplicitParams resolves Def.Parameters as workflow-style
@@ -127,7 +117,7 @@ func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job
 // earlier step of the same Job already wrote; there is no separate
 // "parent job" to look up, since all steps of a Job are PartialJobs of the
 // very same Job.
-func (p *WorkflowJobProcessor) resolveExplicitParams(wf *workflows.Workflow, job *jobs.Job) (map[string]any, error) {
+func (p *WorkflowJobProcessor) resolveExplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	resolveVars := map[string]any{
 		"packages": packageVars(p.AppCtx.Settings.Packages),
 		"parent":   map[string]any{"outputs": outputValues(job.Outputs)},
@@ -174,7 +164,7 @@ func (p *WorkflowJobProcessor) writeOutputs(backend jobs.Backend, jobID string, 
 	}
 	outputs, _ := resolved.(map[string]any)
 	for key, value := range outputs {
-		if err := backend.SetOutput(jobID, key, jobs.OutputValue{Value: value}); err != nil {
+		if err := backend.SetOutput(jobID, key, model.OutputValue{Value: value}); err != nil {
 			return err
 		}
 	}
@@ -185,10 +175,26 @@ func (p *WorkflowJobProcessor) writeOutputs(backend jobs.Backend, jobID string, 
 // template resolution - the wrapper type is an implementation detail of
 // how Job.Outputs is stored, not something a template author should need
 // to know about.
-func outputValues(outputs map[string]jobs.OutputValue) map[string]any {
+//
+// Job.Outputs is an opaque map the backend round-trips through JSON, so an
+// entry written as a model.OutputValue arrives as a generic map with a
+// "value" key rather than as the struct - anything that doesn't carry the
+// wrapper is passed through as-is.
+func outputValues(outputs map[string]any) map[string]any {
 	result := make(map[string]any, len(outputs))
 	for k, v := range outputs {
-		result[k] = v.Value
+		switch value := v.(type) {
+		case model.OutputValue:
+			result[k] = value.Value
+		case map[string]any:
+			if inner, ok := value["value"]; ok {
+				result[k] = inner
+				continue
+			}
+			result[k] = v
+		default:
+			result[k] = v
+		}
 	}
 	return result
 }

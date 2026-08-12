@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // The tests in this file are a simulated stand-in for xtraplatform-tiles'
@@ -39,6 +40,15 @@ var tileSeedingFakeLevels = []struct {
 }{
 	{Level: 5, Tiles: 3},
 	{Level: 6, Tiles: 5},
+}
+
+func tileSeedingTilesForLevel(level int) int {
+	for _, fl := range tileSeedingFakeLevels {
+		if fl.Level == level {
+			return fl.Tiles
+		}
+	}
+	return 0
 }
 
 type tileSeedingInputs struct {
@@ -77,6 +87,20 @@ type tileSeedingReport struct {
 	Duration       string `json:"duration"`
 }
 
+// decodeDetails re-decodes an opaque details map (Job.Inputs,
+// PartialJob.Context) into a typed struct, mirroring how the Java
+// processors deserialize their details type. The backend round-trips jobs
+// through JSON, so the map's values are always generic JSON kinds - a
+// []string comes back as []any, an int as float64 - and asserting the
+// original Go types on them panics.
+func decodeDetails(details map[string]any, target any) error {
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}
+
 // tileSeedingSetupProcessor mirrors TileSeedingJobCreator.java: it handles
 // both the setup and cleanup phase, distinguished by the isCleanup flag in
 // PartialJob.details.
@@ -85,16 +109,22 @@ type tileSeedingSetupProcessor struct{}
 func (tileSeedingSetupProcessor) JobType() string { return tileSeedingSetupType }
 func (tileSeedingSetupProcessor) Priority() int   { return 1001 }
 
-func (p tileSeedingSetupProcessor) Process(partialJob *PartialJob, job *Job, backend Backend) JobResult {
+func (p tileSeedingSetupProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
 	if job == nil {
-		return Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.ID, partialJob.PartOf))
+		return Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
+	}
+
+	if partialJob.Context == nil {
+		return Error(fmt.Sprintf("invalid setup partial job details: nil context"))
+	}
+
+	if _, ok := partialJob.Context["isCleanup"]; !ok {
+		return Error(fmt.Sprintf("invalid setup partial job details: missing isCleanup flag"))
 	}
 
 	var details tileSeedingSetupDetails
-	if len(partialJob.Details) > 0 {
-		if err := json.Unmarshal(partialJob.Details, &details); err != nil {
-			return Error(fmt.Sprintf("invalid setup partial job details: %v", err))
-		}
+	if err := decodeDetails(partialJob.Context, &details); err != nil {
+		return Error(fmt.Sprintf("invalid setup partial job details: %v", err))
 	}
 
 	if details.IsCleanup {
@@ -107,10 +137,17 @@ func (p tileSeedingSetupProcessor) Process(partialJob *PartialJob, job *Job, bac
 // tileset (tileSeedingFakeLevels), initializes progressDetails once
 // (type-specific), and pushes one PartialJob per (tileset, level) with the
 // declarative progress-update descriptor attached.
-func (p tileSeedingSetupProcessor) setup(job *Job, backend Backend) JobResult {
+func (p tileSeedingSetupProcessor) setup(job *model.Job, backend Backend) JobResult {
+	if job.Inputs == nil {
+		return Error(fmt.Sprintf("invalid inputs: nil inputs"))
+	}
+
 	var inputs tileSeedingInputs
-	if err := json.Unmarshal(job.Inputs, &inputs); err != nil {
+	if err := decodeDetails(job.Inputs, &inputs); err != nil {
 		return Error(fmt.Sprintf("invalid inputs: %v", err))
+	}
+	if inputs.TileProvider == "" {
+		return Error(fmt.Sprintf("invalid inputs: missing tileProvider"))
 	}
 	if len(inputs.TileSets) == 0 {
 		return Error("no tileSets to seed")
@@ -129,25 +166,37 @@ func (p tileSeedingSetupProcessor) setup(job *Job, backend Backend) JobResult {
 			Progress: tileSeedingLevelProgress{Current: 0, Levels: map[string][]int{tileSeedingTMS: levels}},
 		}
 	}
-	if err := backend.SetProgressDetails(job.ID, progress); err != nil {
+	progressDetailsRaw, err := json.Marshal(progress)
+	if err != nil {
+		return Error(fmt.Sprintf("could not encode progress details: %v", err))
+	}
+	progressDetailsMap := map[string]any{}
+	if err := json.Unmarshal(progressDetailsRaw, &progressDetailsMap); err != nil {
+		return Error(fmt.Sprintf("could not decode progress details: %v", err))
+	}
+	if err := backend.SetProgressDetails(job.Id, progressDetailsMap); err != nil {
 		return Error(fmt.Sprintf("could not init progress details: %v", err))
 	}
 
 	for _, tileSet := range inputs.TileSets {
 		for _, fl := range tileSeedingFakeLevels {
-			worker := NewPartialJob(uuid.NewString(), tileSeedingVectorType, job.Priority, job.ID)
-			worker.Total = fl.Tiles
-			worker.UpdateTargets = []ProgressUpdate{
-				{Path: fmt.Sprintf("tileSets.%s.progress.current", tileSet), Op: ProgressOpAdd},
-				{Path: fmt.Sprintf("tileSets.%s.progress.levels.%s[%d]", tileSet, tileSeedingTMS, fl.Level), Op: ProgressOpSubtract},
+			worker := NewPartialJob(uuid.NewString(), tileSeedingVectorType, job.Priority, job.Id)
+			worker.Progress.Total = fl.Tiles
+			worker.ProgressUpdates = []model.ProgressUpdate{
+				{Path: fmt.Sprintf("tileSets.%s.progress.current", tileSet), Operation: model.ProgressOperationADD},
+				{Path: fmt.Sprintf("tileSets.%s.progress.levels.%s[%d]", tileSet, tileSeedingTMS, fl.Level), Operation: model.ProgressOperationSUBTRACT},
 			}
 			detailsRaw, err := json.Marshal(tileSeedingWorkerDetails{TileSet: tileSet, Level: fl.Level})
 			if err != nil {
 				return Error(fmt.Sprintf("could not encode worker details: %v", err))
 			}
-			worker.Details = detailsRaw
+			detailsMap := map[string]any{}
+			if err := json.Unmarshal(detailsRaw, &detailsMap); err != nil {
+				return Error(fmt.Sprintf("could not decode worker details: %v", err))
+			}
+			worker.Context = detailsMap
 
-			if err := backend.InitJob(job.ID, fl.Tiles, nil); err != nil {
+			if err := backend.InitJob(job.Id, fl.Tiles, nil); err != nil {
 				return Error(fmt.Sprintf("could not grow job total: %v", err))
 			}
 			if err := backend.PushPartialJob(worker, false); err != nil {
@@ -162,24 +211,26 @@ func (p tileSeedingSetupProcessor) setup(job *Job, backend Backend) JobResult {
 // cleanup writes the seeding report output; it does not itself decide
 // whether the Job succeeded/failed - that (finishedAt/status) is already
 // settled by the backend once the last PartialJob finished.
-func (p tileSeedingSetupProcessor) cleanup(job *Job, backend Backend) JobResult {
-	current, err := backend.GetJob(job.ID)
+func (p tileSeedingSetupProcessor) cleanup(job *model.Job, backend Backend) JobResult {
+	current, err := backend.GetJob(job.Id)
 	if err != nil || current == nil {
 		return Error(fmt.Sprintf("could not reload job for cleanup: %v", err))
 	}
 
 	var inputs tileSeedingInputs
-	_ = json.Unmarshal(current.Inputs, &inputs)
+	if err := decodeDetails(current.Inputs, &inputs); err != nil {
+		return Error(fmt.Sprintf("invalid inputs: %v", err))
+	}
 
 	duration := time.Duration(current.UpdatedAt-current.StartedAt) * time.Millisecond
 	report := tileSeedingReport{
 		TileProvider:   inputs.TileProvider,
-		TilesGenerated: current.Current,
+		TilesGenerated: current.Progress.Current,
 		Errors:         len(current.Errors),
 		Duration:       duration.String(),
 	}
 
-	if err := backend.SetOutput(job.ID, "seedingReport", OutputValue{Value: report}); err != nil {
+	if err := backend.SetOutput(job.Id, "seedingReport", model.OutputValue{Value: report}); err != nil {
 		return Error(fmt.Sprintf("could not write output: %v", err))
 	}
 
@@ -198,32 +249,41 @@ type tileSeedingVectorWorkerProcessor struct {
 func (tileSeedingVectorWorkerProcessor) JobType() string { return tileSeedingVectorType }
 func (tileSeedingVectorWorkerProcessor) Priority() int   { return 1000 }
 
-func (p tileSeedingVectorWorkerProcessor) Process(partialJob *PartialJob, job *Job, backend Backend) JobResult {
+func (p tileSeedingVectorWorkerProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
 	var details tileSeedingWorkerDetails
-	_ = json.Unmarshal(partialJob.Details, &details)
+	if err := decodeDetails(partialJob.Context, &details); err != nil {
+		return Error(fmt.Sprintf("invalid worker partial job details: %v", err))
+	}
 
-	for i := 0; i < partialJob.Total; i++ {
+	// One UpdatePartialJob per "rendered" tile - that single call is what
+	// also advances the parent Job's progress and fans out to its
+	// progressDetails, so there is deliberately no extra UpdateJob here.
+	tiles := tileSeedingTilesForLevel(details.Level)
+	for tile := 1; tile <= tiles; tile++ {
 		time.Sleep(p.tileDuration)
 
-		if err := backend.UpdatePartialJob(partialJob.ID, 1); err != nil {
+		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
 			return Error(fmt.Sprintf(
-				"tile %d/%d (%s, level %d): %v", i+1, partialJob.Total, details.TileSet, details.Level, err))
+				"tile %d/%d (%s, level %d): %v", tile, tiles, details.TileSet, details.Level, err))
 		}
 	}
 
 	return Success()
 }
 
-func newTileSeedingJob(label, tileProvider string, tileSets []string) *Job {
-	setupDetails, _ := json.Marshal(tileSeedingSetupDetails{IsCleanup: false})
-	cleanupDetails, _ := json.Marshal(tileSeedingSetupDetails{IsCleanup: true})
-	inputs, _ := json.Marshal(tileSeedingInputs{TileProvider: tileProvider, TileSets: tileSets})
+func newTileSeedingJob(label, tileProvider string, tileSets []string) *model.Job {
+	setupDetails := map[string]any{"isCleanup": false}
+	cleanupDetails := map[string]any{"isCleanup": true}
+	inputs := map[string]any{
+		"tileProvider": tileProvider,
+		"tileSets":     tileSets,
+	}
 
 	job := NewJob(uuid.NewString(), tileSeedingType, 1000, label, inputs)
-	job.Setup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.ID)
-	job.Setup.Details = setupDetails
-	job.Cleanup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.ID)
-	job.Cleanup.Details = cleanupDetails
+	job.Setup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.Id)
+	job.Setup.Context = setupDetails
+	job.Cleanup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.Id)
+	job.Cleanup.Context = cleanupDetails
 	return job
 }
 
@@ -232,7 +292,7 @@ func newTileSeedingJob(label, tileProvider string, tileSets []string) *Job {
 // *before* the cleanup PartialJob that was just pushed actually runs - so
 // this also gives cleanup a brief grace period to write its output before
 // treating the run as over.
-func waitForTileSeedingCompletion(t *testing.T, b Backend, id string, timeout time.Duration) *Job {
+func waitForTileSeedingCompletion(t *testing.T, b Backend, id string, timeout time.Duration) *model.Job {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
@@ -265,7 +325,7 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 
 	main := newTileSeedingJob("Tile cache seeding", "demo-tiles", []string{"vineyards"})
 	followUp := newTileSeedingJob("Tile cache seeding (follow-up)", "demo-tiles", []string{"vineyards"})
-	main.FollowUps = []*Job{followUp}
+	main.FollowUps = []model.Job{*followUp}
 
 	if err := b.PushJob(main); err != nil {
 		t.Fatalf("PushJob: %v", err)
@@ -283,21 +343,31 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() { runnerDone <- r.Run(ctx) }()
 
-	final := waitForTileSeedingCompletion(t, b, main.ID, 5*time.Second)
-	if final.Status() != StatusSuccessful {
+	final := waitForTileSeedingCompletion(t, b, main.Id, 5*time.Second)
+	if final.Status() != model.StatusSUCCESSFUL {
 		t.Fatalf("main job Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
 	}
-	report, ok := final.Outputs["seedingReport"]
-	if !ok {
+	// Outputs is an opaque map that the backend round-trips through JSON,
+	// so the stored OutputValue comes back as generic JSON, not as a
+	// model.OutputValue - decode it rather than asserting the type.
+	if _, ok := final.Outputs["seedingReport"]; !ok {
 		t.Fatal("expected a seedingReport output on the main job")
 	}
-	raw, err := json.Marshal(report.Value)
+	raw, err := json.Marshal(final.Outputs["seedingReport"])
 	if err != nil {
 		t.Fatalf("marshal seedingReport: %v", err)
 	}
-	var parsed tileSeedingReport
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	var report model.OutputValue
+	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatalf("unmarshal seedingReport: %v", err)
+	}
+	var parsed tileSeedingReport
+	rawValue, err := json.Marshal(report.Value)
+	if err != nil {
+		t.Fatalf("marshal seedingReport value: %v", err)
+	}
+	if err := json.Unmarshal(rawValue, &parsed); err != nil {
+		t.Fatalf("unmarshal seedingReport value: %v", err)
 	}
 	wantTiles := 0
 	for _, fl := range tileSeedingFakeLevels {
@@ -307,8 +377,8 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 		t.Errorf("seedingReport.tilesGenerated = %d, want %d", parsed.TilesGenerated, wantTiles)
 	}
 
-	followUpFinal := waitForTileSeedingCompletion(t, b, followUp.ID, 5*time.Second)
-	if followUpFinal.Status() != StatusSuccessful {
+	followUpFinal := waitForTileSeedingCompletion(t, b, followUp.Id, 5*time.Second)
+	if followUpFinal.Status() != model.StatusSUCCESSFUL {
 		t.Errorf("follow-up job Status() = %s, want successful (errors=%v)", followUpFinal.Status(), followUpFinal.Errors)
 	}
 
@@ -341,11 +411,11 @@ func TestTileSeedingDemo_EmptyTileSetsFailsSetup(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() { runnerDone <- r.Run(ctx) }()
 
-	final := waitForTileSeedingCompletion(t, b, job.ID, 2*time.Second)
+	final := waitForTileSeedingCompletion(t, b, job.Id, 2*time.Second)
 	cancel()
 	<-runnerDone
 
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed (errors=%v)", final.Status(), final.Errors)
 	}
 	found := false

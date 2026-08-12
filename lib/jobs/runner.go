@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/ldproxy/xtralink/model"
 )
 
 // Runner is a polling dispatch loop, analogous to JobRunner.java: for each
@@ -84,7 +86,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			assigned = true
 			processor := r.processors[partialJobType]
 			wg.Add(1)
-			go func(partialJob *PartialJob, processor JobProcessor) {
+			go func(partialJob *model.PartialJob, processor JobProcessor) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				r.process(ctx, partialJob, processor)
@@ -116,14 +118,14 @@ func (r *Runner) orderedTypes() []string {
 // process runs a single PartialJob through its processor and applies the
 // result, including the Job.start() call for the first non-setup PartialJob
 // of a Job (mirrors handleJobSetStartup in JobRunner.java).
-func (r *Runner) process(ctx context.Context, partialJob *PartialJob, processor JobProcessor) {
-	var job *Job
+func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, processor JobProcessor) {
+	var job *model.Job
 	if partialJob.PartOf != "" {
 		var err error
 		job, err = r.Backend.GetJob(partialJob.PartOf)
 		r.reportError(err)
 
-		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.ID == partialJob.ID) {
+		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.Id == partialJob.Id) {
 			r.reportError(r.Backend.StartJob(partialJob.PartOf))
 		}
 	}
@@ -132,9 +134,9 @@ func (r *Runner) process(ctx context.Context, partialJob *PartialJob, processor 
 
 	switch {
 	case result.IsSuccess():
-		r.reportError(r.Backend.Done(partialJob.ID))
+		r.reportError(r.Backend.Done(partialJob.Id))
 	case result.IsFailure():
-		r.reportError(r.Backend.Error(partialJob.ID, result.Error, result.Retry))
+		r.reportError(r.Backend.Error(partialJob.Id, result.Error, result.Retry))
 	case result.OnHold:
 		r.scheduleOnHoldRetry(ctx, partialJob)
 	}
@@ -143,7 +145,7 @@ func (r *Runner) process(ctx context.Context, partialJob *PartialJob, processor 
 // scheduleOnHoldRetry re-queues partialJob after OnHoldRetryInterval,
 // simulating "the resource became available again" without an actual event
 // source. It respects ctx so it never outlives the Runner it belongs to.
-func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *PartialJob) {
+func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *model.PartialJob) {
 	go func() {
 		select {
 		case <-time.After(r.OnHoldRetryInterval):

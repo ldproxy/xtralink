@@ -4,16 +4,18 @@ import (
 	"fmt"
 
 	"github.com/ldproxy/xtralink/app"
-	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
-// StatusView is the compact status/progress view for a Job.
+// StatusView is the compact status/progress view for a Job. It is a view
+// type deliberately decoupled from model.Job, so its field/JSON names stay
+// stable regardless of what the model calls them.
 type StatusView struct {
-	ID      string      `json:"id"`
-	Type    string      `json:"type"`
-	Status  jobs.Status `json:"status"`
-	Percent int         `json:"percent"`
-	Message string      `json:"message"`
+	ID      string       `json:"id"`
+	Type    string       `json:"type"`
+	Status  model.Status `json:"status"`
+	Percent int          `json:"percent"`
+	Message string       `json:"message"`
 }
 
 // Status looks up a Job by id and returns its derived status.
@@ -27,8 +29,8 @@ func Status(appCtx *app.AppContext, id string) (*StatusView, error) {
 	}
 
 	return &StatusView{
-		ID:      job.ID,
-		Type:    job.Type,
+		ID:      job.Id,
+		Type:    job.Kind,
 		Status:  job.Status(),
 		Percent: job.Percent(),
 		Message: job.Message(),

@@ -16,8 +16,8 @@ func List(appCtx *app.AppContext) ([]*StatusView, error) {
 	views := make([]*StatusView, 0, len(all))
 	for _, job := range all {
 		views = append(views, &StatusView{
-			ID:      job.ID,
-			Type:    job.Type,
+			ID:      job.Id,
+			Type:    job.Kind,
 			Status:  job.Status(),
 			Percent: job.Percent(),
 			Message: job.Message(),

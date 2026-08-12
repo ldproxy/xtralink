@@ -6,12 +6,13 @@ import (
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
 func TestList_MapsAllJobs(t *testing.T) {
 	a := jobs.NewJob("id-a", "demo", 1000, "", nil)
 	b := jobs.NewJob("id-b", "demo", 1000, "", nil)
-	backend := &fakeBackend{getJobsResult: []*jobs.Job{a, b}}
+	backend := &fakeBackend{getJobsResult: []*model.Job{a, b}}
 	appCtx := &app.AppContext{Jobs: backend}
 
 	got, err := List(appCtx)
@@ -24,7 +25,7 @@ func TestList_MapsAllJobs(t *testing.T) {
 }
 
 func TestList_EmptyReturnsEmptyNotNilSlice(t *testing.T) {
-	backend := &fakeBackend{getJobsResult: []*jobs.Job{}}
+	backend := &fakeBackend{getJobsResult: []*model.Job{}}
 	appCtx := &app.AppContext{Jobs: backend}
 
 	got, err := List(appCtx)

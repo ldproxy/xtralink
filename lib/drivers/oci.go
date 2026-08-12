@@ -241,7 +241,16 @@ func (d *ociDriver) pushImage(ctx context.Context, directoryPath string, repo or
 
 	copyOptions := oras.DefaultCopyOptions
 
-	if _, err := oras.Copy(ctx, store, manifest.Descriptor.Digest.String(), repo, manifest.Descriptor.Digest.String(), copyOptions); err != nil {
+	// A per-arch manifest of a multi-arch push (Push, tag "") stays
+	// digest-addressed - only the index that references it gets the
+	// human-readable tag. Any other caller naming a tag gets the manifest
+	// published under it directly.
+	destination := manifest.Descriptor.Digest.String()
+	if tag = strings.TrimSpace(tag); tag != "" {
+		destination = tag
+	}
+
+	if _, err := oras.Copy(ctx, store, manifest.Descriptor.Digest.String(), repo, destination, copyOptions); err != nil {
 		return nil, fmt.Errorf("oras copy failed: %v", err)
 	}
 

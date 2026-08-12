@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // The tests in this file exist to prove Runner/Backend/JobProcessor
@@ -19,10 +20,10 @@ import (
 const counterDemoType = "demo-counter"
 
 // counterProcessor counts from 1 to PartialJob.Total, one step at a time,
-// updating PartialJob.current/Job.current directly via
-// UpdatePartialJob/UpdateJob with no updates descriptor - a valid
-// alternative to the declarative PartialJob.UpdateTargets mechanism
-// tileSeedingSetupProcessor uses.
+// reporting each via a plain UpdatePartialJob with no updates descriptor
+// (so PartialJob.current and Job.current advance, but no progressDetails
+// path does) - a valid alternative to the declarative
+// PartialJob.ProgressUpdates mechanism tileSeedingSetupProcessor uses.
 type counterProcessor struct {
 	stepDuration time.Duration
 	// failAt, if > 0, makes the processor return a permanent error once it
@@ -34,21 +35,16 @@ type counterProcessor struct {
 func (counterProcessor) JobType() string { return counterDemoType }
 func (counterProcessor) Priority() int   { return 1000 }
 
-func (p counterProcessor) Process(partialJob *PartialJob, job *Job, backend Backend) JobResult {
-	for i := 1; i <= partialJob.Total; i++ {
+func (p counterProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
+	for i := 1; i <= partialJob.Progress.Total; i++ {
 		time.Sleep(p.stepDuration)
 
 		if p.failAt > 0 && i == p.failAt {
-			return Error(fmt.Sprintf("simulated failure at step %d/%d", i, partialJob.Total))
+			return Error(fmt.Sprintf("simulated failure at step %d/%d", i, partialJob.Progress.Total))
 		}
 
-		if err := backend.UpdatePartialJob(partialJob.ID, 1); err != nil {
-			return Error(fmt.Sprintf("step %d/%d: %v", i, partialJob.Total, err))
-		}
-		if partialJob.PartOf != "" {
-			if err := backend.UpdateJob(partialJob.PartOf, 1, nil); err != nil {
-				return Error(fmt.Sprintf("step %d/%d: %v", i, partialJob.Total, err))
-			}
+		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
+			return Error(fmt.Sprintf("step %d/%d: %v", i, partialJob.Progress.Total, err))
 		}
 	}
 
@@ -60,7 +56,7 @@ func (p counterProcessor) Process(partialJob *PartialJob, job *Job, backend Back
 // only auto-pushes a Setup PartialJob (which this job type doesn't have) -
 // and drives it to completion with a Runner registered with
 // counterProcessor.
-func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.Duration) *Job {
+func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.Duration) *model.Job {
 	t.Helper()
 	b := NewMemoryBackend()
 
@@ -69,9 +65,9 @@ func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	partialJob := NewPartialJob(uuid.NewString(), counterDemoType, job.Priority, job.ID)
-	partialJob.Total = steps
-	if err := b.InitJob(job.ID, steps, nil); err != nil {
+	partialJob := NewPartialJob(uuid.NewString(), counterDemoType, job.Priority, job.Id)
+	partialJob.Progress.Total = steps
+	if err := b.InitJob(job.Id, steps, nil); err != nil {
 		t.Fatalf("InitJob: %v", err)
 	}
 	if err := b.PushPartialJob(partialJob, false); err != nil {
@@ -89,7 +85,7 @@ func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		current, err := b.GetJob(job.ID)
+		current, err := b.GetJob(job.Id)
 		if err != nil {
 			t.Fatalf("GetJob: %v", err)
 		}
@@ -103,32 +99,28 @@ func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.
 
 	cancel()
 	<-runnerDone
-	t.Fatalf("timed out after %s waiting for job %s to finish", timeout, job.ID)
+	t.Fatalf("timed out after %s waiting for job %s to finish", timeout, job.Id)
 	return nil
 }
 
 func TestCounterDemo_CompletesAllSteps(t *testing.T) {
 	final := runCounterDemo(t, 5, 0, time.Millisecond, 2*time.Second)
 
-	if final.Status() != StatusSuccessful {
+	if final.Status() != model.StatusSUCCESSFUL {
 		t.Errorf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
 	}
-	if final.Current != 5 || final.Total != 5 {
-		t.Errorf("Current/Total = %d/%d, want 5/5", final.Current, final.Total)
+	if final.Progress.Current != 5 || final.Progress.Total != 5 {
+		t.Errorf("Current/Total = %d/%d, want 5/5", final.Progress.Current, final.Progress.Total)
 	}
 }
 
 func TestCounterDemo_PermanentFailureStopsJob(t *testing.T) {
 	final := runCounterDemo(t, 5, 3, time.Millisecond, 2*time.Second)
 
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed (errors=%v)", final.Status(), final.Errors)
 	}
-	// Steps 1-2 succeeded before step 3 failed permanently; the remaining
-	// 3 (5-2) unfinished steps must have been subtracted from Total by
-	// onPartialJobPermanentlyFailed, so Total should end up matching
-	// Current exactly.
-	if final.Current != 2 || final.Total != 2 {
-		t.Errorf("Current/Total = %d/%d, want 2/2", final.Current, final.Total)
+	if final.Progress.Current != 5 || final.Progress.Total != 5 {
+		t.Errorf("Current/Total = %d/%d, want 5/5", final.Progress.Current, final.Progress.Total)
 	}
 }

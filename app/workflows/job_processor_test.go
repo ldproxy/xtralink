@@ -15,6 +15,7 @@ import (
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
 	"github.com/ldproxy/xtralink/lib/workflows"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // TestWorkflowJobProcessor_TwoStepPipelineWithImplicitAndExplicitInputs runs
@@ -103,8 +104,8 @@ jobDefinitions:
 	if err != nil {
 		t.Fatalf("PushPipeline: %v", err)
 	}
-	if job.Parallel {
-		t.Error("expected Job.Parallel to be false")
+	if job.Sequence == nil {
+		t.Error("expected parallel=false to opt the Job into sequencing")
 	}
 
 	step1, err := NewWorkflowJobProcessor(appCtx, "nba-transformation")
@@ -129,9 +130,9 @@ jobDefinitions:
 	go func() { runnerDone <- r.Run(ctx) }()
 
 	deadline := time.Now().Add(5 * time.Second)
-	var final *jobs.Job
+	var final *model.Job
 	for time.Now().Before(deadline) {
-		current, err := backend.GetJob(job.ID)
+		current, err := backend.GetJob(job.Id)
 		if err != nil {
 			t.Fatalf("GetJob: %v", err)
 		}
@@ -150,20 +151,23 @@ jobDefinitions:
 	if final == nil {
 		t.Fatal("timed out waiting for the job to finish")
 	}
-	if final.Status() != jobs.StatusSuccessful {
+	if final.Status() != model.StatusSUCCESSFUL {
 		t.Fatalf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
 	}
-	if final.Current != 2 || final.Total != 2 {
-		t.Errorf("Current/Total = %d/%d, want 2/2 (one per step)", final.Current, final.Total)
+	if final.Progress.Current != 2 || final.Progress.Total != 2 {
+		t.Errorf("Current/Total = %d/%d, want 2/2 (one per step)", final.Progress.Current, final.Progress.Total)
 	}
 
-	fooOut, ok := final.Outputs["foo"]
-	if !ok || fooOut.Value != "a.zip" {
-		t.Errorf("Outputs[foo] = %+v, want value a.zip", fooOut)
+	// Outputs is an opaque map the backend round-trips through JSON, so each
+	// entry comes back as a generic OutputValue-shaped map - outputValues
+	// unwraps exactly that (the same way ${parent.outputs...} resolution
+	// sees it).
+	outs := outputValues(final.Outputs)
+	if outs["foo"] != "a.zip" {
+		t.Errorf("Outputs[foo] = %+v, want value a.zip", outs["foo"])
 	}
-	barOut, ok := final.Outputs["bar"]
-	if !ok || barOut.Value != "a.zip" {
-		t.Errorf("Outputs[bar] = %+v, want value a.zip (relayed via ${parent.outputs.foo} -> params.foo)", barOut)
+	if outs["bar"] != "a.zip" {
+		t.Errorf("Outputs[bar] = %+v, want value a.zip (relayed via ${parent.outputs.foo} -> params.foo)", outs["bar"])
 	}
 }
 
@@ -217,7 +221,7 @@ jobDefinitions:
 	if err := backend.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
-	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1000, job.ID)
+	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1000, job.Id)
 	if err := backend.PushPartialJob(partialJob, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
@@ -231,7 +235,7 @@ jobDefinitions:
 	if err != nil || taken == nil {
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
-	gotJob, err := backend.GetJob(job.ID)
+	gotJob, err := backend.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}

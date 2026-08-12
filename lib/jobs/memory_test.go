@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"encoding/json"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -9,25 +8,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ldproxy/xtralink/model"
 )
 
 func TestMemoryBackend_PushJobAndGetJob(t *testing.T) {
 	b := NewMemoryBackend()
 
-	job := NewJob(uuid.NewString(), "demo", 1000, "Label", json.RawMessage(`{"a":1}`))
+	job := NewJob(uuid.NewString(), "demo", 1000, "Label", map[string]any{"a": 1})
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got == nil || got.Label != "Label" || got.Type != "demo" {
+	if got == nil || got.Label != "Label" || got.Kind != "demo" {
 		t.Errorf("unexpected job: %+v", got)
 	}
-	if string(got.Inputs) != `{"a":1}` {
-		t.Errorf("Inputs = %s, want {\"a\":1}", got.Inputs)
+	if got.Inputs == nil || got.Inputs["a"] != float64(1) {
+		t.Errorf("Inputs = %v, want {\"a\":1}", got.Inputs)
 	}
 	if got == job {
 		t.Error("expected GetJob to return a copy, not the same pointer that was pushed")
@@ -51,7 +51,7 @@ func TestMemoryBackend_PushJobAutoPushesSetup(t *testing.T) {
 	jobType := uniqueType("auto-setup")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.ID)
+	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.Id)
 
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
@@ -61,10 +61,10 @@ func TestMemoryBackend_PushJobAutoPushesSetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take: %v", err)
 	}
-	if taken == nil || taken.ID != job.Setup.ID {
+	if taken == nil || taken.Id != job.Setup.Id {
 		t.Fatalf("expected to take the auto-pushed setup partial job, got %+v", taken)
 	}
-	if taken.Executor == nil || *taken.Executor != "test-executor" {
+	if taken.Executor != "test-executor" {
 		t.Error("expected Executor to be set on take")
 	}
 	if taken.StartedAt <= 0 {
@@ -107,7 +107,7 @@ func TestMemoryBackend_TakeReturnsHighestPriorityFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take: %v", err)
 	}
-	if taken == nil || taken.ID != high.ID {
+	if taken == nil || taken.Id != high.Id {
 		t.Fatalf("expected higher-priority partial job first, got %+v", taken)
 	}
 
@@ -115,7 +115,7 @@ func TestMemoryBackend_TakeReturnsHighestPriorityFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take (2): %v", err)
 	}
-	if taken2 == nil || taken2.ID != low.ID {
+	if taken2 == nil || taken2.Id != low.Id {
 		t.Fatalf("expected lower-priority partial job second, got %+v", taken2)
 	}
 }
@@ -145,7 +145,7 @@ func TestMemoryBackend_DoneRemovesFromTakenAndDeletesPartialJob(t *testing.T) {
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
 
-	if err := b.Done(taken.ID); err != nil {
+	if err := b.Done(taken.Id); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
@@ -154,11 +154,11 @@ func TestMemoryBackend_DoneRemovesFromTakenAndDeletesPartialJob(t *testing.T) {
 		t.Fatalf("GetTaken: %v", err)
 	}
 	for _, pj := range stillTaken {
-		if pj.ID == taken.ID {
+		if pj.Id == taken.Id {
 			t.Error("expected partial job to be removed from the taken list")
 		}
 	}
-	if b.partial[taken.ID] != nil {
+	if b.partial[taken.Id] != nil {
 		t.Error("expected partial job document to be deleted after Done()")
 	}
 }
@@ -179,13 +179,13 @@ func TestMemoryBackend_ErrorRetriesThenPermanentlyFails(t *testing.T) {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
 
-	id := partialJob.ID
+	id := partialJob.Id
 	for i := 0; i < maxRetries; i++ {
 		taken, err := b.Take(jobType, "test")
 		if err != nil || taken == nil {
 			t.Fatalf("Take (attempt %d): %v, %+v", i+1, err, taken)
 		}
-		if err := b.Error(taken.ID, "transient", true); err != nil {
+		if err := b.Error(taken.Id, "transient", true); err != nil {
 			t.Fatalf("Error (attempt %d): %v", i+1, err)
 		}
 	}
@@ -194,7 +194,7 @@ func TestMemoryBackend_ErrorRetriesThenPermanentlyFails(t *testing.T) {
 	if err != nil || taken == nil {
 		t.Fatalf("Take (final): %v, %+v", err, taken)
 	}
-	if err := b.Error(taken.ID, "final failure", true); err != nil {
+	if err := b.Error(taken.Id, "final failure", true); err != nil {
 		t.Fatalf("Error (final): %v", err)
 	}
 
@@ -204,7 +204,7 @@ func TestMemoryBackend_ErrorRetriesThenPermanentlyFails(t *testing.T) {
 	}
 	found := false
 	for _, pj := range failed {
-		if pj.ID == id {
+		if pj.Id == id {
 			found = true
 			if len(pj.Errors) != maxRetries+1 {
 				t.Errorf("expected %d accumulated error messages, got %d: %v", maxRetries+1, len(pj.Errors), pj.Errors)
@@ -225,19 +225,19 @@ func TestMemoryBackend_InitJobGrowsTotal(t *testing.T) {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	if err := b.InitJob(job.ID, 5, nil); err != nil {
+	if err := b.InitJob(job.Id, 5, nil); err != nil {
 		t.Fatalf("InitJob: %v", err)
 	}
-	if err := b.InitJob(job.ID, 3, nil); err != nil {
+	if err := b.InitJob(job.Id, 3, nil); err != nil {
 		t.Fatalf("InitJob (2): %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.Total != 8 {
-		t.Errorf("Total = %d, want 8", got.Total)
+	if got.Progress.Total != 8 {
+		t.Errorf("Total = %d, want 8", got.Progress.Total)
 	}
 }
 
@@ -246,22 +246,22 @@ func TestMemoryBackend_UpdateJobAppliesProgressUpdatesToProgressDetails(t *testi
 	jobType := uniqueType("update-progress")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.ProgressDetails = json.RawMessage(`{"nested":{"count":0}}`)
+	job.Progress.Details = map[string]any{"nested": map[string]any{"count": 0}}
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	updates := []ProgressUpdate{{Path: "nested.count", Op: ProgressOpAdd}}
-	if err := b.UpdateJob(job.ID, 4, updates); err != nil {
+	updates := []model.ProgressUpdate{{Path: "nested.count", Operation: model.ProgressOperationADD}}
+	if err := b.UpdateJob(job.Id, 4, updates); err != nil {
 		t.Fatalf("UpdateJob: %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.Current != 4 {
-		t.Errorf("Current = %d, want 4", got.Current)
+	if got.Progress.Current != 4 {
+		t.Errorf("Current = %d, want 4", got.Progress.Current)
 	}
 
 	var details struct {
@@ -269,9 +269,18 @@ func TestMemoryBackend_UpdateJobAppliesProgressUpdatesToProgressDetails(t *testi
 			Count int `json:"count"`
 		} `json:"nested"`
 	}
-	if err := json.Unmarshal(got.ProgressDetails, &details); err != nil {
-		t.Fatalf("unmarshal progressDetails: %v", err)
+	if got.Progress.Details == nil {
+		t.Fatalf("progressDetails is not a map[string]any")
 	}
+	nested, ok := got.Progress.Details["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("progressDetails.nested is not a map[string]any")
+	}
+	count, ok := nested["count"].(float64)
+	if !ok {
+		t.Fatalf("progressDetails.nested.count is not a number")
+	}
+	details.Nested.Count = int(count)
 	if details.Nested.Count != 4 {
 		t.Errorf("progressDetails.nested.count = %d, want 4", details.Nested.Count)
 	}
@@ -285,54 +294,70 @@ func TestMemoryBackend_UpdatePartialJobFansOutViaUpdateTargets(t *testing.T) {
 	jobType := uniqueType("fanout")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.ProgressDetails = json.RawMessage(`{"remaining":10,"levels":{"demo":[-1,8,-1]}}`)
+	job.Progress.Details = map[string]any{"remaining": 10, "levels": map[string]any{"demo": []int{-1, 8, -1}}}
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	partialJob := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.ID)
-	partialJob.Total = 5
-	partialJob.UpdateTargets = []ProgressUpdate{
-		{Path: "remaining", Op: ProgressOpSubtract},
-		{Path: "levels.demo[1]", Op: ProgressOpSubtract},
+	partialJob := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	partialJob.Progress.Total = 5
+	partialJob.ProgressUpdates = []model.ProgressUpdate{
+		{Path: "remaining", Operation: model.ProgressOperationSUBTRACT},
+		{Path: "levels.demo[1]", Operation: model.ProgressOperationSUBTRACT},
 	}
-	if err := b.InitJob(job.ID, 5, nil); err != nil {
+	if err := b.InitJob(job.Id, 5, nil); err != nil {
 		t.Fatalf("InitJob: %v", err)
 	}
 	if err := b.PushPartialJob(partialJob, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
 
-	if err := b.UpdatePartialJob(partialJob.ID, 3); err != nil {
+	if err := b.UpdatePartialJob(partialJob.Id, 3); err != nil {
 		t.Fatalf("UpdatePartialJob: %v", err)
 	}
 
-	gotPartial := b.partial[partialJob.ID]
-	if gotPartial.Current != 3 {
-		t.Errorf("partialJob.Current = %d, want 3", gotPartial.Current)
+	gotPartial := b.partial[partialJob.Id]
+	if gotPartial.Progress.Current != 3 {
+		t.Errorf("partialJob.Current = %d, want 3", gotPartial.Progress.Current)
 	}
 
-	gotJob, err := b.GetJob(job.ID)
+	gotJob, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if gotJob.Current != 3 {
-		t.Errorf("job.Current = %d, want 3 (fanned out from partial job delta)", gotJob.Current)
+	if gotJob.Progress.Current != 3 {
+		t.Errorf("job.Current = %d, want 3 (fanned out from partial job delta)", gotJob.Progress.Current)
 	}
-	var details struct {
-		Remaining int `json:"remaining"`
-		Levels    struct {
-			Demo []int `json:"demo"`
-		} `json:"levels"`
+	resultRemaining := 0
+	resultLevelsDemo := make([]int, 3)
+	if gotJob.Progress.Details == nil {
+		t.Fatalf("progressDetails is not a map[string]any")
 	}
-	if err := json.Unmarshal(gotJob.ProgressDetails, &details); err != nil {
-		t.Fatalf("unmarshal progressDetails: %v", err)
+	remaining, ok := gotJob.Progress.Details["remaining"].(float64)
+	if !ok {
+		t.Fatalf("progressDetails.remaining is not a number")
 	}
-	if details.Remaining != 7 {
-		t.Errorf("progressDetails.remaining = %d, want 7 (10-3)", details.Remaining)
+	resultRemaining = int(remaining)
+	levels, ok := gotJob.Progress.Details["levels"].(map[string]any)
+	if !ok {
+		t.Fatalf("progressDetails.levels is not a map[string]any")
 	}
-	if details.Levels.Demo[1] != 5 {
-		t.Errorf("progressDetails.levels.demo[1] = %d, want 5 (8-3)", details.Levels.Demo[1])
+	demo, ok := levels["demo"].([]any)
+	if !ok {
+		t.Fatalf("progressDetails.levels.demo is not a []any")
+	}
+	for i, v := range demo {
+		val, ok := v.(float64)
+		if !ok {
+			t.Fatalf("progressDetails.levels.demo[%d] is not a number", i)
+		}
+		resultLevelsDemo[i] = int(val)
+	}
+	if resultRemaining != 7 {
+		t.Errorf("progressDetails.remaining = %d, want 7 (10-3)", resultRemaining)
+	}
+	if resultLevelsDemo[1] != 5 {
+		t.Errorf("progressDetails.levels.demo[1] = %d, want 5 (8-3)", resultLevelsDemo[1])
 	}
 }
 
@@ -348,7 +373,7 @@ func TestMemoryBackend_OnPartialJobDone_SetupFinishing_SyncsEmbeddedSnapshotOnly
 	jobType := uniqueType("setup-done")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.ID)
+	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.Id)
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
@@ -357,11 +382,11 @@ func TestMemoryBackend_OnPartialJobDone_SetupFinishing_SyncsEmbeddedSnapshotOnly
 	if err != nil || taken == nil {
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
-	if err := b.Done(taken.ID); err != nil {
+	if err := b.Done(taken.Id); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
@@ -378,14 +403,14 @@ func TestMemoryBackend_OnPartialJobDone_LastPartialJobFinalizesAndPushesCleanup(
 	jobType := uniqueType("finalize-cleanup")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.ID)
+	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.Id)
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.ID)
-	worker.Total = 1
-	if err := b.InitJob(job.ID, 1, nil); err != nil {
+	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	worker.Progress.Total = 1
+	if err := b.InitJob(job.Id, 1, nil); err != nil {
 		t.Fatalf("InitJob: %v", err)
 	}
 	if err := b.PushPartialJob(worker, false); err != nil {
@@ -397,20 +422,17 @@ func TestMemoryBackend_OnPartialJobDone_LastPartialJobFinalizesAndPushesCleanup(
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
 	// Bypassing the Runner here, which normally calls this automatically.
-	if err := b.StartJob(job.ID); err != nil {
+	if err := b.StartJob(job.Id); err != nil {
 		t.Fatalf("StartJob: %v", err)
 	}
-	if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
+	if err := b.UpdatePartialJob(taken.Id, 1); err != nil {
 		t.Fatalf("UpdatePartialJob: %v", err)
 	}
-	if err := b.UpdateJob(job.ID, 1, nil); err != nil {
-		t.Fatalf("UpdateJob: %v", err)
-	}
-	if err := b.Done(taken.ID); err != nil {
+	if err := b.Done(taken.Id); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
@@ -422,21 +444,21 @@ func TestMemoryBackend_OnPartialJobDone_LastPartialJobFinalizesAndPushesCleanup(
 	if err != nil {
 		t.Fatalf("Take (cleanup): %v", err)
 	}
-	if cleanupTaken == nil || cleanupTaken.ID != job.Cleanup.ID {
+	if cleanupTaken == nil || cleanupTaken.Id != job.Cleanup.Id {
 		t.Fatalf("expected cleanup partial job to have been pushed automatically, got %+v", cleanupTaken)
 	}
 }
 
-func TestMemoryBackend_OnPartialJobDone_CleanupFinishing_ClearsProgressDetailsAndPushesFollowUps(t *testing.T) {
+func TestMemoryBackend_OnPartialJobDone_CleanupFinishing_KeepsProgressDetailsAndPushesFollowUps(t *testing.T) {
 	b := NewMemoryBackend()
 	jobType := uniqueType("cleanup-done")
 
 	followUp := NewJob(uuid.NewString(), jobType+"-followup", 1000, "", nil)
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.ProgressDetails = json.RawMessage(`{"some":"detail"}`)
-	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.ID)
-	job.FollowUps = []*Job{followUp}
+	job.Progress.Details = map[string]any{"some": "detail"}
+	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.Id)
+	job.FollowUps = []model.Job{*followUp}
 
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
@@ -449,19 +471,19 @@ func TestMemoryBackend_OnPartialJobDone_CleanupFinishing_ClearsProgressDetailsAn
 	if err != nil || taken == nil {
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
-	if err := b.Done(taken.ID); err != nil {
+	if err := b.Done(taken.Id); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if string(got.ProgressDetails) != "null" {
-		t.Errorf("expected progressDetails cleared to null after successful cleanup, got %s", got.ProgressDetails)
+	if got.Progress.Details == nil || got.Progress.Details["some"] != "detail" {
+		t.Errorf("expected progressDetails to still be set after successful cleanup, got %+v", got.Progress.Details)
 	}
 
-	pushedFollowUp, err := b.GetJob(followUp.ID)
+	pushedFollowUp, err := b.GetJob(followUp.Id)
 	if err != nil {
 		t.Fatalf("GetJob(followUp): %v", err)
 	}
@@ -479,13 +501,13 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_ReducesTotalAndFinalizes(t 
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	okPartial := NewPartialJob(uuid.NewString(), jobType+":ok", 1000, job.ID)
-	okPartial.Total = 3
-	badPartial := NewPartialJob(uuid.NewString(), jobType+":bad", 1000, job.ID)
-	badPartial.Total = 5
+	okPartial := NewPartialJob(uuid.NewString(), jobType+":ok", 1000, job.Id)
+	okPartial.Progress.Total = 3
+	badPartial := NewPartialJob(uuid.NewString(), jobType+":bad", 1000, job.Id)
+	badPartial.Progress.Total = 5
 
-	for _, pj := range []*PartialJob{okPartial, badPartial} {
-		if err := b.InitJob(job.ID, pj.Total, nil); err != nil {
+	for _, pj := range []*model.PartialJob{okPartial, badPartial} {
+		if err := b.InitJob(job.Id, pj.Progress.Total, nil); err != nil {
 			t.Fatalf("InitJob: %v", err)
 		}
 		if err := b.PushPartialJob(pj, false); err != nil {
@@ -497,16 +519,13 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_ReducesTotalAndFinalizes(t 
 	if err != nil || okTaken == nil {
 		t.Fatalf("Take(ok): %v, %+v", err, okTaken)
 	}
-	if err := b.StartJob(job.ID); err != nil {
+	if err := b.StartJob(job.Id); err != nil {
 		t.Fatalf("StartJob: %v", err)
 	}
-	if err := b.UpdatePartialJob(okTaken.ID, 3); err != nil {
+	if err := b.UpdatePartialJob(okTaken.Id, 3); err != nil {
 		t.Fatalf("UpdatePartialJob(ok): %v", err)
 	}
-	if err := b.UpdateJob(job.ID, 3, nil); err != nil {
-		t.Fatalf("UpdateJob(ok): %v", err)
-	}
-	if err := b.Done(okTaken.ID); err != nil {
+	if err := b.Done(okTaken.Id); err != nil {
 		t.Fatalf("Done(ok): %v", err)
 	}
 
@@ -514,27 +533,21 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_ReducesTotalAndFinalizes(t 
 	if err != nil || badTaken == nil {
 		t.Fatalf("Take(bad): %v, %+v", err, badTaken)
 	}
-	if err := b.UpdatePartialJob(badTaken.ID, 2); err != nil {
-		t.Fatalf("UpdatePartialJob(bad): %v", err)
-	}
-	if err := b.UpdateJob(job.ID, 2, nil); err != nil {
-		t.Fatalf("UpdateJob(bad): %v", err)
-	}
-	if err := b.Error(badTaken.ID, "boom", false); err != nil {
+	if err := b.Error(badTaken.Id, "boom", false); err != nil {
 		t.Fatalf("Error(bad): %v", err)
 	}
 
-	final, err := b.GetJob(job.ID)
+	final, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if final.Total != 5 {
-		t.Errorf("Total = %d, want 5", final.Total)
+	if final.Progress.Total != 8 {
+		t.Errorf("Total = %d, want 8", final.Progress.Total)
 	}
-	if final.Current != 5 {
-		t.Errorf("Current = %d, want 5", final.Current)
+	if final.Progress.Current != 8 {
+		t.Errorf("Current = %d, want 8", final.Progress.Current)
 	}
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed", final.Status())
 	}
 }
@@ -544,7 +557,7 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_SetupForcesJobFailed(t *tes
 	jobType := uniqueType("permfail-setup")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.ID)
+	job.Setup = NewPartialJob(uuid.NewString(), jobType+":setup", 1000, job.Id)
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
@@ -553,18 +566,18 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_SetupForcesJobFailed(t *tes
 	if err != nil || taken == nil {
 		t.Fatalf("Take: %v, %+v", err, taken)
 	}
-	if err := b.Error(taken.ID, "setup exploded", false); err != nil {
+	if err := b.Error(taken.Id, "setup exploded", false); err != nil {
 		t.Fatalf("Error: %v", err)
 	}
 
-	final, err := b.GetJob(job.ID)
+	final, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
 	if final.FinishedAt <= 0 {
 		t.Fatal("expected Job to be forced to a finished state when setup fails permanently")
 	}
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed", final.Status())
 	}
 	found := false
@@ -581,47 +594,44 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_SetupForcesJobFailed(t *tes
 func TestMemoryBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) {
 	b := NewMemoryBackend()
 
-	run := func(t *testing.T, fail bool) *Job {
+	run := func(t *testing.T, fail bool) *model.Job {
 		jobType := uniqueType("pd-clear")
 		job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-		job.ProgressDetails = json.RawMessage(`{"some":"detail"}`)
+		job.Progress.Details = map[string]any{"some": "detail"}
 		if err := b.PushJob(job); err != nil {
 			t.Fatalf("PushJob: %v", err)
 		}
 
-		worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.ID)
-		worker.Total = 1
-		if err := b.InitJob(job.ID, 1, nil); err != nil {
+		worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+		worker.Progress.Total = 1
+		if err := b.InitJob(job.Id, worker.Progress.Total, nil); err != nil {
 			t.Fatalf("InitJob: %v", err)
 		}
 		if err := b.PushPartialJob(worker, false); err != nil {
 			t.Fatalf("PushPartialJob: %v", err)
 		}
 
-		taken, err := b.Take(worker.Type, "test")
+		taken, err := b.Take(worker.Kind, "test")
 		if err != nil || taken == nil {
 			t.Fatalf("Take: %v, %+v", err, taken)
 		}
-		if err := b.StartJob(job.ID); err != nil {
+		if err := b.StartJob(job.Id); err != nil {
 			t.Fatalf("StartJob: %v", err)
 		}
 		if fail {
-			if err := b.Error(taken.ID, "boom", false); err != nil {
+			if err := b.Error(taken.Id, "boom", false); err != nil {
 				t.Fatalf("Error: %v", err)
 			}
 		} else {
-			if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
+			if err := b.UpdatePartialJob(taken.Id, 1); err != nil {
 				t.Fatalf("UpdatePartialJob: %v", err)
 			}
-			if err := b.UpdateJob(job.ID, 1, nil); err != nil {
-				t.Fatalf("UpdateJob: %v", err)
-			}
-			if err := b.Done(taken.ID); err != nil {
+			if err := b.Done(taken.Id); err != nil {
 				t.Fatalf("Done: %v", err)
 			}
 		}
 
-		final, err := b.GetJob(job.ID)
+		final, err := b.GetJob(job.Id)
 		if err != nil {
 			t.Fatalf("GetJob: %v", err)
 		}
@@ -629,13 +639,13 @@ func TestMemoryBackend_ClearProgressDetailsOnSuccessKeptOnFailure(t *testing.T) 
 	}
 
 	success := run(t, false)
-	if string(success.ProgressDetails) != "null" {
-		t.Errorf("success: expected progressDetails=null, got %s", success.ProgressDetails)
+	if success.Progress.Details == nil || success.Progress.Details["some"] != "detail" {
+		t.Errorf("success: expected progressDetails preserved, got %s", success.Progress.Details)
 	}
 
 	failure := run(t, true)
-	if string(failure.ProgressDetails) != `{"some":"detail"}` {
-		t.Errorf("failure: expected progressDetails preserved, got %s", failure.ProgressDetails)
+	if failure.Progress.Details == nil || failure.Progress.Details["some"] != "detail" {
+		t.Errorf("failure: expected progressDetails preserved, got %s", failure.Progress.Details)
 	}
 }
 
@@ -652,9 +662,9 @@ func TestMemoryBackend_RetriedThenSucceededPartialJobDoesNotFailJob(t *testing.T
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.ID)
-	worker.Total = 1
-	if err := b.InitJob(job.ID, 1, nil); err != nil {
+	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	worker.Progress.Total = 1
+	if err := b.InitJob(job.Id, worker.Progress.Total, nil); err != nil {
 		t.Fatalf("InitJob: %v", err)
 	}
 	if err := b.PushPartialJob(worker, false); err != nil {
@@ -662,37 +672,34 @@ func TestMemoryBackend_RetriedThenSucceededPartialJobDoesNotFailJob(t *testing.T
 	}
 
 	for i := 0; i < 2; i++ {
-		taken, err := b.Take(worker.Type, "test")
+		taken, err := b.Take(worker.Kind, "test")
 		if err != nil || taken == nil {
 			t.Fatalf("Take (retry %d): %v, %+v", i+1, err, taken)
 		}
-		if err := b.Error(taken.ID, "transient", true); err != nil {
+		if err := b.Error(taken.Id, "transient", true); err != nil {
 			t.Fatalf("Error (retry %d): %v", i+1, err)
 		}
 	}
 
-	taken, err := b.Take(worker.Type, "test")
+	taken, err := b.Take(worker.Kind, "test")
 	if err != nil || taken == nil {
 		t.Fatalf("Take (final): %v, %+v", err, taken)
 	}
-	if err := b.StartJob(job.ID); err != nil {
+	if err := b.StartJob(job.Id); err != nil {
 		t.Fatalf("StartJob: %v", err)
 	}
-	if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
+	if err := b.UpdatePartialJob(taken.Id, 1); err != nil {
 		t.Fatalf("UpdatePartialJob: %v", err)
 	}
-	if err := b.UpdateJob(job.ID, 1, nil); err != nil {
-		t.Fatalf("UpdateJob: %v", err)
-	}
-	if err := b.Done(taken.ID); err != nil {
+	if err := b.Done(taken.Id); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
-	final, err := b.GetJob(job.ID)
+	final, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if final.Status() != StatusSuccessful {
+	if final.Status() != model.StatusSUCCESSFUL {
 		t.Errorf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
 	}
 	if len(final.Errors) != 0 {
@@ -717,10 +724,10 @@ func TestMemoryBackend_ConcurrentUpdateDoesNotLoseProgress(t *testing.T) {
 	const numPartials = 40
 	ids := make([]string, numPartials)
 	for i := 0; i < numPartials; i++ {
-		pj := NewPartialJob(uuid.NewString(), jobType, 1000, job.ID)
-		pj.Total = 1
-		ids[i] = pj.ID
-		if err := b.InitJob(job.ID, 1, nil); err != nil {
+		pj := NewPartialJob(uuid.NewString(), jobType, 1000, job.Id)
+		pj.Progress.Total = 1
+		ids[i] = pj.Id
+		if err := b.InitJob(job.Id, pj.Progress.Total, nil); err != nil {
 			t.Fatalf("InitJob: %v", err)
 		}
 		if err := b.PushPartialJob(pj, false); err != nil {
@@ -736,19 +743,16 @@ func TestMemoryBackend_ConcurrentUpdateDoesNotLoseProgress(t *testing.T) {
 			if err := b.UpdatePartialJob(id, 1); err != nil {
 				t.Errorf("UpdatePartialJob(%s): %v", id, err)
 			}
-			if err := b.UpdateJob(job.ID, 1, nil); err != nil {
-				t.Errorf("UpdateJob: %v", err)
-			}
 		}(id)
 	}
 	wg.Wait()
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.Current != numPartials {
-		t.Errorf("Current = %d, want %d - an update was lost under concurrency", got.Current, numPartials)
+	if got.Progress.Current != numPartials {
+		t.Errorf("Current = %d, want %d - an update was lost under concurrency", got.Progress.Current, numPartials)
 	}
 }
 
@@ -762,11 +766,11 @@ func TestMemoryBackend_ConcurrentDoneOnlyPushesCleanupOnce(t *testing.T) {
 	jobType := uniqueType("concurrent-finalize")
 
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.ID)
+	job.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, job.Id)
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
-	if err := b.StartJob(job.ID); err != nil {
+	if err := b.StartJob(job.Id); err != nil {
 		t.Fatalf("StartJob: %v", err)
 	}
 
@@ -779,9 +783,9 @@ func TestMemoryBackend_ConcurrentDoneOnlyPushesCleanupOnce(t *testing.T) {
 	types := make([]string, numPartials)
 	for i := 0; i < numPartials; i++ {
 		types[i] = jobType + ":worker-" + strconv.Itoa(i)
-		pj := NewPartialJob(uuid.NewString(), types[i], 1000, job.ID)
-		pj.Total = 1
-		if err := b.InitJob(job.ID, 1, nil); err != nil {
+		pj := NewPartialJob(uuid.NewString(), types[i], 1000, job.Id)
+		pj.Progress.Total = 1
+		if err := b.InitJob(job.Id, pj.Progress.Total, nil); err != nil {
 			t.Fatalf("InitJob: %v", err)
 		}
 		if err := b.PushPartialJob(pj, false); err != nil {
@@ -799,15 +803,11 @@ func TestMemoryBackend_ConcurrentDoneOnlyPushesCleanupOnce(t *testing.T) {
 				t.Errorf("Take: %v, %+v", err, taken)
 				return
 			}
-			if err := b.UpdatePartialJob(taken.ID, 1); err != nil {
+			if err := b.UpdatePartialJob(taken.Id, 1); err != nil {
 				t.Errorf("UpdatePartialJob: %v", err)
 				return
 			}
-			if err := b.UpdateJob(job.ID, 1, nil); err != nil {
-				t.Errorf("UpdateJob: %v", err)
-				return
-			}
-			if err := b.Done(taken.ID); err != nil {
+			if err := b.Done(taken.Id); err != nil {
 				t.Errorf("Done: %v", err)
 			}
 		}(pjType)
@@ -835,7 +835,7 @@ func TestMemoryBackend_WithRunner(t *testing.T) {
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 20 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*PartialJob, *Job, Backend) JobResult {
+	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*model.PartialJob, *model.Job, Backend) JobResult {
 		atomic.AddInt32(&processed, 1)
 		return Success()
 	}})
@@ -845,7 +845,7 @@ func TestMemoryBackend_WithRunner(t *testing.T) {
 	if atomic.LoadInt32(&processed) != 1 {
 		t.Errorf("expected the partial job to be processed exactly once, got %d", processed)
 	}
-	if b.partial[partialJob.ID] != nil {
+	if b.partial[partialJob.Id] != nil {
 		t.Error("expected partial job to be deleted (Done()) after successful processing")
 	}
 }
@@ -858,23 +858,23 @@ func TestMemoryBackend_SequentialPartialJobsGatedByCurrentSequence(t *testing.T)
 	b := NewMemoryBackend()
 
 	job := NewJob(uuid.NewString(), uniqueType("sequential"), 1000, "", nil)
-	job.Parallel = false
+	job.Sequence = &model.JobSequence{
+		Current:   0,
+		Remaining: 0,
+	}
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	step0Type := job.Type + ":step0"
-	step1Type := job.Type + ":step1"
-	step2Type := job.Type + ":step2"
+	step0Type := job.Kind + ":step0"
+	step1Type := job.Kind + ":step1"
+	step2Type := job.Kind + ":step2"
 
-	step0 := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
-	step0.Sequence = 0
-	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.ID)
-	step1.Sequence = 1
-	step2 := NewPartialJob(uuid.NewString(), step2Type, 1000, job.ID)
-	step2.Sequence = 2
+	step0 := NewPartialJob(uuid.NewString(), step0Type, 1000, job.Id)
+	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.Id)
+	step2 := NewPartialJob(uuid.NewString(), step2Type, 1000, job.Id)
 
-	for _, pj := range []*PartialJob{step0, step1, step2} {
+	for _, pj := range []*model.PartialJob{step0, step1, step2} {
 		if err := b.PushPartialJob(pj, false); err != nil {
 			t.Fatalf("PushPartialJob: %v", err)
 		}
@@ -888,42 +888,42 @@ func TestMemoryBackend_SequentialPartialJobsGatedByCurrentSequence(t *testing.T)
 	}
 
 	taken0, err := b.Take(step0Type, "test")
-	if err != nil || taken0 == nil || taken0.ID != step0.ID {
+	if err != nil || taken0 == nil || taken0.Id != step0.Id {
 		t.Fatalf("Take(step0): %v, %+v", err, taken0)
 	}
-	if err := b.Done(taken0.ID); err != nil {
+	if err := b.Done(taken0.Id); err != nil {
 		t.Fatalf("Done(step0): %v", err)
 	}
 
-	got, err := b.GetJob(job.ID)
+	got, err := b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.CurrentSequence != 1 {
-		t.Errorf("CurrentSequence = %d, want 1 after step0 finished", got.CurrentSequence)
+	if got.Sequence.Current != 1 {
+		t.Errorf("CurrentSequence = %d, want 1 after step0 finished", got.Sequence.Current)
 	}
 	if taken, err := b.Take(step2Type, "test"); err != nil || taken != nil {
 		t.Fatalf("Take(step2) before step1 is done = %+v, %v, want nil, nil", taken, err)
 	}
 
 	taken1, err := b.Take(step1Type, "test")
-	if err != nil || taken1 == nil || taken1.ID != step1.ID {
+	if err != nil || taken1 == nil || taken1.Id != step1.Id {
 		t.Fatalf("Take(step1): %v, %+v", err, taken1)
 	}
-	if err := b.Done(taken1.ID); err != nil {
+	if err := b.Done(taken1.Id); err != nil {
 		t.Fatalf("Done(step1): %v", err)
 	}
 
-	got, err = b.GetJob(job.ID)
+	got, err = b.GetJob(job.Id)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.CurrentSequence != 2 {
-		t.Errorf("CurrentSequence = %d, want 2 after step1 finished", got.CurrentSequence)
+	if got.Sequence.Current != 2 {
+		t.Errorf("CurrentSequence = %d, want 2 after step1 finished", got.Sequence.Current)
 	}
 
 	taken2, err := b.Take(step2Type, "test")
-	if err != nil || taken2 == nil || taken2.ID != step2.ID {
+	if err != nil || taken2 == nil || taken2.Id != step2.Id {
 		t.Fatalf("Take(step2): %v, %+v", err, taken2)
 	}
 }
@@ -937,22 +937,22 @@ func TestMemoryBackend_SequenceAdvancesOnlyWhenAllItsPartialJobsAreDone(t *testi
 	b := NewMemoryBackend()
 
 	job := NewJob(uuid.NewString(), uniqueType("fanout-sequence"), 1000, "", nil)
-	job.Parallel = false
+	job.Sequence = &model.JobSequence{
+		Current:   0,
+		Remaining: 0,
+	}
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	step0Type := job.Type + ":step0"
-	step1Type := job.Type + ":step1"
+	step0Type := job.Kind + ":step0"
+	step1Type := job.Kind + ":step1"
 
-	step0a := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
-	step0a.Sequence = 0
-	step0b := NewPartialJob(uuid.NewString(), step0Type, 1000, job.ID)
-	step0b.Sequence = 0
-	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.ID)
-	step1.Sequence = 1
+	step0a := NewPartialJob(uuid.NewString(), step0Type, 1000, job.Id)
+	step0b := NewPartialJob(uuid.NewString(), step0Type, 1000, job.Id)
+	step1 := NewPartialJob(uuid.NewString(), step1Type, 1000, job.Id)
 
-	for _, pj := range []*PartialJob{step0a, step0b, step1} {
+	for _, pj := range []*model.PartialJob{step0a, step0b, step1} {
 		if err := b.PushPartialJob(pj, false); err != nil {
 			t.Fatalf("PushPartialJob: %v", err)
 		}
@@ -962,7 +962,7 @@ func TestMemoryBackend_SequenceAdvancesOnlyWhenAllItsPartialJobsAreDone(t *testi
 	if err != nil || takenA == nil {
 		t.Fatalf("Take(step0 #1): %v, %+v", err, takenA)
 	}
-	if err := b.Done(takenA.ID); err != nil {
+	if err := b.Done(takenA.Id); err != nil {
 		t.Fatalf("Done(step0 #1): %v", err)
 	}
 	if taken, err := b.Take(step1Type, "test"); err != nil || taken != nil {
@@ -973,12 +973,12 @@ func TestMemoryBackend_SequenceAdvancesOnlyWhenAllItsPartialJobsAreDone(t *testi
 	if err != nil || takenB == nil {
 		t.Fatalf("Take(step0 #2): %v, %+v", err, takenB)
 	}
-	if err := b.Done(takenB.ID); err != nil {
+	if err := b.Done(takenB.Id); err != nil {
 		t.Fatalf("Done(step0 #2): %v", err)
 	}
 
 	taken1, err := b.Take(step1Type, "test")
-	if err != nil || taken1 == nil || taken1.ID != step1.ID {
+	if err != nil || taken1 == nil || taken1.Id != step1.Id {
 		t.Fatalf("Take(step1) after both step0 partials done: %v, %+v", err, taken1)
 	}
 }
@@ -993,14 +993,15 @@ func TestMemoryBackend_ParallelJobIgnoresSequenceGating(t *testing.T) {
 		t.Fatalf("PushJob: %v", err)
 	}
 
-	late := NewPartialJob(uuid.NewString(), job.Type+":late", 1000, job.ID)
-	late.Sequence = 5 // would never be "its turn" under gating (CurrentSequence starts at 0)
+	late := NewPartialJob(uuid.NewString(), job.Kind+":late", 1000, job.Id)
+	seq := 5
+	late.Sequence = &seq // would never be "its turn" under gating (CurrentSequence starts at 0)
 	if err := b.PushPartialJob(late, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
 
-	taken, err := b.Take(late.Type, "test")
-	if err != nil || taken == nil || taken.ID != late.ID {
+	taken, err := b.Take(late.Kind, "test")
+	if err != nil || taken == nil || taken.Id != late.Id {
 		t.Fatalf("expected Parallel=true to ignore Sequence gating entirely, got %v, %+v", err, taken)
 	}
 }

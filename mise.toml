@@ -1,0 +1,44 @@
+[tools]
+node = "26"
+go = "1.26"
+
+[hooks]
+postinstall = { task = "setup" }
+
+[tasks.setup]
+hide = true
+run = '''
+  npm install
+'''
+
+[tasks.genffi]
+interactive = true
+run = '''
+  npx genffi --config ./genffi.config.ts
+'''
+
+[tasks.build-cli]
+interactive = true
+run = '''
+  CGO_ENABLED=0 go build -o dist/xtralink -ldflags="-s -w"
+'''
+
+[tasks.build-lib]
+interactive = true
+run = '''
+  cd ffi/clib/main
+  make shared OUT=../../../dist/
+'''
+
+[tasks.build]
+interactive = true
+depends = ["build-cli", "build-lib"]
+run = '''
+  ls -la dist/
+'''
+
+[tasks.test]
+interactive = true
+run = '''
+  go test -v --cover -skip TestPkgPush ./...
+'''

@@ -33,4 +33,6 @@ go.work.sum
 # app specific
 config/
 data/
+dist/
+node_modules/
 .xtralink.yml

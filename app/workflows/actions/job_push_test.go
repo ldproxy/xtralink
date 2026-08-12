@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -33,14 +32,11 @@ func TestJobPushAction_PushesJobWithInputs(t *testing.T) {
 	if backend.pushedJob == nil {
 		t.Fatal("expected a Job to have been pushed")
 	}
-	if backend.pushedJob.Type != "nba-apply" {
-		t.Errorf("Type = %q, want nba-apply", backend.pushedJob.Type)
+	if backend.pushedJob.Kind != "nba-apply" {
+		t.Errorf("Type = %q, want nba-apply", backend.pushedJob.Kind)
 	}
 
-	var inputs map[string]string
-	if err := json.Unmarshal(backend.pushedJob.Inputs, &inputs); err != nil {
-		t.Fatalf("unmarshal inputs: %v", err)
-	}
+	inputs := backend.pushedJob.Inputs
 	if inputs["package"] != "s3://bucket" || inputs["file"] != "a.zip" {
 		t.Errorf("inputs = %+v", inputs)
 	}
@@ -108,26 +104,27 @@ func TestJobPushAction_PartialsBuildsMultiStepPipeline(t *testing.T) {
 		t.Fatalf("GetJobs: %v, %+v", err, jobsList)
 	}
 	job := jobsList[0]
-	if job.Type != "nba-apply" || !job.Parallel {
-		t.Errorf("unexpected Job: type=%q parallel=%v, want nba-apply/true", job.Type, job.Parallel)
+	// Parallel defaults to true (no `parallel: false` given), so the Job
+	// opts out of sequencing entirely and its steps carry no Sequence slot.
+	if job.Kind != "nba-apply" || job.Sequence != nil {
+		t.Errorf("unexpected Job: kind=%q sequence=%+v, want nba-apply/nil", job.Kind, job.Sequence)
 	}
 
 	step0, err := backend.Take("nba-transformation", "test")
 	if err != nil || step0 == nil {
 		t.Fatalf("Take(nba-transformation): %v, %+v", err, step0)
 	}
-	if step0.PartOf != job.ID || step0.Sequence != 0 {
-		t.Errorf("step0: PartOf=%q Sequence=%d, want %q/0", step0.PartOf, step0.Sequence, job.ID)
+	if step0.PartOf != job.Id {
+		t.Errorf("step0: PartOf=%q, want %q", step0.PartOf, job.Id)
 	}
 
-	// Parallel defaults to true (no `parallel: false` given), so step1 must
-	// be immediately takeable too, not gated behind step0.
+	// ... so step1 must be immediately takeable too, not gated behind step0.
 	step1, err := backend.Take("nba-transaction-step", "test")
 	if err != nil || step1 == nil {
 		t.Fatalf("Take(nba-transaction-step): %v, %+v", err, step1)
 	}
-	if step1.Sequence != 1 {
-		t.Errorf("step1.Sequence = %d, want 1", step1.Sequence)
+	if step1.PartOf != job.Id {
+		t.Errorf("step1: PartOf=%q, want %q", step1.PartOf, job.Id)
 	}
 }
 

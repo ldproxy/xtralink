@@ -1,5 +1,7 @@
 package jobs
 
+import "github.com/ldproxy/xtralink/model"
+
 // JobResult is the outcome of a JobProcessor.Process call, analogous to
 // JobResult.java (success/onHold/retry/error).
 type JobResult struct {
@@ -31,5 +33,5 @@ func (r JobResult) IsFailure() bool {
 type JobProcessor interface {
 	JobType() string
 	Priority() int
-	Process(partialJob *PartialJob, job *Job, backend Backend) JobResult
+	Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult
 }

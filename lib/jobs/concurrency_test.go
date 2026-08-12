@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // These tests specifically target the scenario the job queue is built
@@ -29,7 +30,7 @@ func TestConcurrentUpdateJobDoesNotLoseProgress(t *testing.T) {
 	jobType := uniqueType("concurrent-update")
 
 	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	cleanupJob(t, b, js.ID)
+	cleanupJob(t, b, js.Id)
 	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
@@ -37,11 +38,10 @@ func TestConcurrentUpdateJobDoesNotLoseProgress(t *testing.T) {
 	const numJobs = 40
 	jobIDs := make([]string, numJobs)
 	for i := 0; i < numJobs; i++ {
-		j := NewPartialJob(uuid.NewString(), jobType+":worker-"+strconv.Itoa(i), 1000, js.ID)
-		j.Total = 1
-		jobIDs[i] = j.ID
-		cleanupPartialJob(t, b, j.ID)
-		if err := b.InitJob(js.ID, 1, nil); err != nil {
+		j := NewPartialJob(uuid.NewString(), jobType+":worker-"+strconv.Itoa(i), 1000, js.Id)
+		jobIDs[i] = j.Id
+		cleanupPartialJob(t, b, j.Id)
+		if err := b.InitJob(js.Id, 1, nil); err != nil {
 			t.Fatalf("InitJobSet: %v", err)
 		}
 		if err := b.PushPartialJob(j, false); err != nil {
@@ -57,19 +57,16 @@ func TestConcurrentUpdateJobDoesNotLoseProgress(t *testing.T) {
 			if err := b.UpdatePartialJob(id, 1); err != nil {
 				t.Errorf("UpdatePartialJob(%s): %v", id, err)
 			}
-			if err := b.UpdateJob(js.ID, 1, nil); err != nil {
-				t.Errorf("UpdateJobSet: %v", err)
-			}
 		}(id)
 	}
 	wg.Wait()
 
-	got, err := b.GetJob(js.ID)
+	got, err := b.GetJob(js.Id)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
-	if got.Current != numJobs {
-		t.Errorf("Current = %d, want %d - an update was lost under concurrency", got.Current, numJobs)
+	if got.Progress.Current != numJobs {
+		t.Errorf("Current = %d, want %d - an update was lost under concurrency", got.Progress.Current, numJobs)
 	}
 }
 
@@ -83,24 +80,23 @@ func TestConcurrentDoneOnlyFinalizesOnce(t *testing.T) {
 	jobType := uniqueType("concurrent-finalize")
 
 	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
-	cleanupJob(t, b, js.ID)
-	cleanupPartialJob(t, b, js.Cleanup.ID)
+	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.Id)
+	cleanupJob(t, b, js.Id)
+	cleanupPartialJob(t, b, js.Cleanup.Id)
 	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
-	if err := b.StartJob(js.ID); err != nil {
+	if err := b.StartJob(js.Id); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
 
 	const numJobs = 25
 	jobIDs := make([]string, numJobs)
 	for i := 0; i < numJobs; i++ {
-		j := NewPartialJob(uuid.NewString(), jobType+":worker-"+strconv.Itoa(i), 1000, js.ID)
-		j.Total = 1
-		jobIDs[i] = j.ID
-		cleanupPartialJob(t, b, j.ID)
-		if err := b.InitJob(js.ID, 1, nil); err != nil {
+		j := NewPartialJob(uuid.NewString(), jobType+":worker-"+strconv.Itoa(i), 1000, js.Id)
+		jobIDs[i] = j.Id
+		cleanupPartialJob(t, b, j.Id)
+		if err := b.InitJob(js.Id, 1, nil); err != nil {
 			t.Fatalf("InitJobSet: %v", err)
 		}
 		if err := b.PushPartialJob(j, false); err != nil {
@@ -123,11 +119,7 @@ func TestConcurrentDoneOnlyFinalizesOnce(t *testing.T) {
 				return
 			}
 			if err := b.UpdatePartialJob(id, 1); err != nil {
-				t.Errorf("UpdateJob: %v", err)
-				return
-			}
-			if err := b.UpdateJob(js.ID, 1, nil); err != nil {
-				t.Errorf("UpdateJobSet: %v", err)
+				t.Errorf("UpdatePartialJob: %v", err)
 				return
 			}
 			if err := b.Done(id); err != nil {
@@ -141,10 +133,10 @@ func TestConcurrentDoneOnlyFinalizesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take(cleanup): %v", err)
 	}
-	if taken == nil || taken.ID != js.Cleanup.ID {
+	if taken == nil || taken.Id != js.Cleanup.Id {
 		t.Fatalf("expected cleanup to have been pushed, got %+v", taken)
 	}
-	cleanupPartialJob(t, b, taken.ID)
+	cleanupPartialJob(t, b, taken.Id)
 
 	again, err := b.Take(jobType+":cleanup", "test")
 	if err != nil {
@@ -166,16 +158,16 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 	jobType := uniqueType("many-processors")
 
 	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	js.ProgressDetails = json.RawMessage(`{"counters":{"a":0,"b":0,"c":0}}`)
+	js.Progress.Details = map[string]any{"counters": map[string]int{"a": 0, "b": 0, "c": 0}}
 	// A JobSet with no Cleanup has its progressDetails cleared the instant it
 	// finishes successfully (clearProgressDetailsOnSuccess), so a Cleanup
 	// step is used here to snapshot progressDetails into an output -
 	// matching how a real cleanup processor would surface the final numbers
 	// - before that clearing would otherwise erase the evidence this test
 	// needs to check.
-	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.ID)
-	cleanupJob(t, b, js.ID)
-	cleanupPartialJob(t, b, js.Cleanup.ID)
+	js.Cleanup = NewPartialJob(uuid.NewString(), jobType+":cleanup", 1000, js.Id)
+	cleanupJob(t, b, js.Id)
+	cleanupPartialJob(t, b, js.Cleanup.Id)
 	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
@@ -185,11 +177,10 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 	total := 0
 	for _, c := range counters {
 		for i := 0; i < jobsPerCounter; i++ {
-			job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.ID)
-			job.Total = 1
-			job.UpdateTargets = []ProgressUpdate{{Path: "counters." + c, Op: ProgressOpAdd}}
-			cleanupPartialJob(t, b, job.ID)
-			if err := b.InitJob(js.ID, 1, nil); err != nil {
+			job := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, js.Id)
+			job.ProgressUpdates = []model.ProgressUpdate{{Path: "counters." + c, Operation: model.ProgressOperationADD}}
+			cleanupPartialJob(t, b, job.Id)
+			if err := b.InitJob(js.Id, 1, nil); err != nil {
 				t.Fatalf("InitJobSet: %v", err)
 			}
 			if err := b.PushPartialJob(job, false); err != nil {
@@ -204,16 +195,16 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.Concurrency = 8 // many "processors" running in parallel
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(p *PartialJob, _ *Job, backend Backend) JobResult {
+	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(p *model.PartialJob, _ *model.Job, backend Backend) JobResult {
 		time.Sleep(5 * time.Millisecond) // simulate a bit of real work
-		if err := backend.UpdatePartialJob(p.ID, 1); err != nil {
+		if err := backend.UpdatePartialJob(p.Id, 1); err != nil {
 			return Error(err.Error())
 		}
 		atomic.AddInt32(&completed, 1)
 		return Success()
 	}})
-	r.Register(&funcProcessor{jobType: jobType + ":cleanup", priority: 1000, process: func(_ *PartialJob, job *Job, backend Backend) JobResult {
-		if err := backend.SetOutput(job.ID, "countersSnapshot", OutputValue{Value: json.RawMessage(job.ProgressDetails)}); err != nil {
+	r.Register(&funcProcessor{jobType: jobType + ":cleanup", priority: 1000, process: func(_ *model.PartialJob, job *model.Job, backend Backend) JobResult {
+		if err := backend.SetOutput(job.Id, "countersSnapshot", model.OutputValue{Value: job.Progress.Details}); err != nil {
 			return Error(err.Error())
 		}
 		atomic.AddInt32(&cleaned, 1)
@@ -226,22 +217,31 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 		t.Fatalf("expected all %d jobs to complete, only %d did", total, got)
 	}
 
-	final, err := b.GetJob(js.ID)
+	final, err := b.GetJob(js.Id)
 	if err != nil {
-		t.Fatalf("GetSet: %v", err)
+		t.Fatalf("GetJob: %v", err)
 	}
-	if final.Current != total {
-		t.Errorf("JobSet.Current = %d, want %d - lost updates under concurrency", final.Current, total)
+	if final.Progress.Current != total {
+		t.Errorf("JobSet.Current = %d, want %d - lost updates under concurrency", final.Progress.Current, total)
 	}
 
 	snapshot, ok := final.Outputs["countersSnapshot"]
 	if !ok {
 		t.Fatalf("expected countersSnapshot output to have been written by cleanup")
 	}
-	// snapshot.Value comes back from GetSet's JSON unmarshal as a generic
-	// map[string]interface{} (it's declared as `any`) - round-trip it
-	// through JSON once more to decode it into a typed struct.
-	raw, err := json.Marshal(snapshot.Value)
+	// Outputs is an opaque map, so the whole entry comes back from GetJob's
+	// JSON unmarshal as generic JSON - the OutputValue wrapper as a
+	// map[string]any, its Value likewise. Round-trip both through JSON
+	// rather than asserting the types.
+	rawSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	var output model.OutputValue
+	if err := json.Unmarshal(rawSnapshot, &output); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	raw, err := json.Marshal(output.Value)
 	if err != nil {
 		t.Fatalf("marshal snapshot value: %v", err)
 	}
@@ -262,18 +262,19 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 // and permanently failing sub-Jobs concurrently against the same JobSet and
 // checks that total/current end up numerically consistent regardless of
 // interleaving: successes contribute their full progress, failures
-// contribute only what they actually completed (with the rest subtracted
-// from total by onJobPermanentlyFailed).
+// contribute what they actually completed plus the unfinished remainder
+// onJobPermanentlyFailed settles onto current - so every sub-Job's declared
+// scope is accounted for either way.
 func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 	b := requireRedis(t)
 	jobType := uniqueType("mixed-outcomes")
 
 	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	cleanupJob(t, b, js.ID)
+	cleanupJob(t, b, js.Id)
 	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
-	if err := b.StartJob(js.ID); err != nil {
+	if err := b.StartJob(js.Id); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
 
@@ -291,7 +292,10 @@ func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 		plans = append(plans, plan{total: 3, progress: 1, fail: true})
 	}
 
-	wantFinal := numOK*2 + numFail*1 // failed jobs' unfinished share gets subtracted from total
+	// Both total and current must end at the sum of every sub-Job's total -
+	// a failed sub-Job's unfinished share lands on current rather than
+	// shrinking total.
+	wantFinal := numOK*2 + numFail*3
 
 	var wg sync.WaitGroup
 	for i, p := range plans {
@@ -304,10 +308,12 @@ func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 			// writes to the shared JobSet, not queue contention between
 			// unrelated jobs stealing each other's work.
 			jt := jobType + ":worker-" + strconv.Itoa(i)
-			job := NewPartialJob(uuid.NewString(), jt, 1000, js.ID)
-			job.Total = p.total
-			cleanupPartialJob(t, b, job.ID)
-			if err := b.InitJob(js.ID, p.total, nil); err != nil {
+			job := NewPartialJob(uuid.NewString(), jt, 1000, js.Id)
+			// The sub-Job's own scope, which onJobPermanentlyFailed reads to
+			// work out how much of it never got done.
+			job.Progress.Total = p.total
+			cleanupPartialJob(t, b, job.Id)
+			if err := b.InitJob(js.Id, p.total, nil); err != nil {
 				t.Errorf("InitJobSet: %v", err)
 				return
 			}
@@ -320,40 +326,36 @@ func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 				t.Errorf("Take: %v, %+v", err, taken)
 				return
 			}
-			if err := b.UpdatePartialJob(taken.ID, p.progress); err != nil {
-				t.Errorf("UpdateJob: %v", err)
-				return
-			}
-			if err := b.UpdateJob(js.ID, p.progress, nil); err != nil {
-				t.Errorf("UpdateJobSet: %v", err)
+			if err := b.UpdatePartialJob(taken.Id, p.progress); err != nil {
+				t.Errorf("UpdatePartialJob: %v", err)
 				return
 			}
 			if p.fail {
-				if err := b.Error(taken.ID, "boom", false); err != nil {
+				if err := b.Error(taken.Id, "boom", false); err != nil {
 					t.Errorf("Error: %v", err)
 				}
-				t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
-			} else if err := b.Done(taken.ID); err != nil {
+				t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.Id) })
+			} else if err := b.Done(taken.Id); err != nil {
 				t.Errorf("Done: %v", err)
 			}
 		}(i, p)
 	}
 	wg.Wait()
 
-	final, err := b.GetJob(js.ID)
+	final, err := b.GetJob(js.Id)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
-	if final.Total != wantFinal {
-		t.Errorf("Total = %d, want %d", final.Total, wantFinal)
+	if final.Progress.Total != wantFinal {
+		t.Errorf("Total = %d, want %d", final.Progress.Total, wantFinal)
 	}
-	if final.Current != wantFinal {
-		t.Errorf("Current = %d, want %d", final.Current, wantFinal)
+	if final.Progress.Current != wantFinal {
+		t.Errorf("Current = %d, want %d", final.Progress.Current, wantFinal)
 	}
-	if final.Total != final.Current {
-		t.Errorf("Total (%d) and Current (%d) should match exactly once every job is accounted for", final.Total, final.Current)
+	if final.Progress.Total != final.Progress.Current {
+		t.Errorf("Total (%d) and Current (%d) should match exactly once every job is accounted for", final.Progress.Total, final.Progress.Current)
 	}
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed (some jobs failed)", final.Status())
 	}
 }
@@ -372,11 +374,11 @@ func TestConcurrentPermanentFailuresKeepAllErrors(t *testing.T) {
 	jobType := uniqueType("concurrent-failures")
 
 	js := NewJob(uuid.NewString(), jobType, 1000, "", nil)
-	cleanupJob(t, b, js.ID)
+	cleanupJob(t, b, js.Id)
 	if err := b.PushJob(js); err != nil {
 		t.Fatalf("PushJobSet: %v", err)
 	}
-	if err := b.StartJob(js.ID); err != nil {
+	if err := b.StartJob(js.Id); err != nil {
 		t.Fatalf("StartJobSet: %v", err)
 	}
 
@@ -395,10 +397,10 @@ func TestConcurrentPermanentFailuresKeepAllErrors(t *testing.T) {
 			// Unique type per goroutine so Take() can only ever return this
 			// goroutine's own job (see TestConcurrentMixedOutcomesKeepTotalConsistent).
 			jt := jobType + ":worker-" + strconv.Itoa(i)
-			job := NewPartialJob(uuid.NewString(), jt, 1000, js.ID)
-			job.Total = 1
-			cleanupPartialJob(t, b, job.ID)
-			if err := b.InitJob(js.ID, 1, nil); err != nil {
+			job := NewPartialJob(uuid.NewString(), jt, 1000, js.Id)
+			job.Progress.Total = 1
+			cleanupPartialJob(t, b, job.Id)
+			if err := b.InitJob(js.Id, 1, nil); err != nil {
 				t.Errorf("InitJobSet: %v", err)
 				return
 			}
@@ -411,26 +413,28 @@ func TestConcurrentPermanentFailuresKeepAllErrors(t *testing.T) {
 				t.Errorf("Take: %v, %+v", err, taken)
 				return
 			}
-			if err := b.Error(taken.ID, msg, false); err != nil {
+			if err := b.Error(taken.Id, msg, false); err != nil {
 				t.Errorf("Error: %v", err)
 				return
 			}
-			t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.ID) })
+			t.Cleanup(func() { b.client.LRem(context.Background(), b.keyFailed, 0, taken.Id) })
 		}(i, msg)
 	}
 	wg.Wait()
 
-	final, err := b.GetJob(js.ID)
+	final, err := b.GetJob(js.Id)
 	if err != nil {
 		t.Fatalf("GetSet: %v", err)
 	}
-	if final.Total != 0 {
-		t.Errorf("Total = %d, want 0 (every job's unfinished share subtracted)", final.Total)
+	// Nothing ever reported progress, so every job's whole share is
+	// unfinished and gets settled onto current, letting it reach total.
+	if final.Progress.Total != numJobs {
+		t.Errorf("Total = %d, want %d", final.Progress.Total, numJobs)
 	}
-	if final.Current != 0 {
-		t.Errorf("Current = %d, want 0", final.Current)
+	if final.Progress.Current != numJobs {
+		t.Errorf("Current = %d, want %d (every job's unfinished share settled)", final.Progress.Current, numJobs)
 	}
-	if final.Status() != StatusFailed {
+	if final.Status() != model.StatusFAILED {
 		t.Errorf("Status() = %s, want failed", final.Status())
 	}
 	if len(final.Errors) != numJobs {

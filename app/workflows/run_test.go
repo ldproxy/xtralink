@@ -1,7 +1,6 @@
 package workflows
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,46 +9,46 @@ import (
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/drivers"
-	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
 	"github.com/ldproxy/xtralink/lib/workflows"
+	"github.com/ldproxy/xtralink/model"
 )
 
 // fakeBackend mirrors the ones in app/jobs and app/workflows/actions test
 // files - job:push only needs PushJob, nothing else is exercised here.
 type fakeBackend struct {
-	pushedJobs []*jobs.Job
+	pushedJobs []*model.Job
 }
 
 func (f *fakeBackend) IsEnabled() bool { return true }
-func (f *fakeBackend) PushJob(job *jobs.Job) error {
+func (f *fakeBackend) PushJob(job *model.Job) error {
 	f.pushedJobs = append(f.pushedJobs, job)
 	return nil
 }
-func (f *fakeBackend) PushPartialJob(partialJob *jobs.PartialJob, untake bool) error { return nil }
-func (f *fakeBackend) Take(partialJobType, executor string) (*jobs.PartialJob, error) {
+func (f *fakeBackend) PushPartialJob(partialJob *model.PartialJob, untake bool) error { return nil }
+func (f *fakeBackend) Take(partialJobType, executor string) (*model.PartialJob, error) {
 	return nil, nil
 }
 func (f *fakeBackend) Done(partialJobID string) error                       { return nil }
 func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
-func (f *fakeBackend) GetJobs() ([]*jobs.Job, error)                        { return nil, nil }
-func (f *fakeBackend) GetJob(id string) (*jobs.Job, error)                  { return nil, nil }
-func (f *fakeBackend) GetOpen(partialJobType string) ([]*jobs.PartialJob, error) {
+func (f *fakeBackend) GetJobs() ([]*model.Job, error)                       { return nil, nil }
+func (f *fakeBackend) GetJob(id string) (*model.Job, error)                 { return nil, nil }
+func (f *fakeBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
 	return nil, nil
 }
-func (f *fakeBackend) GetTaken() ([]*jobs.PartialJob, error)  { return nil, nil }
-func (f *fakeBackend) GetFailed() ([]*jobs.PartialJob, error) { return nil, nil }
-func (f *fakeBackend) StartJob(jobID string) error            { return nil }
-func (f *fakeBackend) SetProgressDetails(jobID string, details any) error {
+func (f *fakeBackend) GetTaken() ([]*model.PartialJob, error)  { return nil, nil }
+func (f *fakeBackend) GetFailed() ([]*model.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) StartJob(jobID string) error             { return nil }
+func (f *fakeBackend) SetProgressDetails(jobID string, details map[string]any) error {
 	return nil
 }
-func (f *fakeBackend) SetOutput(jobID, key string, value jobs.OutputValue) error {
+func (f *fakeBackend) SetOutput(jobID, key string, value model.OutputValue) error {
 	return nil
 }
-func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []model.ProgressUpdate) error {
 	return nil
 }
-func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []model.ProgressUpdate) error {
 	return nil
 }
 func (f *fakeBackend) UpdatePartialJob(partialJobID string, currentDelta int) error { return nil }
@@ -159,17 +158,15 @@ workflows:
 
 	var files []string
 	for _, js := range backend.pushedJobs {
-		if js.Type != "nba-apply" {
-			t.Errorf("Type = %q, want nba-apply", js.Type)
+		if js.Kind != "nba-apply" {
+			t.Errorf("Kind = %q, want nba-apply", js.Kind)
 		}
-		var inputs map[string]string
-		if err := json.Unmarshal(js.Inputs, &inputs); err != nil {
-			t.Fatalf("unmarshal inputs: %v", err)
-		}
+		inputs := js.Inputs
 		if inputs["package"] != barRemote {
 			t.Errorf("inputs.package = %q, want %q", inputs["package"], barRemote)
 		}
-		files = append(files, inputs["file"])
+		file, _ := inputs["file"].(string)
+		files = append(files, file)
 	}
 	want := map[string]bool{"a.zip": true, "b.zip": true}
 	for _, f := range files {

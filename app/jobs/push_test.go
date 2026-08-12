@@ -28,11 +28,11 @@ func TestPush_BuildsAndPushesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	if job.Type != "demo" || job.Label != "my-label" || job.Priority != 500 {
+	if job.Kind != "demo" || job.Label != "my-label" || job.Priority != 500 {
 		t.Errorf("unexpected Job fields: %+v", job)
 	}
-	if string(job.Inputs) != `{"foo":"bar"}` {
-		t.Errorf("Inputs = %s, want {\"foo\":\"bar\"}", job.Inputs)
+	if job.Inputs == nil || job.Inputs["foo"] != "bar" {
+		t.Errorf("Inputs = %v, want {\"foo\":\"bar\"}", job.Inputs)
 	}
 	if backend.pushedJob != job {
 		t.Error("expected PushJob to have been called with the returned Job")
@@ -48,7 +48,7 @@ func TestPush_EmptyInputsStaysNil(t *testing.T) {
 		t.Fatalf("Push: %v", err)
 	}
 	if job.Inputs != nil {
-		t.Errorf("expected nil Inputs for empty inputsRaw, got %s", job.Inputs)
+		t.Errorf("expected nil Inputs for empty inputsRaw, got %v", job.Inputs)
 	}
 }
 
@@ -76,16 +76,69 @@ func TestPush_MatchingJobDefinitionBuildsSinglePartialJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	if !job.Parallel {
-		t.Error("expected Parallel to default to true")
+	// A single-step Job runs unsequenced (the Push default), so it carries
+	// no JobSequence and its PartialJob no Sequence slot.
+	if job.Sequence != nil {
+		t.Errorf("expected no sequencing on a single-step Job, got %+v", job.Sequence)
 	}
 
 	step, err := backend.Take("nba-transformation", "test")
 	if err != nil || step == nil {
 		t.Fatalf("Take(nba-transformation): %v, %+v", err, step)
 	}
-	if step.PartOf != job.ID || step.Sequence != 0 {
-		t.Errorf("step: PartOf=%q Sequence=%d, want %q/0", step.PartOf, step.Sequence, job.ID)
+	if step.PartOf != job.Id {
+		t.Errorf("step: PartOf=%q, want %q", step.PartOf, job.Id)
+	}
+	if step.Sequence != nil {
+		t.Errorf("step: Sequence=%d, want unset", *step.Sequence)
+	}
+	if step.Progress.Total != 1 {
+		t.Errorf("step: Progress.Total = %d, want 1", step.Progress.Total)
+	}
+}
+
+// TestPushPipeline_SequentialAssignsSequenceSlots covers the multi-step,
+// parallel=false shape the job:push workflow action builds: each step gets
+// its Sequence slot in defs order, so step 1 only becomes takeable once
+// step 0 is done.
+func TestPushPipeline_SequentialAssignsSequenceSlots(t *testing.T) {
+	backend := jobs.NewMemoryBackend()
+	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
+
+	defs := []app.JobDefinition{
+		{Id: "step-a", Workflow: "wf-a"},
+		{Id: "step-b", Workflow: "wf-b"},
+	}
+
+	job, err := PushPipeline(appCtx, "pipeline", "", 1000, "", defs, false)
+	if err != nil {
+		t.Fatalf("PushPipeline: %v", err)
+	}
+	if job.Sequence == nil {
+		t.Fatal("expected parallel=false to opt the Job into sequencing")
+	}
+
+	if taken, err := backend.Take("step-b", "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step-b) before step-a is done = %+v, %v, want nil, nil", taken, err)
+	}
+
+	stepA, err := backend.Take("step-a", "test")
+	if err != nil || stepA == nil {
+		t.Fatalf("Take(step-a): %v, %+v", err, stepA)
+	}
+	if stepA.Sequence == nil || *stepA.Sequence != 0 {
+		t.Errorf("step-a: Sequence = %v, want 0", stepA.Sequence)
+	}
+	if err := backend.Done(stepA.Id); err != nil {
+		t.Fatalf("Done(step-a): %v", err)
+	}
+
+	stepB, err := backend.Take("step-b", "test")
+	if err != nil || stepB == nil {
+		t.Fatalf("Take(step-b) after step-a is done: %v, %+v", err, stepB)
+	}
+	if stepB.Sequence == nil || *stepB.Sequence != 1 {
+		t.Errorf("step-b: Sequence = %v, want 1", stepB.Sequence)
 	}
 }
 
@@ -97,7 +150,7 @@ func TestPush_UnknownTypeStaysBareJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	if job.ID == "" {
+	if job.Id == "" {
 		t.Error("expected a valid job")
 	}
 	if taken, err := backend.Take("ad-hoc-type", "test"); err != nil || taken != nil {

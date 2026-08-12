@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "genffi": "genffi"
+  },
+  "devDependencies": {
+    "genffi": "file:../../ws-ldproxy-master/genffi"
+  }
+}

@@ -1,6 +1,6 @@
 package jobs
 
-import "github.com/ldproxy/xtralink/lib/jobs"
+import "github.com/ldproxy/xtralink/model"
 
 // fakeBackend is a minimal in-memory jobs.Backend stub used to test this
 // adapter layer (input validation, field mapping, error wrapping) in
@@ -8,26 +8,26 @@ import "github.com/ldproxy/xtralink/lib/jobs"
 // dedicated integration tests in lib/jobs; these tests are not about the
 // queue itself, only about the thin CLI-facing functions on top of it.
 type fakeBackend struct {
-	pushedJob  *jobs.Job
+	pushedJob  *model.Job
 	pushJobErr error
 
-	getJobResult *jobs.Job
+	getJobResult *model.Job
 	getJobErr    error
 
-	getJobsResult []*jobs.Job
+	getJobsResult []*model.Job
 	getJobsErr    error
 }
 
 func (f *fakeBackend) IsEnabled() bool { return true }
 
-func (f *fakeBackend) PushJob(job *jobs.Job) error {
+func (f *fakeBackend) PushJob(job *model.Job) error {
 	f.pushedJob = job
 	return f.pushJobErr
 }
 
-func (f *fakeBackend) PushPartialJob(partialJob *jobs.PartialJob, untake bool) error { return nil }
+func (f *fakeBackend) PushPartialJob(partialJob *model.PartialJob, untake bool) error { return nil }
 
-func (f *fakeBackend) Take(partialJobType, executor string) (*jobs.PartialJob, error) {
+func (f *fakeBackend) Take(partialJobType, executor string) (*model.PartialJob, error) {
 	return nil, nil
 }
 
@@ -35,27 +35,29 @@ func (f *fakeBackend) Done(partialJobID string) error { return nil }
 
 func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
 
-func (f *fakeBackend) GetJobs() ([]*jobs.Job, error) { return f.getJobsResult, f.getJobsErr }
+func (f *fakeBackend) GetJobs() ([]*model.Job, error) { return f.getJobsResult, f.getJobsErr }
 
-func (f *fakeBackend) GetJob(id string) (*jobs.Job, error) { return f.getJobResult, f.getJobErr }
+func (f *fakeBackend) GetJob(id string) (*model.Job, error) { return f.getJobResult, f.getJobErr }
 
-func (f *fakeBackend) GetOpen(partialJobType string) ([]*jobs.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
+	return nil, nil
+}
 
-func (f *fakeBackend) GetTaken() ([]*jobs.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) GetTaken() ([]*model.PartialJob, error) { return nil, nil }
 
-func (f *fakeBackend) GetFailed() ([]*jobs.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) GetFailed() ([]*model.PartialJob, error) { return nil, nil }
 
 func (f *fakeBackend) StartJob(jobID string) error { return nil }
 
-func (f *fakeBackend) SetProgressDetails(jobID string, details any) error { return nil }
+func (f *fakeBackend) SetProgressDetails(jobID string, details map[string]any) error { return nil }
 
-func (f *fakeBackend) SetOutput(jobID, key string, value jobs.OutputValue) error { return nil }
+func (f *fakeBackend) SetOutput(jobID, key string, value model.OutputValue) error { return nil }
 
-func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []model.ProgressUpdate) error {
 	return nil
 }
 
-func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []jobs.ProgressUpdate) error {
+func (f *fakeBackend) UpdateJob(jobID string, currentDelta int, updates []model.ProgressUpdate) error {
 	return nil
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/ldproxy/xtralink/lib/drivers"
 	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
+	"github.com/ldproxy/xtralink/model"
 )
 
 func TestStepIdsToProcess_SpecificId(t *testing.T) {
@@ -147,9 +148,9 @@ jobDefinitions:
 	go func() { runDone <- cmd.run(appCtx, ctx) }()
 
 	deadline := time.Now().Add(3 * time.Second)
-	var final *jobs.Job
+	var final *model.Job
 	for time.Now().Before(deadline) {
-		current, err := backend.GetJob(job.ID)
+		current, err := backend.GetJob(job.Id)
 		if err != nil {
 			t.Fatalf("GetJob: %v", err)
 		}
@@ -167,10 +168,13 @@ jobDefinitions:
 	if final == nil {
 		t.Fatal("timed out waiting for the job to finish")
 	}
-	if final.Status() != jobs.StatusSuccessful {
+	if final.Status() != model.StatusSUCCESSFUL {
 		t.Fatalf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
 	}
-	if out, ok := final.Outputs["foo"]; !ok || out.Value != "a.zip" {
-		t.Errorf("Outputs[foo] = %+v, want value a.zip", out)
+	// Outputs is an opaque map the backend round-trips through JSON, so the
+	// OutputValue the job wrote comes back as a generic map.
+	out, ok := final.Outputs["foo"].(map[string]any)
+	if !ok || out["value"] != "a.zip" {
+		t.Errorf("Outputs[foo] = %+v, want value a.zip", final.Outputs["foo"])
 	}
 }
