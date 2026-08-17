@@ -25,6 +25,4 @@ type initStub struct{}
 
 func (initStub) JobQueue() api.JobQueue { return impl.NewJobQueue() }
 
-func (initStub) JobProcessors() api.JobProcessors { return impl.NewJobProcessors() }
-
 func NewInit() initStub { return initStub{} }

@@ -21,7 +21,7 @@
  * <h2>2. Compile</h2>
  *
  * <pre>{@code
- * javac --release 22 -d classes de/ii/xtralink/jobs/api/*.java
+ * javac --release 22 -d classes de/ii/xtralink/jobs/internal/*.java
  * }</pre>
  *
  * <p>22 is a floor rather than a preference — {@code java.lang.foreign} left
@@ -54,4 +54,4 @@
  * <p>Generated — do not edit. See {@code docs/guide/java-binding.md} for the memory
  * contract and what each class here is for.
  */
-package de.ii.xtralink.jobs.api;
+package de.ii.xtralink.jobs.internal;

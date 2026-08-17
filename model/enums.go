@@ -19,3 +19,19 @@ const (
   ProgressOperationSUBTRACT ProgressOperation = "SUBTRACT"
 )
     
+type Result string
+  
+const (
+  ResultSUCCESS Result = "SUCCESS"
+  ResultFAILURE Result = "FAILURE"
+  ResultRETRY Result = "RETRY"
+  ResultONHOLD Result = "ONHOLD"
+)
+    
+type Queue string
+  
+const (
+  QueueLOCAL Queue = "LOCAL"
+  QueueREDIS Queue = "REDIS"
+)
+    

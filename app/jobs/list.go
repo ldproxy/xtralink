@@ -18,8 +18,8 @@ func List(appCtx *app.AppContext) ([]*StatusView, error) {
 		views = append(views, &StatusView{
 			ID:      job.Id,
 			Type:    job.Kind,
-			Status:  job.Status(),
-			Percent: job.Percent(),
+			Status:  job.Status,
+			Percent: job.Progress.Percent,
 			Message: job.Message(),
 		})
 	}

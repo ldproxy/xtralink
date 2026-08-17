@@ -40,7 +40,7 @@ func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
 	}
 
 	for _, stepId := range stepIds {
-		processor, err := appworkflows.NewWorkflowJobProcessor(appCtx, stepId)
+		processor, err := appworkflows.WorkflowJobProcessor(appCtx, stepId)
 		if err != nil {
 			return err
 		}

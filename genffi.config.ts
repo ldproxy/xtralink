@@ -28,7 +28,7 @@ export default {
     path: "ffi/java/src/main/java",
     pkg: "de.ii.xtralink.jobs",
     api: {
-      //pkg: "de.ii.xtraplatform.jobs",
+      pkg: "de.ii.xtralink.jobs.internal",
     },
   },
 } satisfies Config;
@@ -47,6 +47,18 @@ export namespace GenModel {
       ADD = "ADD",
       SUBTRACT = "SUBTRACT",
     }
+
+    export enum Result {
+      SUCCESS = "SUCCESS",
+      FAILURE = "FAILURE",
+      RETRY = "RETRY",
+      ONHOLD = "ONHOLD",
+    }
+
+    export enum Queue {
+      LOCAL = "LOCAL",
+      REDIS = "REDIS",
+    }
   }
 
   export namespace Config {
@@ -57,6 +69,11 @@ export namespace GenModel {
       total: number;
       /** @TJS-type integer */
       percent: number;
+      details: { [key: string]: any };
+    };
+    export type InitProgress = {
+      /** @TJS-type integer */
+      total: number;
       details: { [key: string]: any };
     };
     export type JobSequence = {
@@ -73,6 +90,15 @@ export namespace GenModel {
     export type ProgressUpdate = {
       path: string;
       operation: Enums.ProgressOperation;
+    };
+    export type QueueConfiguration = {
+      /** @TJS-type integer */
+      concurrency: number;
+      executor: string;
+      queue: Enums.Queue;
+      /** @optional */
+      cluster: string;
+      redis: string[];
     };
 
     export type BaseJob = {
@@ -116,15 +142,45 @@ export namespace GenModel {
       sequence: JobSequence;
     };
 
+    export type JobConfiguration = {
+      kind: string;
+      /** @TJS-type integer */
+      priority: number;
+      label: string;
+      description: string;
+      inputs: { [key: string]: any };
+      context: { [key: string]: any };
+      progress: JobProgress;
+      setup: boolean;
+      cleanup: boolean;
+      followUps: JobConfiguration[];
+    };
+
+    export type PartialJobConfiguration = {
+      kind: string;
+      /** @TJS-type integer */
+      priority: number;
+      partOf: string;
+      progress: JobProgress;
+      progressUpdates: ProgressUpdate[];
+      /**
+       * @TJS-type integer
+       * @optional
+       */
+      sequence: number;
+      context: { [key: string]: any };
+    };
+
     export type JobResult = {
-      message: string;
-      status: Enums.Status;
-      errors: string[];
+      status: Enums.Result;
+      messages: string[];
     };
   }
 }
 
 export namespace GenApi {
+  export type int = number & { readonly __int: unique symbol };
+
   /**
    * @listener
    */
@@ -139,7 +195,10 @@ export namespace GenApi {
     /**
      * @throws
      */
-    process: (job: GenModel.Config.Job) => GenModel.Config.JobResult;
+    process: (
+      partialJob: GenModel.Config.PartialJob,
+      job: GenModel.Config.Job,
+    ) => GenModel.Config.JobResult;
   }
 
   /**
@@ -149,30 +208,46 @@ export namespace GenApi {
    * @singleton
    */
   export interface JobQueue {
-    create: (jobType: string) => GenModel.Config.Job;
+    /**
+     * @throws
+     */
+    start: (cfg: GenModel.Config.QueueConfiguration) => void;
+
+    stop: () => void;
 
     /**
-     * The same thing through a `@scoped` listener, whose Java overload takes the interface
-     * itself and manages the registration around the call. A single-method listener, so the
-     * call site can be a lambda — which is the whole point of the tag and the one thing a
-     * compile cannot prove is *usable*.
      * @scoped
      */
     push: (
-      cfg: GenModel.Config.Job,
+      job: GenModel.Config.JobConfiguration,
       onProgress: JobListener,
     ) => Promise<GenModel.Config.Job>;
 
-    get: (id: string) => GenModel.Config.Job;
-  }
+    pushPartial: (
+      partialJob: GenModel.Config.PartialJobConfiguration,
+    ) => Promise<GenModel.Config.PartialJob>;
 
-  /**
-   * The one globally reachable object. `InitLibrary()` creates it by calling
-   * `clib.NewInit()`, which you have to write by hand — it is the single obligation
-   * genffi places on the implementation side.
-   * @singleton
-   */
-  export interface JobProcessors {
-    register: (jobType: string, processor: JobProcessor) => boolean;
+    repushPartial: (id: string) => Promise<GenModel.Config.PartialJob>;
+
+    init(id: string, progress: GenModel.Config.InitProgress): void;
+
+    updatePartial(id: string, delta: int): void;
+
+    cancel(id: string): boolean;
+
+    /**
+     * @optional
+     */
+    get: (id: string) => GenModel.Config.Job;
+
+    /**
+     * @optional
+     */
+    getPartial: (id: string) => GenModel.Config.PartialJob;
+
+    /**
+     * @throws
+     */
+    register: (jobType: string, priority: int, processor: JobProcessor) => void;
   }
 }

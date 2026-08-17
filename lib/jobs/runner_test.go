@@ -11,20 +11,6 @@ import (
 	"github.com/ldproxy/xtralink/model"
 )
 
-// funcProcessor lets tests supply Process() as a plain closure instead of
-// declaring a new named type per test.
-type funcProcessor struct {
-	jobType  string
-	priority int
-	process  func(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult
-}
-
-func (p *funcProcessor) JobType() string { return p.jobType }
-func (p *funcProcessor) Priority() int   { return p.priority }
-func (p *funcProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
-	return p.process(partialJob, job, backend)
-}
-
 // runRunner starts r.Run in a goroutine, waits for waitFor to return true (or
 // timeout), then cancels and waits for Run to actually return.
 func runRunnerUntil(t *testing.T, r *Runner, timeout time.Duration, waitFor func() bool) {
@@ -59,9 +45,9 @@ func TestRunner_DispatchesToRegisteredProcessor(t *testing.T) {
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 20 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*model.PartialJob, *model.Job, Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
 		atomic.AddInt32(&processed, 1)
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
@@ -94,21 +80,21 @@ func TestRunner_TriesHigherPriorityProcessorFirst(t *testing.T) {
 	var mu sync.Mutex
 	var order []string
 
-	record := func(name string) func(*model.PartialJob, *model.Job, Backend) JobResult {
-		return func(*model.PartialJob, *model.Job, Backend) JobResult {
+	record := func(name string) func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+		return func(*model.PartialJob, *model.Job, Backend) model.JobResult {
 			mu.Lock()
 			order = append(order, name)
 			mu.Unlock()
 			time.Sleep(150 * time.Millisecond) // keep the single concurrency slot busy
-			return Success()
+			return model.Success()
 		}
 	}
 
 	r := NewRunner(b, "test")
 	r.Concurrency = 1 // force strictly one-at-a-time so dispatch order is observable
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: lowType, priority: 100, process: record("low")})
-	r.Register(&funcProcessor{jobType: highType, priority: 900, process: record("high")})
+	r.Register(&JobProcessor{Kind: lowType, Priority: 100, Process: record("low")})
+	r.Register(&JobProcessor{Kind: highType, Priority: 900, Process: record("high")})
 
 	runRunnerUntil(t, r, 3*time.Second, func() bool {
 		mu.Lock()
@@ -144,7 +130,7 @@ func TestRunner_ConcurrencyLimitsParallelExecution(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.Concurrency = concurrency
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*model.PartialJob, *model.Job, Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
 		n := atomic.AddInt32(&current, 1)
 		for {
 			max := atomic.LoadInt32(&maxObserved)
@@ -155,7 +141,7 @@ func TestRunner_ConcurrencyLimitsParallelExecution(t *testing.T) {
 		time.Sleep(80 * time.Millisecond)
 		atomic.AddInt32(&current, -1)
 		atomic.AddInt32(&completed, 1)
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 5*time.Second, func() bool { return atomic.LoadInt32(&completed) == jobCount })
@@ -189,10 +175,10 @@ func TestRunner_StartsJobOnFirstNonSetupPartialJob(t *testing.T) {
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(p *model.PartialJob, j *model.Job, backend Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType + ":worker", Priority: 1000, Process: func(p *model.PartialJob, j *model.Job, backend Backend) model.JobResult {
 		_ = backend.UpdatePartialJob(p.Id, 1)
 		atomic.AddInt32(&processed, 1)
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
@@ -220,11 +206,11 @@ func TestRunner_OnHoldRetriesAfterInterval(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.OnHoldRetryInterval = 100 * time.Millisecond
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*model.PartialJob, *model.Job, Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
 		if atomic.AddInt32(&attempts, 1) == 1 {
-			return OnHold()
+			return model.OnHold()
 		}
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 3*time.Second, func() bool { return atomic.LoadInt32(&attempts) >= 2 })

@@ -3,19 +3,16 @@
 package de.ii.xtralink.jobs;
 
 public record JobResult(
-    String message,
-    Identifiers.Status status,
-    java.util.List<String> errors
+    Identifiers.Result status,
+    java.util.List<String> messages
   ) {
 
 public JobResult(
-  String message,
-  Identifiers.Status status,
-  java.util.List<String> errors
+  Identifiers.Result status,
+  java.util.List<String> messages
 ) {
-  this.message = message;
   this.status = status;
-  this.errors = errors;
+  this.messages = messages;
 }
   
 }

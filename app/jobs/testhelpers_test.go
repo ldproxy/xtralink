@@ -1,6 +1,9 @@
 package jobs
 
-import "github.com/ldproxy/xtralink/model"
+import (
+	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
+)
 
 // fakeBackend is a minimal in-memory jobs.Backend stub used to test this
 // adapter layer (input validation, field mapping, error wrapping) in
@@ -21,6 +24,9 @@ type fakeBackend struct {
 func (f *fakeBackend) IsEnabled() bool { return true }
 
 func (f *fakeBackend) PushJob(job *model.Job) error {
+	return f.PushJobListen(job, jobs.NoopJobListener{})
+}
+func (f *fakeBackend) PushJobListen(job *model.Job, onProgress jobs.JobListener) error {
 	f.pushedJob = job
 	return f.pushJobErr
 }
@@ -38,6 +44,8 @@ func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { re
 func (f *fakeBackend) GetJobs() ([]*model.Job, error) { return f.getJobsResult, f.getJobsErr }
 
 func (f *fakeBackend) GetJob(id string) (*model.Job, error) { return f.getJobResult, f.getJobErr }
+
+func (f *fakeBackend) GetPartialJob(id string) (*model.PartialJob, error) { return nil, nil }
 
 func (f *fakeBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
 	return nil, nil

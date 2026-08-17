@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"testing"
+
+	"github.com/ldproxy/xtralink/model"
 )
 
 func TestNewBaseJob(t *testing.T) {
@@ -45,40 +47,40 @@ func TestNewJob(t *testing.T) {
 }
 
 func TestJobResultConstructors(t *testing.T) {
-	if !Success().IsSuccess() {
+	if !model.Success().IsSuccess() {
 		t.Error("Success() should be IsSuccess()")
 	}
-	if Success().IsFailure() {
+	if model.Success().IsFailure() {
 		t.Error("Success() should not be IsFailure()")
 	}
 
-	oh := OnHold()
+	oh := model.OnHold()
 	if oh.IsSuccess() {
 		t.Error("OnHold() should not be IsSuccess()")
 	}
 	if oh.IsFailure() {
 		t.Error("OnHold() should not be IsFailure() (no Error set)")
 	}
-	if !oh.OnHold {
+	if !oh.IsOnHold() {
 		t.Error("OnHold() should set OnHold=true")
 	}
 
-	r := Retry("transient")
+	r := model.Retry("transient")
 	if !r.IsFailure() {
 		t.Error("Retry() should be IsFailure()")
 	}
-	if !r.Retry {
+	if r.Status != model.ResultRETRY {
 		t.Error("Retry() should set Retry=true")
 	}
-	if r.Error != "transient" {
-		t.Errorf("Retry().Error = %q, want transient", r.Error)
+	if r.Message() != "transient" {
+		t.Errorf("Retry().Error = %q, want transient", r.Message())
 	}
 
-	e := Error("permanent")
+	e := model.Error("permanent")
 	if !e.IsFailure() {
 		t.Error("Error() should be IsFailure()")
 	}
-	if e.Retry {
+	if e.Status == model.ResultRETRY {
 		t.Error("Error() should not set Retry")
 	}
 }

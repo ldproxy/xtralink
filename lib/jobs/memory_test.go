@@ -547,8 +547,8 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_ReducesTotalAndFinalizes(t 
 	if final.Progress.Current != 8 {
 		t.Errorf("Current = %d, want 8", final.Progress.Current)
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed", final.Status)
 	}
 }
 
@@ -577,8 +577,8 @@ func TestMemoryBackend_OnPartialJobPermanentlyFailed_SetupForcesJobFailed(t *tes
 	if final.FinishedAt <= 0 {
 		t.Fatal("expected Job to be forced to a finished state when setup fails permanently")
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed", final.Status)
 	}
 	found := false
 	for _, e := range final.Errors {
@@ -699,8 +699,8 @@ func TestMemoryBackend_RetriedThenSucceededPartialJobDoesNotFailJob(t *testing.T
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Errorf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Errorf("Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	if len(final.Errors) != 0 {
 		t.Errorf("expected no errors on the Job from a partial job that ultimately succeeded, got %v", final.Errors)
@@ -835,9 +835,9 @@ func TestMemoryBackend_WithRunner(t *testing.T) {
 	var processed int32
 	r := NewRunner(b, "test")
 	r.PollInterval = 20 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType, priority: 1000, process: func(*model.PartialJob, *model.Job, Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
 		atomic.AddInt32(&processed, 1)
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
@@ -1004,4 +1004,30 @@ func TestMemoryBackend_ParallelJobIgnoresSequenceGating(t *testing.T) {
 	if err != nil || taken == nil || taken.Id != late.Id {
 		t.Fatalf("expected Parallel=true to ignore Sequence gating entirely, got %v, %+v", err, taken)
 	}
+}
+
+// TestMemoryBackend_PercentIsStoredAndKeptUpToDate is the in-memory
+// counterpart to TestRedisBackend_PercentIsStoredAndKeptUpToDate.
+func TestMemoryBackend_PercentIsStoredAndKeptUpToDate(t *testing.T) {
+	b := NewMemoryBackend()
+	jobType := uniqueType("percent")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+
+	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	worker.Progress.Total = 4
+	if err := b.PushPartialJob(worker, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	assertStoredPercent(t, b, job.Id, worker.Kind)
+
+	standalone := NewJob(uuid.NewString(), jobType+":standalone", 1000, "", nil)
+	if err := b.PushJob(standalone); err != nil {
+		t.Fatalf("PushJob(standalone): %v", err)
+	}
+	assertStoredPercentWithoutPartialJobs(t, b, standalone.Id)
 }

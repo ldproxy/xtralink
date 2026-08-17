@@ -1,21 +1,28 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Init grows the expected scope of the job (BaseJob.init in Java).
-func (b *Job) Init(delta int) {
+func (b *BaseJob) Init(delta int) {
 	b.Progress.Total += delta
-	b.BaseJob.UpdatedAt = nowMillis()
+	b.Progress.Percent = b.Percent()
+	b.UpdatedAt = nowMillis()
 }
 
 // Update reports progress (BaseJob.update in Java).
-func (b *Job) Update(delta int) {
+func (b *BaseJob) Update(delta int) {
 	b.Progress.Current += delta
-	b.BaseJob.UpdatedAt = nowMillis()
+	b.Progress.Percent = b.Percent()
+	b.UpdatedAt = nowMillis()
 }
 
-// Percent is derived from current/total on read, not stored in the model.
-func (b *Job) Percent() int {
+// Percent computes the percentage from current/total. Progress.Percent is a
+// stored field, so - like Status - it has to be rewritten after every change
+// to current, total or startedAt; Init/Update do that for the first two.
+func (b *BaseJob) Percent() int {
 	if b.Progress.Total <= 0 {
 		if b.StartedAt <= 0 {
 			return 0
@@ -44,7 +51,7 @@ func (b *BaseJob) HasErrors() bool {
 }
 
 // Status derives the OGC-facing lifecycle status.
-func (j *Job) Status() Status {
+func (j *BaseJob) GetStatus() Status {
 	switch {
 	case j.FinishedAt > 0:
 		// Checked first, ahead of StartedAt: a permanently failed setup
@@ -67,7 +74,7 @@ func (j *Job) Status() Status {
 // currently being seeded) would need the Job to carry some notion of
 // "current phase", which nothing in the model does yet.
 func (j *Job) Message() string {
-	switch j.Status() {
+	switch j.GetStatus() {
 	case StatusACCEPTED:
 		return "Job accepted"
 	case StatusRUNNING:
@@ -82,6 +89,29 @@ func (j *Job) Message() string {
 	default:
 		return ""
 	}
+}
+
+func Success() JobResult { return JobResult{Status: ResultSUCCESS} }
+func OnHold() JobResult  { return JobResult{Status: ResultONHOLD} }
+func Retry(err string) JobResult {
+	return JobResult{Status: ResultRETRY, Messages: []string{err}}
+}
+func Error(err string) JobResult { return JobResult{Status: ResultFAILURE, Messages: []string{err}} }
+
+func (r JobResult) IsSuccess() bool {
+	return r.Status == ResultSUCCESS
+}
+
+func (r JobResult) IsFailure() bool {
+	return r.Status == ResultFAILURE || r.Status == ResultRETRY
+}
+
+func (r JobResult) IsOnHold() bool {
+	return r.Status == ResultONHOLD
+}
+
+func (r JobResult) Message() string {
+	return strings.Join(r.Messages, "; ")
 }
 
 func nowMillis() int64 {

@@ -17,7 +17,7 @@ func TestStatus_MapsJobFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if got.ID != job.Id || got.Type != job.Kind || got.Status != job.Status() || got.Percent != job.Percent() || got.Message != job.Message() {
+	if got.ID != job.Id || got.Type != job.Kind || got.Status != job.Status || got.Percent != job.Progress.Percent || got.Message != job.Message() {
 		t.Errorf("unexpected StatusView: %+v", got)
 	}
 }

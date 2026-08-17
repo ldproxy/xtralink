@@ -120,7 +120,7 @@ func TestJobStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			job := &Job{BaseJob: BaseJob{StartedAt: tt.startedAt, FinishedAt: tt.finishedAt, Errors: tt.errors}}
-			if got := job.Status(); got != tt.want {
+			if got := job.GetStatus(); got != tt.want {
 				t.Errorf("Status() = %s, want %s", got, tt.want)
 			}
 		})

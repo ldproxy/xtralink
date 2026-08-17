@@ -31,8 +31,8 @@ func Status(appCtx *app.AppContext, id string) (*StatusView, error) {
 	return &StatusView{
 		ID:      job.Id,
 		Type:    job.Kind,
-		Status:  job.Status(),
-		Percent: job.Percent(),
+		Status:  job.Status,
+		Percent: job.Progress.Percent,
 		Message: job.Message(),
 	}, nil
 }

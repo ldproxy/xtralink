@@ -164,6 +164,44 @@ func (b *RedisBackend) getPartialJob(ctx context.Context, id string) (*model.Par
 	return &partialJob, nil
 }
 
+// setStatus writes the Job's stored status field - it is derived from
+// startedAt/finishedAt/errors, but stored rather than computed on read, so
+// every write to one of those three has to be followed by one of these.
+// model.Status is a named string type rather than a plain string, so
+// go-redis JSON-encodes (and thus quotes) it instead of passing it through
+// as raw JSON.
+func (b *RedisBackend) setStatus(ctx context.Context, jobID string, status model.Status) error {
+	return b.jsonSet(ctx, b.keyJob+jobID, "$.status", status)
+}
+
+// setPercent writes the stored progress.percent of the document at key (a
+// Job or a PartialJob) - derived from current/total/startedAt, so every
+// write to one of those has to be followed by one of these.
+func (b *RedisBackend) setPercent(ctx context.Context, key string, percent int) error {
+	return b.jsonSet(ctx, key, "$.progress.percent", percent)
+}
+
+// refreshJobPercent re-reads the Job and stores the percentage its
+// current/total/startedAt now imply. The re-read is what makes this
+// different from the PartialJob case: a Job's progress moves via atomic
+// JSON.NUMINCRBY from any number of concurrent workers, so the caller's own
+// delta says nothing about the resulting current/total - only the server
+// knows them.
+//
+// Between that read and the write another worker may increment again, so
+// the stored value can lag one update behind - it self-corrects on the next
+// one, and finalizeIfDone writes the terminal 100 from its own read. Unlike
+// status (where a stale write would mean claiming a failed Job succeeded),
+// a percentage a few points behind is a display artifact, not a wrong
+// outcome, so this is not worth serializing.
+func (b *RedisBackend) refreshJobPercent(ctx context.Context, jobID string) error {
+	job, err := b.getJob(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+	return b.setPercent(ctx, b.keyJob+jobID, job.Percent())
+}
+
 func (b *RedisBackend) putJob(ctx context.Context, job *model.Job) error {
 	return b.jsonSet(ctx, b.keyJob+job.Id, "$", job)
 }
@@ -178,6 +216,10 @@ func (b *RedisBackend) getJob(ctx context.Context, id string) (*model.Job, error
 }
 
 func (b *RedisBackend) PushJob(job *model.Job) error {
+	return b.PushJobListen(job, NoopJobListener{})
+}
+
+func (b *RedisBackend) PushJobListen(job *model.Job, onProgress JobListener) error {
 	ctx := context.Background()
 	if err := b.putJob(ctx, job); err != nil {
 		return err
@@ -301,6 +343,8 @@ func (b *RedisBackend) takeEligibleFromQueue(ctx context.Context, queue, executo
 		partialJob.Executor = executor
 		partialJob.StartedAt = now
 		partialJob.UpdatedAt = now
+		partialJob.BaseJob.Status = partialJob.GetStatus()
+		partialJob.Progress.Percent = partialJob.Percent()
 		if err := b.putPartialJob(ctx, partialJob); err != nil {
 			return nil, err
 		}
@@ -406,6 +450,7 @@ func (b *RedisBackend) syncEmbeddedPartialJob(ctx context.Context, jobID, field 
 	if done.FinishedAt <= 0 {
 		done.FinishedAt = done.UpdatedAt
 	}
+	done.BaseJob.Status = done.GetStatus()
 	return b.jsonSet(ctx, b.keyJob+jobID, "$."+field, done)
 }
 
@@ -437,19 +482,37 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "cleanup", partialJob); err != nil {
 			return err
 		}
-		// Job is already finished; just surface the error so Status()
-		// reports failed instead of successful.
-		return b.mergeErrors(ctx, job.Id, partialJob.Errors)
+		// Job is already finished; just surface the error so its status
+		// reports failed instead of successful. Nothing else can be writing
+		// the status at this point (finalization is long done, and there is
+		// only ever one cleanup PartialJob), so recomputing it from the Job
+		// as read above plus the errors just merged is safe.
+		if err := b.mergeErrors(ctx, job.Id, partialJob.Errors); err != nil {
+			return err
+		}
+		job.Errors = append(job.Errors, partialJob.Errors...)
+		return b.setStatus(ctx, job.Id, job.GetStatus())
 	}
 
+	// The errors are merged BEFORE the progress bump that may complete the
+	// Job, and that order is what keeps the stored status correct without
+	// locking: whichever concurrent permanent failure ends up being the one
+	// that finalizes reads the Job after its own increment, and every other
+	// failure appended its errors before its own increment - so the Job the
+	// finalizer reads is guaranteed to already carry all of them (s.
+	// finalizeIfDone). Merging after the increment would leave a window where
+	// the finalizer sees "done, no errors" and stores SUCCESSFUL.
+	if err := b.mergeErrors(ctx, job.Id, partialJob.Errors); err != nil {
+		return err
+	}
 	remaining := (partialJob.Progress.Total - partialJob.Progress.Current)
 	if err := b.jsonNumIncrBy(ctx, b.keyJob+job.Id, "$.progress.current", remaining); err != nil {
 		return err
 	}
-	if err := b.mergeErrors(ctx, job.Id, partialJob.Errors); err != nil {
+	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
-	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.updatedAt", nowMillis()); err != nil {
+	if err := b.refreshJobPercent(ctx, job.Id); err != nil {
 		return err
 	}
 	if job.Sequence != nil {
@@ -504,9 +567,23 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *model.Job) error
 		return nil
 	}
 
-	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", nowMillis()); err != nil {
+	fresh.FinishedAt = nowMillis()
+	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", fresh.FinishedAt); err != nil {
 		return err
 	}
+	// Derived from fresh - read above, i.e. after every PartialJob of this
+	// Job was accounted for, and therefore after all of their errors were
+	// merged (s. onPartialJobPermanentlyFailed).
+	if err := b.setStatus(ctx, job.Id, fresh.GetStatus()); err != nil {
+		return err
+	}
+	// The terminal percentage (100, by definition of IsDone), from the same
+	// read that decided the Job is finished - so a finished Job does not
+	// keep whatever partial value the last worker happened to store.
+	if err := b.setPercent(ctx, b.keyJob+job.Id, fresh.Percent()); err != nil {
+		return err
+	}
+
 	if job.Cleanup != nil {
 		return b.PushPartialJob(job.Cleanup, false)
 	}
@@ -531,7 +608,12 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 		return nil
 	}
 
-	return b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", nowMillis())
+	job.Errors = append(job.Errors, errors...)
+	job.FinishedAt = nowMillis()
+	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", job.FinishedAt); err != nil {
+		return err
+	}
+	return b.setStatus(ctx, job.Id, job.GetStatus())
 }
 
 func (b *RedisBackend) pushFollowUps(job *model.Job) error {
@@ -545,7 +627,23 @@ func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 
 // StartJob sets Job.startedAt to now (mirrors JobSet.start() in Java).
 func (b *RedisBackend) StartJob(jobID string) error {
-	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.startedAt", nowMillis())
+	ctx := context.Background()
+
+	job, err := b.getJob(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+
+	job.StartedAt = nowMillis()
+	if err := b.jsonSet(ctx, b.keyJob+jobID, "$.startedAt", job.StartedAt); err != nil {
+		return err
+	}
+	if err := b.setStatus(ctx, jobID, job.GetStatus()); err != nil {
+		return err
+	}
+	// Percent depends on startedAt too: a Job with no scope of its own
+	// (total 0) counts as complete the moment it starts.
+	return b.setPercent(ctx, b.keyJob+jobID, job.Percent())
 }
 
 // SetProgressDetails overwrites Job.progressDetails wholesale - the
@@ -583,6 +681,7 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 
 	partialJob.Errors = append(partialJob.Errors, message)
 	partialJob.UpdatedAt = nowMillis()
+	partialJob.BaseJob.Status = partialJob.GetStatus()
 
 	if retry && len(partialJob.Errors) <= maxRetries {
 		return b.PushPartialJob(partialJob, true)
@@ -625,6 +724,10 @@ func (b *RedisBackend) GetJobs() ([]*model.Job, error) {
 
 func (b *RedisBackend) GetJob(id string) (*model.Job, error) {
 	return b.getJob(context.Background(), id)
+}
+
+func (b *RedisBackend) GetPartialJob(id string) (*model.PartialJob, error) {
+	return b.getPartialJob(context.Background(), id)
 }
 
 func (b *RedisBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
@@ -691,6 +794,9 @@ func (b *RedisBackend) InitJob(jobID string, totalDelta int, updates []model.Pro
 	if err := b.jsonSet(ctx, key, "$.updatedAt", nowMillis()); err != nil {
 		return err
 	}
+	if err := b.refreshJobPercent(ctx, jobID); err != nil {
+		return err
+	}
 	return b.applyProgressUpdates(ctx, key, totalDelta, updates)
 }
 
@@ -702,6 +808,9 @@ func (b *RedisBackend) UpdateJob(jobID string, currentDelta int, updates []model
 		return err
 	}
 	if err := b.jsonSet(ctx, key, "$.updatedAt", nowMillis()); err != nil {
+		return err
+	}
+	if err := b.refreshJobPercent(ctx, jobID); err != nil {
 		return err
 	}
 	return b.applyProgressUpdates(ctx, key, currentDelta, updates)
@@ -746,10 +855,18 @@ func (b *RedisBackend) UpdatePartialJob(partialJobID string, currentDelta int) e
 		return fmt.Errorf("partial job not found: %s", partialJobID)
 	}
 
+	// Unlike a Job, a taken PartialJob has exactly one writer (the executor
+	// that took it), so its percent can be derived from the copy read above
+	// plus this delta - no re-read needed to learn the resulting current.
+	partialJob.Update(currentDelta)
+
 	if err := b.jsonNumIncrBy(ctx, key, "$.progress.current", currentDelta); err != nil {
 		return err
 	}
-	if err := b.jsonSet(ctx, key, "$.updatedAt", nowMillis()); err != nil {
+	if err := b.jsonSet(ctx, key, "$.updatedAt", partialJob.UpdatedAt); err != nil {
+		return err
+	}
+	if err := b.setPercent(ctx, key, partialJob.Progress.Percent); err != nil {
 		return err
 	}
 

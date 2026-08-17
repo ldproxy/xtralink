@@ -27,8 +27,9 @@ import (
 type MemoryBackend struct {
 	mu sync.Mutex
 
-	partial map[string]*model.PartialJob
-	jobs    map[string]*model.Job
+	partial   map[string]*model.PartialJob
+	jobs      map[string]*model.Job
+	listeners map[string]JobListener
 
 	// queues[type][priority] holds partial job IDs waiting to run. Index 0
 	// is the oldest fresh push (LPush-equivalent: prepend), the last index
@@ -45,10 +46,11 @@ type MemoryBackend struct {
 
 func NewMemoryBackend() *MemoryBackend {
 	return &MemoryBackend{
-		partial: map[string]*model.PartialJob{},
-		jobs:    map[string]*model.Job{},
-		queues:  map[string]map[int][]string{},
-		taken:   map[string]bool{},
+		partial:   map[string]*model.PartialJob{},
+		jobs:      map[string]*model.Job{},
+		queues:    map[string]map[int][]string{},
+		taken:     map[string]bool{},
+		listeners: map[string]JobListener{},
 	}
 }
 
@@ -82,16 +84,25 @@ func clonePartialJob(p *model.PartialJob) *model.PartialJob {
 }
 
 func (b *MemoryBackend) PushJob(job *model.Job) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.pushJobLocked(job)
+	return b.PushJobListen(job, NoopJobListener{})
 }
 
-func (b *MemoryBackend) pushJobLocked(job *model.Job) error {
+func (b *MemoryBackend) PushJobListen(job *model.Job, onProgress JobListener) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pushJobLocked(job, onProgress)
+}
+
+func (b *MemoryBackend) pushJobLocked(job *model.Job, onProgress JobListener) error {
 	b.jobs[job.Id] = cloneJob(job)
+	b.listeners[job.Id] = onProgress
+
+	onProgress.OnProgress(*job)
+
 	if job.Setup != nil {
 		return b.pushPartialJobLocked(job.Setup, false)
 	}
+
 	return nil
 }
 
@@ -165,6 +176,8 @@ func (b *MemoryBackend) Take(partialJobType, executor string) (*model.PartialJob
 			partialJob.Executor = executor
 			partialJob.StartedAt = now
 			partialJob.UpdatedAt = now
+			partialJob.BaseJob.Status = partialJob.GetStatus()
+			partialJob.Progress.Percent = partialJob.Percent()
 
 			return clonePartialJob(partialJob), nil
 		}
@@ -231,6 +244,12 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *model.PartialJob) err
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.syncEmbeddedPartialJobLocked(job, "cleanup", partialJob)
+
+		listener := b.listeners[partialJob.PartOf]
+		if listener != nil {
+			listener.OnProgress(*job)
+		}
+
 		return b.pushFollowUpsLocked(job)
 	}
 
@@ -247,6 +266,7 @@ func (b *MemoryBackend) syncEmbeddedPartialJobLocked(job *model.Job, field strin
 	if done.FinishedAt <= 0 {
 		done.FinishedAt = done.UpdatedAt
 	}
+	done.BaseJob.Status = done.GetStatus()
 	switch field {
 	case "setup":
 		job.Setup = done
@@ -270,14 +290,25 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.syncEmbeddedPartialJobLocked(job, "cleanup", partialJob)
 		job.Errors = append(job.Errors, partialJob.Errors...)
+		job.BaseJob.Status = job.GetStatus()
+
+		listener := b.listeners[partialJob.PartOf]
+		if listener != nil {
+			listener.OnProgress(*job)
+		}
 		return nil
 	}
 
-	job.Progress.Current += (partialJob.Progress.Total - partialJob.Progress.Current)
+	job.Update(partialJob.Progress.Total - partialJob.Progress.Current)
 	job.Errors = append(job.Errors, partialJob.Errors...)
-	job.UpdatedAt = nowMillis()
+	job.BaseJob.Status = job.GetStatus()
 	if job.Sequence != nil {
 		b.advanceSequenceLocked(job)
+	}
+
+	listener := b.listeners[partialJob.PartOf]
+	if listener != nil {
+		listener.OnProgress(*job)
 	}
 
 	return b.finalizeIfDoneLocked(job)
@@ -308,9 +339,17 @@ func (b *MemoryBackend) finalizeIfDoneLocked(job *model.Job) error {
 	}
 
 	job.FinishedAt = nowMillis()
+	job.BaseJob.Status = job.GetStatus()
+
+	listener := b.listeners[job.Id]
+	if listener != nil {
+		listener.OnProgress(*job)
+	}
+
 	if job.Cleanup != nil {
 		return b.pushPartialJobLocked(job.Cleanup, false)
 	}
+
 	return b.pushFollowUpsLocked(job)
 }
 
@@ -320,11 +359,17 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) {
 	if job.FinishedAt <= 0 {
 		job.FinishedAt = nowMillis()
 	}
+	job.BaseJob.Status = job.GetStatus()
+
+	listener := b.listeners[job.Id]
+	if listener != nil {
+		listener.OnProgress(*job)
+	}
 }
 
 func (b *MemoryBackend) pushFollowUpsLocked(job *model.Job) error {
 	for _, followUp := range job.FollowUps {
-		if err := b.pushJobLocked(&followUp); err != nil {
+		if err := b.pushJobLocked(&followUp, NoopJobListener{}); err != nil {
 			return err
 		}
 	}
@@ -340,6 +385,16 @@ func (b *MemoryBackend) StartJob(jobID string) error {
 		return nil
 	}
 	job.StartedAt = nowMillis()
+	job.BaseJob.Status = job.GetStatus()
+	// Percent depends on startedAt too: a Job with no scope of its own
+	// (total 0) counts as complete the moment it starts.
+	job.Progress.Percent = job.Percent()
+
+	listener := b.listeners[jobID]
+	if listener != nil {
+		listener.OnProgress(*job)
+	}
+
 	return nil
 }
 
@@ -352,6 +407,11 @@ func (b *MemoryBackend) SetProgressDetails(jobID string, details map[string]any)
 		return nil
 	}
 	job.Progress.Details = details
+
+	listener := b.listeners[jobID]
+	if listener != nil {
+		listener.OnProgress(*job)
+	}
 
 	return nil
 }
@@ -387,6 +447,7 @@ func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 
 	partialJob.Errors = append(partialJob.Errors, message)
 	partialJob.UpdatedAt = nowMillis()
+	partialJob.BaseJob.Status = partialJob.GetStatus()
 
 	if retry && len(partialJob.Errors) <= maxRetries {
 		return b.pushPartialJobLocked(partialJob, true)
@@ -415,6 +476,12 @@ func (b *MemoryBackend) GetJob(id string) (*model.Job, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return cloneJob(b.jobs[id]), nil
+}
+
+func (b *MemoryBackend) GetPartialJob(id string) (*model.PartialJob, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return clonePartialJob(b.partial[id]), nil
 }
 
 func (b *MemoryBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
@@ -473,8 +540,7 @@ func (b *MemoryBackend) InitJob(jobID string, totalDelta int, updates []model.Pr
 	if job == nil {
 		return nil
 	}
-	job.Progress.Total += totalDelta
-	job.UpdatedAt = nowMillis()
+	job.Init(totalDelta)
 	return applyProgressUpdatesToJob(job, totalDelta, updates)
 }
 
@@ -486,12 +552,11 @@ func (b *MemoryBackend) UpdateJob(jobID string, currentDelta int, updates []mode
 	if job == nil {
 		return nil
 	}
-	job.Progress.Current += currentDelta
-	job.UpdatedAt = nowMillis()
+	job.Update(currentDelta)
 	return applyProgressUpdatesToJob(job, currentDelta, updates)
 }
 
-func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) error {
+func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) (err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -499,9 +564,7 @@ func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) 
 	if partialJob == nil {
 		return fmt.Errorf("partial job not found: %s", partialJobID)
 	}
-
-	partialJob.Progress.Current += currentDelta
-	partialJob.UpdatedAt = nowMillis()
+	partialJob.Update(currentDelta)
 
 	if partialJob.PartOf == "" {
 		return nil
@@ -511,14 +574,16 @@ func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) 
 	if job == nil {
 		return nil
 	}
-	job.Progress.Current += currentDelta
-	job.UpdatedAt = nowMillis()
+	job.Update(currentDelta)
 
-	if len(partialJob.ProgressUpdates) == 0 {
-		return nil
+	err = applyProgressUpdatesToJob(job, currentDelta, partialJob.ProgressUpdates)
+
+	listener := b.listeners[partialJob.PartOf]
+	if listener != nil {
+		listener.OnProgress(*job)
 	}
 
-	return applyProgressUpdatesToJob(job, currentDelta, partialJob.ProgressUpdates)
+	return err
 }
 
 // applyProgressUpdatesToJob is the in-memory equivalent of RedisBackend's

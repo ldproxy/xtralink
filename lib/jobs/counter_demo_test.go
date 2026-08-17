@@ -24,31 +24,27 @@ const counterDemoType = "demo-counter"
 // (so PartialJob.current and Job.current advance, but no progressDetails
 // path does) - a valid alternative to the declarative
 // PartialJob.ProgressUpdates mechanism tileSeedingSetupProcessor uses.
-type counterProcessor struct {
-	stepDuration time.Duration
+func counterProcessor(
+	stepDuration time.Duration,
 	// failAt, if > 0, makes the processor return a permanent error once it
 	// reaches this step, to also exercise onPartialJobPermanentlyFailed
 	// without any setup/cleanup/progressDetails involved.
-	failAt int
-}
+	failAt int) ProcessFunc {
+	return func(partialJob *model.PartialJob, job *model.Job, backend Backend) model.JobResult {
+		for i := 1; i <= partialJob.Progress.Total; i++ {
+			time.Sleep(stepDuration)
 
-func (counterProcessor) JobType() string { return counterDemoType }
-func (counterProcessor) Priority() int   { return 1000 }
+			if failAt > 0 && i == failAt {
+				return model.Error(fmt.Sprintf("simulated failure at step %d/%d", i, partialJob.Progress.Total))
+			}
 
-func (p counterProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
-	for i := 1; i <= partialJob.Progress.Total; i++ {
-		time.Sleep(p.stepDuration)
-
-		if p.failAt > 0 && i == p.failAt {
-			return Error(fmt.Sprintf("simulated failure at step %d/%d", i, partialJob.Progress.Total))
+			if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
+				return model.Error(fmt.Sprintf("step %d/%d: %v", i, partialJob.Progress.Total, err))
+			}
 		}
 
-		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
-			return Error(fmt.Sprintf("step %d/%d: %v", i, partialJob.Progress.Total, err))
-		}
+		return model.Success()
 	}
-
-	return Success()
 }
 
 // runCounterDemo pushes a Job with no Setup/Cleanup - just a single
@@ -76,7 +72,7 @@ func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.
 
 	r := NewRunner(b, "test")
 	r.PollInterval = 5 * time.Millisecond
-	r.Register(counterProcessor{stepDuration: stepDuration, failAt: failAt})
+	r.Register(&JobProcessor{Kind: counterDemoType, Priority: 1000, Process: counterProcessor(stepDuration, failAt)})
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -106,8 +102,8 @@ func runCounterDemo(t *testing.T, steps, failAt int, stepDuration, timeout time.
 func TestCounterDemo_CompletesAllSteps(t *testing.T) {
 	final := runCounterDemo(t, 5, 0, time.Millisecond, 2*time.Second)
 
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Errorf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Errorf("Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	if final.Progress.Current != 5 || final.Progress.Total != 5 {
 		t.Errorf("Current/Total = %d/%d, want 5/5", final.Progress.Current, final.Progress.Total)
@@ -117,8 +113,8 @@ func TestCounterDemo_CompletesAllSteps(t *testing.T) {
 func TestCounterDemo_PermanentFailureStopsJob(t *testing.T) {
 	final := runCounterDemo(t, 5, 3, time.Millisecond, 2*time.Second)
 
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed (errors=%v)", final.Status, final.Errors)
 	}
 	if final.Progress.Current != 5 || final.Progress.Total != 5 {
 		t.Errorf("Current/Total = %d/%d, want 5/5", final.Progress.Current, final.Progress.Total)

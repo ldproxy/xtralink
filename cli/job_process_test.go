@@ -168,8 +168,8 @@ jobDefinitions:
 	if final == nil {
 		t.Fatal("timed out waiting for the job to finish")
 	}
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Fatalf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Fatalf("Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	// Outputs is an opaque map the backend round-trips through JSON, so the
 	// OutputValue the job wrote comes back as a generic map.

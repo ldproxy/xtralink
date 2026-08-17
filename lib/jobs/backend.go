@@ -4,6 +4,14 @@ import (
 	"github.com/ldproxy/xtralink/model"
 )
 
+type JobListener interface {
+	OnProgress(job model.Job)
+}
+
+type NoopJobListener struct{}
+
+func (NoopJobListener) OnProgress(job model.Job) {}
+
 // Backend is the storage/orchestration contract for the job queue, analogous
 // to JobQueueBackend + JobQueueMin in xtraplatform-jobs. Unlike the Java
 // interface's polymorphic push(BaseJob), Go exposes explicit PushJob /
@@ -14,6 +22,7 @@ type Backend interface {
 	// PushJob stores a new Job and, if it declares a setup PartialJob,
 	// pushes that onto the queue.
 	PushJob(job *model.Job) error
+	PushJobListen(job *model.Job, onProgress JobListener) error
 	// PushPartialJob enqueues a PartialJob. If untake is true, the partial
 	// job is being re-queued after having been taken (e.g. a retry).
 	PushPartialJob(partialJob *model.PartialJob, untake bool) error
@@ -33,6 +42,7 @@ type Backend interface {
 
 	GetJobs() ([]*model.Job, error)
 	GetJob(id string) (*model.Job, error)
+	GetPartialJob(id string) (*model.PartialJob, error)
 	GetOpen(partialJobType string) ([]*model.PartialJob, error)
 	GetTaken() ([]*model.PartialJob, error)
 	GetFailed() ([]*model.PartialJob, error)

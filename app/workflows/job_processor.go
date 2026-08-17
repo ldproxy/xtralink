@@ -18,81 +18,67 @@ import (
 // WorkflowJobProcessor per JobDefinition - not one processor handling all
 // of them - so `job process <id>` can scale a single PartialJob type's
 // workers independently of the rest.
-type WorkflowJobProcessor struct {
-	AppCtx *app.AppContext
-	StepId string
-	Def    *app.JobDefinition
-}
-
-// NewWorkflowJobProcessor looks up stepId once at construction time (rather
-// than on every Process call) - Settings never change during a run, so
-// there is nothing to gain from re-resolving it each time.
-func NewWorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*WorkflowJobProcessor, error) {
+func WorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*jobs.JobProcessor, error) {
 	def, err := appCtx.Settings.GetJobDefinition(stepId)
 	if err != nil {
 		return nil, err
 	}
-	return &WorkflowJobProcessor{AppCtx: appCtx, StepId: stepId, Def: def}, nil
-}
+	return &jobs.JobProcessor{Kind: stepId, Priority: 1000, Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+		if job == nil {
+			// Can legitimately happen if the Job was deleted/expired while an
+			// orphaned PartialJob for it still lingered in the queue (s. the
+			// same guard in tileSeedingSetupProcessor) - fail this PartialJob
+			// instead of panicking on a nil dereference below.
+			return model.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
+		}
 
-func (p *WorkflowJobProcessor) JobType() string { return p.StepId }
-func (p *WorkflowJobProcessor) Priority() int   { return 1000 }
+		wf, err := appCtx.Settings.GetWorkflow(def.Workflow)
+		if err != nil {
+			return model.Error(err.Error())
+		}
 
-func (p *WorkflowJobProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) jobs.JobResult {
-	if job == nil {
-		// Can legitimately happen if the Job was deleted/expired while an
-		// orphaned PartialJob for it still lingered in the queue (s. the
-		// same guard in tileSeedingSetupProcessor) - fail this PartialJob
-		// instead of panicking on a nil dereference below.
-		return jobs.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
-	}
+		params, err := resolveParams(appCtx, def, wf, job)
+		if err != nil {
+			return model.Error(fmt.Sprintf("resolving parameters: %v", err))
+		}
 
-	wf, err := p.AppCtx.Settings.GetWorkflow(p.Def.Workflow)
-	if err != nil {
-		return jobs.Error(err.Error())
-	}
+		registry := NewRegistry(appCtx)
+		if err := Validate(appCtx, *wf, registry); err != nil {
+			return model.Error(fmt.Sprintf("workflow %q is invalid: %v", wf.Id, err))
+		}
 
-	params, err := p.resolveParams(wf, job)
-	if err != nil {
-		return jobs.Error(fmt.Sprintf("resolving parameters: %v", err))
-	}
+		vars := map[string]any{
+			"packages": packageVars(appCtx.Settings.Packages),
+			"params":   params,
+		}
+		leaves, err := workflows.RunWithResults(*wf, registry, vars)
+		if err != nil {
+			return model.Error(fmt.Sprintf("workflow %q failed: %v", wf.Id, err))
+		}
+		// A job-wrapped Workflow is expected to complete linearly - a step that
+		// forks (pkg:find_each and the like) would produce more than one
+		// result here, and there's no defined way to pick "the" one for the
+		// outputs mapping below, so treat it as a configuration error rather
+		// than silently guessing.
+		if len(leaves) != 1 {
+			return model.Error(fmt.Sprintf(
+				"workflow %q produced %d parallel results, expected exactly 1 - job-wrapped workflows must not fork", wf.Id, len(leaves)))
+		}
 
-	registry := NewRegistry(p.AppCtx)
-	if err := Validate(p.AppCtx, *wf, registry); err != nil {
-		return jobs.Error(fmt.Sprintf("workflow %q is invalid: %v", wf.Id, err))
-	}
+		if err := writeOutputs(backend, job.Id, leaves[0], def); err != nil {
+			return model.Error(fmt.Sprintf("writing outputs: %v", err))
+		}
 
-	vars := map[string]any{
-		"packages": packageVars(p.AppCtx.Settings.Packages),
-		"params":   params,
-	}
-	leaves, err := workflows.RunWithResults(*wf, registry, vars)
-	if err != nil {
-		return jobs.Error(fmt.Sprintf("workflow %q failed: %v", wf.Id, err))
-	}
-	// A job-wrapped Workflow is expected to complete linearly - a step that
-	// forks (pkg:find_each and the like) would produce more than one
-	// result here, and there's no defined way to pick "the" one for the
-	// outputs mapping below, so treat it as a configuration error rather
-	// than silently guessing.
-	if len(leaves) != 1 {
-		return jobs.Error(fmt.Sprintf(
-			"workflow %q produced %d parallel results, expected exactly 1 - job-wrapped workflows must not fork", wf.Id, len(leaves)))
-	}
+		// This step has no progressDetails fan-out (no intermediate progress,
+		// s. concept) - it's atomic, either fully done or not, so it reports a
+		// single +1 once. UpdatePartialJob carries that through to the Job's
+		// own current as well, so there is nothing to report separately.
+		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
+			return model.Error(fmt.Sprintf("updating partial job progress: %v", err))
+		}
 
-	if err := p.writeOutputs(backend, job.Id, leaves[0]); err != nil {
-		return jobs.Error(fmt.Sprintf("writing outputs: %v", err))
-	}
-
-	// This step has no progressDetails fan-out (no intermediate progress,
-	// s. concept) - it's atomic, either fully done or not, so it reports a
-	// single +1 once. UpdatePartialJob carries that through to the Job's
-	// own current as well, so there is nothing to report separately.
-	if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
-		return jobs.Error(fmt.Sprintf("updating partial job progress: %v", err))
-	}
-
-	return jobs.Success()
+		return model.Success()
+	}}, nil
 }
 
 // resolveParams implements the two input-mapping modes from the concept:
@@ -100,14 +86,14 @@ func (p *WorkflowJobProcessor) Process(partialJob *model.PartialJob, job *model.
 // declared params by field name) or explicit (Def.Parameters present -
 // every param comes from there, templated, nothing auto-filled from
 // Inputs).
-func (p *WorkflowJobProcessor) resolveParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
-	if len(p.Def.Parameters) == 0 {
-		return p.resolveImplicitParams(wf, job)
+func resolveParams(appCtx *app.AppContext, def *app.JobDefinition, wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
+	if len(def.Parameters) == 0 {
+		return resolveImplicitParams(wf, job)
 	}
-	return p.resolveExplicitParams(wf, job)
+	return resolveExplicitParams(appCtx, def, wf, job)
 }
 
-func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
+func resolveImplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	return applyParamDefaults(wf, job.Inputs)
 }
 
@@ -117,12 +103,12 @@ func (p *WorkflowJobProcessor) resolveImplicitParams(wf *workflows.Workflow, job
 // earlier step of the same Job already wrote; there is no separate
 // "parent job" to look up, since all steps of a Job are PartialJobs of the
 // very same Job.
-func (p *WorkflowJobProcessor) resolveExplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
+func resolveExplicitParams(appCtx *app.AppContext, def *app.JobDefinition, wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	resolveVars := map[string]any{
-		"packages": packageVars(p.AppCtx.Settings.Packages),
+		"packages": packageVars(appCtx.Settings.Packages),
 		"parent":   map[string]any{"outputs": outputValues(job.Outputs)},
 	}
-	resolved, err := workflows.ResolveValue(map[string]any(p.Def.Parameters), resolveVars)
+	resolved, err := workflows.ResolveValue(map[string]any(def.Parameters), resolveVars)
 	if err != nil {
 		return nil, err
 	}
@@ -154,11 +140,11 @@ func applyParamDefaults(wf *workflows.Workflow, provided map[string]any) (map[st
 	return result, nil
 }
 
-func (p *WorkflowJobProcessor) writeOutputs(backend jobs.Backend, jobID string, leafVars map[string]any) error {
-	if len(p.Def.Outputs) == 0 {
+func writeOutputs(backend jobs.Backend, jobID string, leafVars map[string]any, def *app.JobDefinition) error {
+	if len(def.Outputs) == 0 {
 		return nil
 	}
-	resolved, err := workflows.ResolveValue(map[string]any(p.Def.Outputs), leafVars)
+	resolved, err := workflows.ResolveValue(map[string]any(def.Outputs), leafVars)
 	if err != nil {
 		return err
 	}

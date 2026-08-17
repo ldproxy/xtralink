@@ -3,21 +3,18 @@
 package model
 
 type JobResult struct {
-  Message string `json:"message"`
-  Status Status `json:"status"`
-  Errors []string `json:"errors"`
+  Status Result `json:"status"`
+  Messages []string `json:"messages"`
 }
 
 func NewJobResult(
-  message string,
-  status Status,
-  errors []string,
+  status Result,
+  messages []string,
 ) *JobResult {
 
   return &JobResult{
-    Message: message,
     Status: status,
-    Errors: errors,
+    Messages: messages,
   }
 }
   

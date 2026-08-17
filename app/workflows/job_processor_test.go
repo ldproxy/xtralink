@@ -108,11 +108,11 @@ jobDefinitions:
 		t.Error("expected parallel=false to opt the Job into sequencing")
 	}
 
-	step1, err := NewWorkflowJobProcessor(appCtx, "nba-transformation")
+	step1, err := WorkflowJobProcessor(appCtx, "nba-transformation")
 	if err != nil {
 		t.Fatalf("NewWorkflowJobProcessor(nba-transformation): %v", err)
 	}
-	step2, err := NewWorkflowJobProcessor(appCtx, "nba-transaction-step")
+	step2, err := WorkflowJobProcessor(appCtx, "nba-transaction-step")
 	if err != nil {
 		t.Fatalf("NewWorkflowJobProcessor(nba-transaction-step): %v", err)
 	}
@@ -151,8 +151,8 @@ jobDefinitions:
 	if final == nil {
 		t.Fatal("timed out waiting for the job to finish")
 	}
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Fatalf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Fatalf("Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	if final.Progress.Current != 2 || final.Progress.Total != 2 {
 		t.Errorf("Current/Total = %d/%d, want 2/2 (one per step)", final.Progress.Current, final.Progress.Total)
@@ -226,7 +226,7 @@ jobDefinitions:
 		t.Fatalf("PushPartialJob: %v", err)
 	}
 
-	processor, err := NewWorkflowJobProcessor(appCtx, "step-a")
+	processor, err := WorkflowJobProcessor(appCtx, "step-a")
 	if err != nil {
 		t.Fatalf("NewWorkflowJobProcessor: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
 		Workflows:      []workflows.Workflow{{Id: "wf"}},
 		JobDefinitions: []app.JobDefinition{{Id: "step-a", Workflow: "wf"}},
 	}}
-	processor, err := NewWorkflowJobProcessor(appCtx, "step-a")
+	processor, err := WorkflowJobProcessor(appCtx, "step-a")
 	if err != nil {
 		t.Fatalf("NewWorkflowJobProcessor: %v", err)
 	}

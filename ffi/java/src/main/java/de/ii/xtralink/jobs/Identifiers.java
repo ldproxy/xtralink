@@ -7,4 +7,6 @@ public interface Identifiers {
 
   enum Status { ACCEPTED, RUNNING, SUCCESSFUL, FAILED, DISMISSED };
   enum ProgressOperation { ADD, SUBTRACT };
+  enum Result { SUCCESS, FAILURE, RETRY, ONHOLD };
+  enum Queue { LOCAL, REDIS };
 }

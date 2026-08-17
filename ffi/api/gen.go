@@ -15,19 +15,22 @@ type JobListener interface {
 
 
 type JobProcessor interface {
-  Process(job model.Job) (model.JobResult, error)
+  Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error)
 }
 
 
 type JobQueue interface {
-  Create(jobType string) model.Job
-  Push(cfg model.Job, onProgress JobListener) model.Job
-  Get(id string) model.Job
-}
-
-
-type JobProcessors interface {
-  Register(jobType string, processor JobProcessor) bool
+  Start(cfg model.QueueConfiguration) error
+  Stop() 
+  Push(job model.JobConfiguration, onProgress JobListener) model.Job
+  PushPartial(partialJob model.PartialJobConfiguration) model.PartialJob
+  RepushPartial(id string) model.PartialJob
+  Init(id string, progress model.InitProgress) 
+  UpdatePartial(id string, delta int32) 
+  Cancel(id string) bool
+  Get(id string) (model.Job, bool)
+  GetPartial(id string) (model.PartialJob, bool)
+  Register(jobType string, priority int32, processor JobProcessor) error
 }
 
       

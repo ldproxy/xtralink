@@ -9,6 +9,7 @@ import (
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/drivers"
+	"github.com/ldproxy/xtralink/lib/jobs"
 	"github.com/ldproxy/xtralink/lib/lock"
 	"github.com/ldproxy/xtralink/lib/workflows"
 	"github.com/ldproxy/xtralink/model"
@@ -22,6 +23,9 @@ type fakeBackend struct {
 
 func (f *fakeBackend) IsEnabled() bool { return true }
 func (f *fakeBackend) PushJob(job *model.Job) error {
+	return f.PushJobListen(job, jobs.NoopJobListener{})
+}
+func (f *fakeBackend) PushJobListen(job *model.Job, onProgress jobs.JobListener) error {
 	f.pushedJobs = append(f.pushedJobs, job)
 	return nil
 }
@@ -33,6 +37,7 @@ func (f *fakeBackend) Done(partialJobID string) error                       { re
 func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
 func (f *fakeBackend) GetJobs() ([]*model.Job, error)                       { return nil, nil }
 func (f *fakeBackend) GetJob(id string) (*model.Job, error)                 { return nil, nil }
+func (f *fakeBackend) GetPartialJob(id string) (*model.PartialJob, error) { return nil, nil }
 func (f *fakeBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
 	return nil, nil
 }

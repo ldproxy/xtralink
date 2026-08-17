@@ -578,8 +578,8 @@ func TestRedisBackend_OnPartialJobPermanentlyFailed_SettlesRemainderAndFinalizes
 	if final.Progress.Current != 8 {
 		t.Errorf("Current = %d, want 8", final.Progress.Current)
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed", final.Status)
 	}
 }
 
@@ -610,8 +610,8 @@ func TestRedisBackend_OnPartialJobPermanentlyFailed_SetupForcesJobFailed(t *test
 	if final.FinishedAt <= 0 {
 		t.Fatal("expected Job to be forced to a finished state when setup fails permanently")
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed", final.Status)
 	}
 	found := false
 	for _, e := range final.Errors {
@@ -789,8 +789,8 @@ func TestRedisBackend_RetriedThenSucceededPartialJobDoesNotFailJob(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Errorf("Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Errorf("Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	if len(final.Errors) != 0 {
 		t.Errorf("expected no errors on the Job from a partial job that ultimately succeeded, got %v", final.Errors)
@@ -947,4 +947,35 @@ func TestRedisBackend_JobWithoutSequenceIgnoresSequenceGating(t *testing.T) {
 	if err != nil || taken == nil || taken.Id != late.Id {
 		t.Fatalf("expected a Job without Sequence to ignore Sequence gating entirely, got %v, %+v", err, taken)
 	}
+}
+
+// TestRedisBackend_PercentIsStoredAndKeptUpToDate covers the stored
+// progress.percent, which Redis cannot derive on read: progress moves via
+// atomic JSON.NUMINCRBY, so percent has to be recomputed and written back
+// after each of those.
+func TestRedisBackend_PercentIsStoredAndKeptUpToDate(t *testing.T) {
+	b := requireRedis(t)
+	jobType := uniqueType("percent")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, b, job.Id)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+
+	worker := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	worker.Progress.Total = 4
+	cleanupPartialJob(t, b, worker.Id)
+	if err := b.PushPartialJob(worker, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	assertStoredPercent(t, b, job.Id, worker.Kind)
+
+	standalone := NewJob(uuid.NewString(), jobType+":standalone", 1000, "", nil)
+	cleanupJob(t, b, standalone.Id)
+	if err := b.PushJob(standalone); err != nil {
+		t.Fatalf("PushJob(standalone): %v", err)
+	}
+	assertStoredPercentWithoutPartialJobs(t, b, standalone.Id)
 }

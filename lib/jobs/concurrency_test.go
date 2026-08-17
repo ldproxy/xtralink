@@ -195,20 +195,20 @@ func TestManyProcessorsUpdatingSameJobSetConcurrently(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.Concurrency = 8 // many "processors" running in parallel
 	r.PollInterval = 10 * time.Millisecond
-	r.Register(&funcProcessor{jobType: jobType + ":worker", priority: 1000, process: func(p *model.PartialJob, _ *model.Job, backend Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType + ":worker", Priority: 1000, Process: func(p *model.PartialJob, _ *model.Job, backend Backend) model.JobResult {
 		time.Sleep(5 * time.Millisecond) // simulate a bit of real work
 		if err := backend.UpdatePartialJob(p.Id, 1); err != nil {
-			return Error(err.Error())
+			return model.Error(err.Error())
 		}
 		atomic.AddInt32(&completed, 1)
-		return Success()
+		return model.Success()
 	}})
-	r.Register(&funcProcessor{jobType: jobType + ":cleanup", priority: 1000, process: func(_ *model.PartialJob, job *model.Job, backend Backend) JobResult {
+	r.Register(&JobProcessor{Kind: jobType + ":cleanup", Priority: 1000, Process: func(_ *model.PartialJob, job *model.Job, backend Backend) model.JobResult {
 		if err := backend.SetOutput(job.Id, "countersSnapshot", model.OutputValue{Value: job.Progress.Details}); err != nil {
-			return Error(err.Error())
+			return model.Error(err.Error())
 		}
 		atomic.AddInt32(&cleaned, 1)
-		return Success()
+		return model.Success()
 	}})
 
 	runRunnerUntil(t, r, 15*time.Second, func() bool { return atomic.LoadInt32(&cleaned) > 0 })
@@ -355,8 +355,8 @@ func TestConcurrentMixedOutcomesKeepTotalConsistent(t *testing.T) {
 	if final.Progress.Total != final.Progress.Current {
 		t.Errorf("Total (%d) and Current (%d) should match exactly once every job is accounted for", final.Progress.Total, final.Progress.Current)
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed (some jobs failed)", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed (some jobs failed)", final.Status)
 	}
 }
 
@@ -434,8 +434,8 @@ func TestConcurrentPermanentFailuresKeepAllErrors(t *testing.T) {
 	if final.Progress.Current != numJobs {
 		t.Errorf("Current = %d, want %d (every job's unfinished share settled)", final.Progress.Current, numJobs)
 	}
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed", final.Status())
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed", final.Status)
 	}
 	if len(final.Errors) != numJobs {
 		t.Fatalf("len(Errors) = %d, want %d - a concurrent error message was lost", len(final.Errors), numJobs)

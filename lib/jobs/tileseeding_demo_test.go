@@ -23,9 +23,10 @@ import (
 // to ship in the binary.
 
 const (
-	tileSeedingType       = "tile-seeding"
-	tileSeedingSetupType  = "tile-seeding:setup"
-	tileSeedingVectorType = "tile-seeding:vector:mvt"
+	tileSeedingType        = "tile-seeding"
+	tileSeedingSetupType   = "tile-seeding:setup"
+	tileSeedingCleanupType = "tile-seeding:cleanup"
+	tileSeedingVectorType  = "tile-seeding:vector:mvt"
 
 	tileSeedingTMS    = "demo"
 	tileSeedingLevels = 10
@@ -104,53 +105,35 @@ func decodeDetails(details map[string]any, target any) error {
 // tileSeedingSetupProcessor mirrors TileSeedingJobCreator.java: it handles
 // both the setup and cleanup phase, distinguished by the isCleanup flag in
 // PartialJob.details.
-type tileSeedingSetupProcessor struct{}
-
-func (tileSeedingSetupProcessor) JobType() string { return tileSeedingSetupType }
-func (tileSeedingSetupProcessor) Priority() int   { return 1001 }
-
-func (p tileSeedingSetupProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
+func tileSeedingSetupProcessor(partialJob *model.PartialJob, job *model.Job, backend Backend) model.JobResult {
 	if job == nil {
-		return Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
+		return model.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
 	}
 
-	if partialJob.Context == nil {
-		return Error(fmt.Sprintf("invalid setup partial job details: nil context"))
+	if partialJob.Kind == tileSeedingCleanupType {
+		return tileSeedingSetupCleanup(job, backend)
 	}
-
-	if _, ok := partialJob.Context["isCleanup"]; !ok {
-		return Error(fmt.Sprintf("invalid setup partial job details: missing isCleanup flag"))
-	}
-
-	var details tileSeedingSetupDetails
-	if err := decodeDetails(partialJob.Context, &details); err != nil {
-		return Error(fmt.Sprintf("invalid setup partial job details: %v", err))
-	}
-
-	if details.IsCleanup {
-		return p.cleanup(job, backend)
-	}
-	return p.setup(job, backend)
+	return tileSeedingSetupSetup(job, backend)
 }
 
 // setup splits inputs.tileSets into a couple of fake sub-matrices per
 // tileset (tileSeedingFakeLevels), initializes progressDetails once
 // (type-specific), and pushes one PartialJob per (tileset, level) with the
 // declarative progress-update descriptor attached.
-func (p tileSeedingSetupProcessor) setup(job *model.Job, backend Backend) JobResult {
+func tileSeedingSetupSetup(job *model.Job, backend Backend) model.JobResult {
 	if job.Inputs == nil {
-		return Error(fmt.Sprintf("invalid inputs: nil inputs"))
+		return model.Error(fmt.Sprintf("invalid inputs: nil inputs"))
 	}
 
 	var inputs tileSeedingInputs
 	if err := decodeDetails(job.Inputs, &inputs); err != nil {
-		return Error(fmt.Sprintf("invalid inputs: %v", err))
+		return model.Error(fmt.Sprintf("invalid inputs: %v", err))
 	}
 	if inputs.TileProvider == "" {
-		return Error(fmt.Sprintf("invalid inputs: missing tileProvider"))
+		return model.Error(fmt.Sprintf("invalid inputs: missing tileProvider"))
 	}
 	if len(inputs.TileSets) == 0 {
-		return Error("no tileSets to seed")
+		return model.Error("no tileSets to seed")
 	}
 
 	progress := tileSeedingProgress{TileSets: map[string]tileSeedingTilesetProgress{}}
@@ -168,14 +151,14 @@ func (p tileSeedingSetupProcessor) setup(job *model.Job, backend Backend) JobRes
 	}
 	progressDetailsRaw, err := json.Marshal(progress)
 	if err != nil {
-		return Error(fmt.Sprintf("could not encode progress details: %v", err))
+		return model.Error(fmt.Sprintf("could not encode progress details: %v", err))
 	}
 	progressDetailsMap := map[string]any{}
 	if err := json.Unmarshal(progressDetailsRaw, &progressDetailsMap); err != nil {
-		return Error(fmt.Sprintf("could not decode progress details: %v", err))
+		return model.Error(fmt.Sprintf("could not decode progress details: %v", err))
 	}
 	if err := backend.SetProgressDetails(job.Id, progressDetailsMap); err != nil {
-		return Error(fmt.Sprintf("could not init progress details: %v", err))
+		return model.Error(fmt.Sprintf("could not init progress details: %v", err))
 	}
 
 	for _, tileSet := range inputs.TileSets {
@@ -188,38 +171,38 @@ func (p tileSeedingSetupProcessor) setup(job *model.Job, backend Backend) JobRes
 			}
 			detailsRaw, err := json.Marshal(tileSeedingWorkerDetails{TileSet: tileSet, Level: fl.Level})
 			if err != nil {
-				return Error(fmt.Sprintf("could not encode worker details: %v", err))
+				return model.Error(fmt.Sprintf("could not encode worker details: %v", err))
 			}
 			detailsMap := map[string]any{}
 			if err := json.Unmarshal(detailsRaw, &detailsMap); err != nil {
-				return Error(fmt.Sprintf("could not decode worker details: %v", err))
+				return model.Error(fmt.Sprintf("could not decode worker details: %v", err))
 			}
 			worker.Context = detailsMap
 
 			if err := backend.InitJob(job.Id, fl.Tiles, nil); err != nil {
-				return Error(fmt.Sprintf("could not grow job total: %v", err))
+				return model.Error(fmt.Sprintf("could not grow job total: %v", err))
 			}
 			if err := backend.PushPartialJob(worker, false); err != nil {
-				return Error(fmt.Sprintf("could not push worker partial job: %v", err))
+				return model.Error(fmt.Sprintf("could not push worker partial job: %v", err))
 			}
 		}
 	}
 
-	return Success()
+	return model.Success()
 }
 
 // cleanup writes the seeding report output; it does not itself decide
 // whether the Job succeeded/failed - that (finishedAt/status) is already
 // settled by the backend once the last PartialJob finished.
-func (p tileSeedingSetupProcessor) cleanup(job *model.Job, backend Backend) JobResult {
+func tileSeedingSetupCleanup(job *model.Job, backend Backend) model.JobResult {
 	current, err := backend.GetJob(job.Id)
 	if err != nil || current == nil {
-		return Error(fmt.Sprintf("could not reload job for cleanup: %v", err))
+		return model.Error(fmt.Sprintf("could not reload job for cleanup: %v", err))
 	}
 
 	var inputs tileSeedingInputs
 	if err := decodeDetails(current.Inputs, &inputs); err != nil {
-		return Error(fmt.Sprintf("invalid inputs: %v", err))
+		return model.Error(fmt.Sprintf("invalid inputs: %v", err))
 	}
 
 	duration := time.Duration(current.UpdatedAt-current.StartedAt) * time.Millisecond
@@ -231,10 +214,10 @@ func (p tileSeedingSetupProcessor) cleanup(job *model.Job, backend Backend) JobR
 	}
 
 	if err := backend.SetOutput(job.Id, "seedingReport", model.OutputValue{Value: report}); err != nil {
-		return Error(fmt.Sprintf("could not write output: %v", err))
+		return model.Error(fmt.Sprintf("could not write output: %v", err))
 	}
 
-	return Success()
+	return model.Success()
 }
 
 // tileSeedingVectorWorkerProcessor mirrors VectorSeedingJobProcessor.java,
@@ -242,38 +225,31 @@ func (p tileSeedingSetupProcessor) cleanup(job *model.Job, backend Backend) JobR
 // reports progress with a single UpdatePartialJob(partialJob.ID, 1) call
 // per tile - the fan-out to Job.progressDetails happens generically via
 // partialJob.UpdateTargets.
-type tileSeedingVectorWorkerProcessor struct {
-	tileDuration time.Duration
-}
-
-func (tileSeedingVectorWorkerProcessor) JobType() string { return tileSeedingVectorType }
-func (tileSeedingVectorWorkerProcessor) Priority() int   { return 1000 }
-
-func (p tileSeedingVectorWorkerProcessor) Process(partialJob *model.PartialJob, job *model.Job, backend Backend) JobResult {
-	var details tileSeedingWorkerDetails
-	if err := decodeDetails(partialJob.Context, &details); err != nil {
-		return Error(fmt.Sprintf("invalid worker partial job details: %v", err))
-	}
-
-	// One UpdatePartialJob per "rendered" tile - that single call is what
-	// also advances the parent Job's progress and fans out to its
-	// progressDetails, so there is deliberately no extra UpdateJob here.
-	tiles := tileSeedingTilesForLevel(details.Level)
-	for tile := 1; tile <= tiles; tile++ {
-		time.Sleep(p.tileDuration)
-
-		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
-			return Error(fmt.Sprintf(
-				"tile %d/%d (%s, level %d): %v", tile, tiles, details.TileSet, details.Level, err))
+func tileSeedingVectorWorkerProcessor(tileDuration time.Duration) ProcessFunc {
+	return func(partialJob *model.PartialJob, job *model.Job, backend Backend) model.JobResult {
+		var details tileSeedingWorkerDetails
+		if err := decodeDetails(partialJob.Context, &details); err != nil {
+			return model.Error(fmt.Sprintf("invalid worker partial job details: %v", err))
 		}
-	}
 
-	return Success()
+		// One UpdatePartialJob per "rendered" tile - that single call is what
+		// also advances the parent Job's progress and fans out to its
+		// progressDetails, so there is deliberately no extra UpdateJob here.
+		tiles := tileSeedingTilesForLevel(details.Level)
+		for tile := 1; tile <= tiles; tile++ {
+			time.Sleep(tileDuration)
+
+			if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
+				return model.Error(fmt.Sprintf(
+					"tile %d/%d (%s, level %d): %v", tile, tiles, details.TileSet, details.Level, err))
+			}
+		}
+
+		return model.Success()
+	}
 }
 
 func newTileSeedingJob(label, tileProvider string, tileSets []string) *model.Job {
-	setupDetails := map[string]any{"isCleanup": false}
-	cleanupDetails := map[string]any{"isCleanup": true}
 	inputs := map[string]any{
 		"tileProvider": tileProvider,
 		"tileSets":     tileSets,
@@ -281,9 +257,7 @@ func newTileSeedingJob(label, tileProvider string, tileSets []string) *model.Job
 
 	job := NewJob(uuid.NewString(), tileSeedingType, 1000, label, inputs)
 	job.Setup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.Id)
-	job.Setup.Context = setupDetails
-	job.Cleanup = NewPartialJob(uuid.NewString(), tileSeedingSetupType, job.Priority, job.Id)
-	job.Cleanup.Context = cleanupDetails
+	job.Cleanup = NewPartialJob(uuid.NewString(), tileSeedingCleanupType, job.Priority, job.Id)
 	return job
 }
 
@@ -335,8 +309,9 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 	r := NewRunner(b, "test")
 	r.PollInterval = 5 * time.Millisecond
 	r.OnError = func(err error) { runnerErrs = append(runnerErrs, err) }
-	r.Register(tileSeedingSetupProcessor{})
-	r.Register(tileSeedingVectorWorkerProcessor{tileDuration: 2 * time.Millisecond})
+	r.Register(&JobProcessor{Kind: tileSeedingSetupType, Priority: 1001, Process: tileSeedingSetupProcessor})
+	r.Register(&JobProcessor{Kind: tileSeedingCleanupType, Priority: 1001, Process: tileSeedingSetupProcessor})
+	r.Register(&JobProcessor{Kind: tileSeedingVectorType, Priority: 1000, Process: tileSeedingVectorWorkerProcessor(2 * time.Millisecond)})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -344,8 +319,8 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 	go func() { runnerDone <- r.Run(ctx) }()
 
 	final := waitForTileSeedingCompletion(t, b, main.Id, 5*time.Second)
-	if final.Status() != model.StatusSUCCESSFUL {
-		t.Fatalf("main job Status() = %s, want successful (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusSUCCESSFUL {
+		t.Fatalf("main job Status = %s, want successful (errors=%v)", final.Status, final.Errors)
 	}
 	// Outputs is an opaque map that the backend round-trips through JSON,
 	// so the stored OutputValue comes back as generic JSON, not as a
@@ -378,8 +353,8 @@ func TestTileSeedingDemo_FullLifecycleWithFollowUp(t *testing.T) {
 	}
 
 	followUpFinal := waitForTileSeedingCompletion(t, b, followUp.Id, 5*time.Second)
-	if followUpFinal.Status() != model.StatusSUCCESSFUL {
-		t.Errorf("follow-up job Status() = %s, want successful (errors=%v)", followUpFinal.Status(), followUpFinal.Errors)
+	if followUpFinal.Status != model.StatusSUCCESSFUL {
+		t.Errorf("follow-up job Status = %s, want successful (errors=%v)", followUpFinal.Status, followUpFinal.Errors)
 	}
 
 	cancel()
@@ -403,8 +378,9 @@ func TestTileSeedingDemo_EmptyTileSetsFailsSetup(t *testing.T) {
 
 	r := NewRunner(b, "test")
 	r.PollInterval = 5 * time.Millisecond
-	r.Register(tileSeedingSetupProcessor{})
-	r.Register(tileSeedingVectorWorkerProcessor{tileDuration: 2 * time.Millisecond})
+	r.Register(&JobProcessor{Kind: tileSeedingSetupType, Priority: 1001, Process: tileSeedingSetupProcessor})
+	r.Register(&JobProcessor{Kind: tileSeedingCleanupType, Priority: 1001, Process: tileSeedingSetupProcessor})
+	r.Register(&JobProcessor{Kind: tileSeedingVectorType, Priority: 1000, Process: tileSeedingVectorWorkerProcessor(2 * time.Millisecond)})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -415,8 +391,8 @@ func TestTileSeedingDemo_EmptyTileSetsFailsSetup(t *testing.T) {
 	cancel()
 	<-runnerDone
 
-	if final.Status() != model.StatusFAILED {
-		t.Errorf("Status() = %s, want failed (errors=%v)", final.Status(), final.Errors)
+	if final.Status != model.StatusFAILED {
+		t.Errorf("Status = %s, want failed (errors=%v)", final.Status, final.Errors)
 	}
 	found := false
 	for _, e := range final.Errors {

@@ -30,7 +30,7 @@ func (c *JobPushCmd) Run(appCtx *app.AppContext) error {
 		return err
 	}
 
-	fmt.Printf("%s\t%s\n", job.Id, job.Status())
+	fmt.Printf("%s\t%s\n", job.Id, job.Status)
 	return nil
 }
 
