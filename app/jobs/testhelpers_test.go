@@ -60,6 +60,9 @@ func (f *fakeBackend) StartJob(jobID string) error { return nil }
 func (f *fakeBackend) SetProgressDetails(jobID string, details map[string]any) error { return nil }
 
 func (f *fakeBackend) SetOutput(jobID, key string, value model.OutputValue) error { return nil }
+func (f *fakeBackend) SetOutputs(jobID string, outputs map[string]any) error {
+	return nil
+}
 
 func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []model.ProgressUpdate) error {
 	return nil

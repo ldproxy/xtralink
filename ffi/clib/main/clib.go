@@ -614,21 +614,44 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
 		jobQueue.Stop()
 	}
 
-//export JobQueue_Push_Start
-	func JobQueue_Push_Start(job *C.char, job_length C.size_t, onProgress int64) int64 {
+//export JobQueue_Push
+	func JobQueue_Push(job *C.char, job_length C.size_t, onProgress int64, clen *C.size_t) *C.char {
 		job_value, job_err := model.UnmarshalJobConfiguration(C.GoBytes(unsafe.Pointer(job), C.int(job_length)))
   if job_err != nil { panic(fmt.Sprintf("job: %v", job_err)) }
-  fut, future := newFuture()
-  go func(recv api.JobQueue, job model.JobConfiguration, onProgress api.JobListener) {
-    result := recv.Push(job, onProgress)
+  result := model.MarshalJob(jobQueue.Push(job_value, &cbJobListener{id: onProgress}))
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
+//export JobQueue_PushPartial
+	func JobQueue_PushPartial(partialJob *C.char, partialJob_length C.size_t, clen *C.size_t) *C.char {
+		partialJob_value, partialJob_err := model.UnmarshalPartialJobConfiguration(C.GoBytes(unsafe.Pointer(partialJob), C.int(partialJob_length)))
+  if partialJob_err != nil { panic(fmt.Sprintf("partialJob: %v", partialJob_err)) }
+  result := model.MarshalPartialJob(jobQueue.PushPartial(partialJob_value))
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
+//export JobQueue_RepushPartial
+	func JobQueue_RepushPartial(id *C.char, clen *C.size_t) *C.char {
+		result := model.MarshalPartialJob(jobQueue.RepushPartial(C.GoString(id)))
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
+//export JobQueue_WaitFor_Start
+	func JobQueue_WaitFor_Start(id *C.char) int64 {
+		fut, future := newFuture()
+  go func(recv api.JobQueue, id string) {
+    result := recv.WaitFor(id)
     fut.result = result
     readyFuture(fut)
-  }(jobQueue, job_value, &cbJobListener{id: onProgress})
+  }(jobQueue, C.GoString(id))
   return future
 	}
 
-//export JobQueue_Push_Await
-	func JobQueue_Push_Await(future int64, clen *C.size_t) *C.char {
+//export JobQueue_WaitFor_Await
+	func JobQueue_WaitFor_Await(future int64, clen *C.size_t) *C.char {
 		fut := takeFuture(future)
   result, _ := fut.result.(model.Job)
   result_json := model.MarshalJob(result)
@@ -636,41 +659,19 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
   return (*C.char)(C.CBytes(result_json))
 	}
 
-//export JobQueue_PushPartial_Start
-	func JobQueue_PushPartial_Start(partialJob *C.char, partialJob_length C.size_t) int64 {
-		partialJob_value, partialJob_err := model.UnmarshalPartialJobConfiguration(C.GoBytes(unsafe.Pointer(partialJob), C.int(partialJob_length)))
-  if partialJob_err != nil { panic(fmt.Sprintf("partialJob: %v", partialJob_err)) }
-  fut, future := newFuture()
-  go func(recv api.JobQueue, partialJob model.PartialJobConfiguration) {
-    result := recv.PushPartial(partialJob)
-    fut.result = result
-    readyFuture(fut)
-  }(jobQueue, partialJob_value)
-  return future
-	}
-
-//export JobQueue_PushPartial_Await
-	func JobQueue_PushPartial_Await(future int64, clen *C.size_t) *C.char {
-		fut := takeFuture(future)
-  result, _ := fut.result.(model.PartialJob)
-  result_json := model.MarshalPartialJob(result)
-  *clen = C.size_t(len(result_json))
-  return (*C.char)(C.CBytes(result_json))
-	}
-
-//export JobQueue_RepushPartial_Start
-	func JobQueue_RepushPartial_Start(id *C.char) int64 {
+//export JobQueue_WaitForPartial_Start
+	func JobQueue_WaitForPartial_Start(id *C.char) int64 {
 		fut, future := newFuture()
   go func(recv api.JobQueue, id string) {
-    result := recv.RepushPartial(id)
+    result := recv.WaitForPartial(id)
     fut.result = result
     readyFuture(fut)
   }(jobQueue, C.GoString(id))
   return future
 	}
 
-//export JobQueue_RepushPartial_Await
-	func JobQueue_RepushPartial_Await(future int64, clen *C.size_t) *C.char {
+//export JobQueue_WaitForPartial_Await
+	func JobQueue_WaitForPartial_Await(future int64, clen *C.size_t) *C.char {
 		fut := takeFuture(future)
   result, _ := fut.result.(model.PartialJob)
   result_json := model.MarshalPartialJob(result)
@@ -688,6 +689,13 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
 //export JobQueue_UpdatePartial
 	func JobQueue_UpdatePartial(id *C.char, delta C.int)  {
 		jobQueue.UpdatePartial(C.GoString(id), int32(delta))
+	}
+
+//export JobQueue_Outputs
+	func JobQueue_Outputs(id *C.char, outputs *C.char, outputs_length C.size_t)  {
+		outputs_value, outputs_err := model.UnmarshalSetOutputs(C.GoBytes(unsafe.Pointer(outputs), C.int(outputs_length)))
+  if outputs_err != nil { panic(fmt.Sprintf("outputs: %v", outputs_err)) }
+  jobQueue.Outputs(C.GoString(id), outputs_value)
 	}
 
 //export JobQueue_Cancel

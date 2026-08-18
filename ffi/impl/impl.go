@@ -115,14 +115,7 @@ func (s *JobQueue) Push(cfg model.JobConfiguration, onProgress api.JobListener) 
 		return job
 	}
 
-	job2, _ := s.backend.GetJob(job.Id)
-	for job2 != nil && job2.FinishedAt <= 0 {
-		//fmt.Printf("JOBS: waiting for job %s to finish, current status: %v\n", job2.Id, job2.Status())
-		time.Sleep(1000 * time.Millisecond)
-		job2, _ = s.backend.GetJob(job.Id)
-	}
-
-	return *job2
+	return job
 }
 
 func (s *JobQueue) PushPartial(cfg model.PartialJobConfiguration) model.PartialJob {
@@ -152,11 +145,28 @@ func (s *JobQueue) pushPartial(job *model.PartialJob, untake bool) model.Partial
 		return *job
 	}
 
-	job2, _ := s.backend.GetPartialJob(job.Id)
+	return *job
+}
+
+func (s *JobQueue) WaitFor(id string) model.Job {
+	job, _ := s.backend.GetJob(id)
+
+	for job != nil && job.FinishedAt <= 0 {
+		//fmt.Printf("JOBS: waiting for job %s to finish, current status: %v\n", job2.Id, job2.Status())
+		time.Sleep(1000 * time.Millisecond)
+		job, _ = s.backend.GetJob(id)
+	}
+
+	return *job
+}
+
+func (s *JobQueue) WaitForPartial(id string) model.PartialJob {
+	job2, _ := s.backend.GetPartialJob(id)
+
 	for job2 != nil && job2.FinishedAt <= 0 {
 		//fmt.Printf("JOBS: waiting for partial job %s to finish, current status: %v\n", job2.Id, job2.Status)
 		time.Sleep(1000 * time.Millisecond)
-		job3, _ := s.backend.GetPartialJob(job.Id)
+		job3, _ := s.backend.GetPartialJob(id)
 		if job3 == nil {
 			break
 		}
@@ -173,6 +183,10 @@ func (s *JobQueue) Init(jobId string, progress model.InitProgress) {
 
 func (s *JobQueue) UpdatePartial(id string, delta int32) {
 	s.backend.UpdatePartialJob(id, int(delta))
+}
+
+func (s *JobQueue) Outputs(id string, outputs model.SetOutputs) {
+	s.backend.SetOutputs(id, outputs.Outputs)
 }
 
 func (s *JobQueue) Cancel(id string) bool {

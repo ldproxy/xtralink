@@ -657,6 +657,10 @@ func (b *RedisBackend) SetOutput(jobID, key string, value model.OutputValue) err
 	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.outputs."+key, value)
 }
 
+func (b *RedisBackend) SetOutputs(jobID string, outputs map[string]any) error {
+	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.outputs", outputs)
+}
+
 // Error mirrors the retry/fail semantics from AbstractJobQueueBackend.error();
 // the current xtraplatform-redis Java backend has this as an unfinished stub
 // (always returns false, no retry), which this reimplements properly.

@@ -59,6 +59,7 @@ type Backend interface {
 	// SetOutput writes a single Job.outputs entry - typically called once
 	// by a cleanup step to publish its result.
 	SetOutput(jobID, key string, value model.OutputValue) error
+	SetOutputs(jobID string, outputs map[string]any) error
 
 	// InitJob grows Job.total by totalDelta and applies the same delta to
 	// progressDetails via the declarative updates.

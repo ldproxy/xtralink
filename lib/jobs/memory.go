@@ -431,6 +431,21 @@ func (b *MemoryBackend) SetOutput(jobID, key string, value model.OutputValue) er
 	return nil
 }
 
+func (b *MemoryBackend) SetOutputs(jobID string, outputs map[string]any) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	job := b.jobs[jobID]
+	if job == nil {
+		return nil
+	}
+	if job.Outputs == nil {
+		job.Outputs = map[string]any{}
+	}
+	job.Outputs = outputs
+	return nil
+}
+
 func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

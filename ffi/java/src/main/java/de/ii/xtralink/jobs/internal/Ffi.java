@@ -591,29 +591,35 @@ final class Ffi {
   static final MethodHandle JobQueue_Stop$MH =
       downcall("JobQueue_Stop", FunctionDescriptor.ofVoid());
 
-  static final MethodHandle JobQueue_Push_Start$MH =
-      downcall("JobQueue_Push_Start", FunctionDescriptor.of(C_LONG_LONG, C_POINTER, C_SIZE_T, C_LONG_LONG));
+  static final MethodHandle JobQueue_Push$MH =
+      downcall("JobQueue_Push", FunctionDescriptor.of(C_POINTER, C_POINTER, C_SIZE_T, C_LONG_LONG, C_POINTER));
 
-  static final MethodHandle JobQueue_Push_Await$MH =
-      downcall("JobQueue_Push_Await", FunctionDescriptor.of(C_POINTER, C_LONG_LONG, C_POINTER));
+  static final MethodHandle JobQueue_PushPartial$MH =
+      downcall("JobQueue_PushPartial", FunctionDescriptor.of(C_POINTER, C_POINTER, C_SIZE_T, C_POINTER));
 
-  static final MethodHandle JobQueue_PushPartial_Start$MH =
-      downcall("JobQueue_PushPartial_Start", FunctionDescriptor.of(C_LONG_LONG, C_POINTER, C_SIZE_T));
+  static final MethodHandle JobQueue_RepushPartial$MH =
+      downcall("JobQueue_RepushPartial", FunctionDescriptor.of(C_POINTER, C_POINTER, C_POINTER));
 
-  static final MethodHandle JobQueue_PushPartial_Await$MH =
-      downcall("JobQueue_PushPartial_Await", FunctionDescriptor.of(C_POINTER, C_LONG_LONG, C_POINTER));
+  static final MethodHandle JobQueue_WaitFor_Start$MH =
+      downcall("JobQueue_WaitFor_Start", FunctionDescriptor.of(C_LONG_LONG, C_POINTER));
 
-  static final MethodHandle JobQueue_RepushPartial_Start$MH =
-      downcall("JobQueue_RepushPartial_Start", FunctionDescriptor.of(C_LONG_LONG, C_POINTER));
+  static final MethodHandle JobQueue_WaitFor_Await$MH =
+      downcall("JobQueue_WaitFor_Await", FunctionDescriptor.of(C_POINTER, C_LONG_LONG, C_POINTER));
 
-  static final MethodHandle JobQueue_RepushPartial_Await$MH =
-      downcall("JobQueue_RepushPartial_Await", FunctionDescriptor.of(C_POINTER, C_LONG_LONG, C_POINTER));
+  static final MethodHandle JobQueue_WaitForPartial_Start$MH =
+      downcall("JobQueue_WaitForPartial_Start", FunctionDescriptor.of(C_LONG_LONG, C_POINTER));
+
+  static final MethodHandle JobQueue_WaitForPartial_Await$MH =
+      downcall("JobQueue_WaitForPartial_Await", FunctionDescriptor.of(C_POINTER, C_LONG_LONG, C_POINTER));
 
   static final MethodHandle JobQueue_Init$MH =
       downcall("JobQueue_Init", FunctionDescriptor.ofVoid(C_POINTER, C_POINTER, C_SIZE_T));
 
   static final MethodHandle JobQueue_UpdatePartial$MH =
       downcall("JobQueue_UpdatePartial", FunctionDescriptor.ofVoid(C_POINTER, C_INT));
+
+  static final MethodHandle JobQueue_Outputs$MH =
+      downcall("JobQueue_Outputs", FunctionDescriptor.ofVoid(C_POINTER, C_POINTER, C_SIZE_T));
 
   static final MethodHandle JobQueue_Cancel$MH =
       downcall("JobQueue_Cancel", FunctionDescriptor.of(C_SHORT, C_POINTER));

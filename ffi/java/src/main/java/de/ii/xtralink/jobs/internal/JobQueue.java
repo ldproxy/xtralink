@@ -43,25 +43,11 @@ public final class JobQueue {
     }
   }
 
-  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.Job> push(de.ii.xtralink.jobs.JobConfiguration job, JobListener.Registration onProgress) {
-    final long future$;
-
-    try (Arena arena = Arena.ofConfined()) {
-      byte[] job$json = Ffi.json$write(job);
-      long ret$ = (long) Ffi.JobQueue_Push_Start$MH.invokeExact(Ffi.bytes(arena, job$json), job$json == null ? 0L : (long) job$json.length, onProgress.id());
-
-      future$ = ret$;
-    } catch (Throwable t) {
-      throw Ffi.rethrow(t);
-    }
-
-    return Ffi.pending$(future$, () -> await$push(future$));
-  }
-
-  private static de.ii.xtralink.jobs.Job await$push(long future$) {
+  public static de.ii.xtralink.jobs.Job push(de.ii.xtralink.jobs.JobConfiguration job, JobListener.Registration onProgress) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
-      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_Push_Await$MH.invokeExact(future$, clen$);
+      byte[] job$json = Ffi.json$write(job);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_Push$MH.invokeExact(Ffi.bytes(arena, job$json), job$json == null ? 0L : (long) job$json.length, onProgress.id(), clen$);
       long len$ = clen$.get(Ffi.C_SIZE_T, 0);
 
       de.ii.xtralink.jobs.Job out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.Job.class);
@@ -73,39 +59,11 @@ public final class JobQueue {
     }
   }
 
-  /**
-   * Registers {@code onProgress} and releases it again when
-   * the returned future completes.
-   *
-   * <p>Available because the method is declared {@code @scoped}, which asserts that it does
-   * not retain the listener beyond that point. Use the {@code Registration}
-   * overload for a listener that has to outlive it.
-   */
-  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.Job> push(de.ii.xtralink.jobs.JobConfiguration job, JobListener onProgress) {
-    JobListener.Registration onProgress$reg = JobListener.register(onProgress);
-
-    return push(job, onProgress$reg).whenComplete((result$, error$) -> { onProgress$reg.close(); });
-  }
-
-  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.PartialJob> pushPartial(de.ii.xtralink.jobs.PartialJobConfiguration partialJob) {
-    final long future$;
-
-    try (Arena arena = Arena.ofConfined()) {
-      byte[] partialJob$json = Ffi.json$write(partialJob);
-      long ret$ = (long) Ffi.JobQueue_PushPartial_Start$MH.invokeExact(Ffi.bytes(arena, partialJob$json), partialJob$json == null ? 0L : (long) partialJob$json.length);
-
-      future$ = ret$;
-    } catch (Throwable t) {
-      throw Ffi.rethrow(t);
-    }
-
-    return Ffi.pending$(future$, () -> await$pushPartial(future$));
-  }
-
-  private static de.ii.xtralink.jobs.PartialJob await$pushPartial(long future$) {
+  public static de.ii.xtralink.jobs.PartialJob pushPartial(de.ii.xtralink.jobs.PartialJobConfiguration partialJob) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
-      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_PushPartial_Await$MH.invokeExact(future$, clen$);
+      byte[] partialJob$json = Ffi.json$write(partialJob);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_PushPartial$MH.invokeExact(Ffi.bytes(arena, partialJob$json), partialJob$json == null ? 0L : (long) partialJob$json.length, clen$);
       long len$ = clen$.get(Ffi.C_SIZE_T, 0);
 
       de.ii.xtralink.jobs.PartialJob out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.PartialJob.class);
@@ -117,24 +75,68 @@ public final class JobQueue {
     }
   }
 
-  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.PartialJob> repushPartial(String id) {
+  public static de.ii.xtralink.jobs.PartialJob repushPartial(String id) {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_RepushPartial$MH.invokeExact(Ffi.str(arena, id), clen$);
+      long len$ = clen$.get(Ffi.C_SIZE_T, 0);
+
+      de.ii.xtralink.jobs.PartialJob out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.PartialJob.class);
+      Ffi.freeBytes(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
+  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.Job> waitFor(String id) {
     final long future$;
 
     try (Arena arena = Arena.ofConfined()) {
-      long ret$ = (long) Ffi.JobQueue_RepushPartial_Start$MH.invokeExact(Ffi.str(arena, id));
+      long ret$ = (long) Ffi.JobQueue_WaitFor_Start$MH.invokeExact(Ffi.str(arena, id));
 
       future$ = ret$;
     } catch (Throwable t) {
       throw Ffi.rethrow(t);
     }
 
-    return Ffi.pending$(future$, () -> await$repushPartial(future$));
+    return Ffi.pending$(future$, () -> await$waitFor(future$));
   }
 
-  private static de.ii.xtralink.jobs.PartialJob await$repushPartial(long future$) {
+  private static de.ii.xtralink.jobs.Job await$waitFor(long future$) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
-      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_RepushPartial_Await$MH.invokeExact(future$, clen$);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_WaitFor_Await$MH.invokeExact(future$, clen$);
+      long len$ = clen$.get(Ffi.C_SIZE_T, 0);
+
+      de.ii.xtralink.jobs.Job out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.Job.class);
+      Ffi.freeBytes(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
+  public static java.util.concurrent.CompletableFuture<de.ii.xtralink.jobs.PartialJob> waitForPartial(String id) {
+    final long future$;
+
+    try (Arena arena = Arena.ofConfined()) {
+      long ret$ = (long) Ffi.JobQueue_WaitForPartial_Start$MH.invokeExact(Ffi.str(arena, id));
+
+      future$ = ret$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+
+    return Ffi.pending$(future$, () -> await$waitForPartial(future$));
+  }
+
+  private static de.ii.xtralink.jobs.PartialJob await$waitForPartial(long future$) {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_WaitForPartial_Await$MH.invokeExact(future$, clen$);
       long len$ = clen$.get(Ffi.C_SIZE_T, 0);
 
       de.ii.xtralink.jobs.PartialJob out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.PartialJob.class);
@@ -158,6 +160,15 @@ public final class JobQueue {
   public static void updatePartial(String id, int delta) {
     try (Arena arena = Arena.ofConfined()) {
       Ffi.JobQueue_UpdatePartial$MH.invokeExact(Ffi.str(arena, id), delta);
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
+  public static void outputs(String id, de.ii.xtralink.jobs.SetOutputs outputs) {
+    try (Arena arena = Arena.ofConfined()) {
+      byte[] outputs$json = Ffi.json$write(outputs);
+      Ffi.JobQueue_Outputs$MH.invokeExact(Ffi.str(arena, id), Ffi.bytes(arena, outputs$json), outputs$json == null ? 0L : (long) outputs$json.length);
     } catch (Throwable t) {
       throw Ffi.rethrow(t);
     }

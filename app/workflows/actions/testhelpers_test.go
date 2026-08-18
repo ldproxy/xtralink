@@ -36,7 +36,7 @@ func (f *fakeBackend) Done(partialJobID string) error                       { re
 func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
 func (f *fakeBackend) GetJobs() ([]*model.Job, error)                       { return nil, nil }
 func (f *fakeBackend) GetJob(id string) (*model.Job, error)                 { return nil, nil }
-func (f *fakeBackend) GetPartialJob(id string) (*model.PartialJob, error) { return nil, nil }
+func (f *fakeBackend) GetPartialJob(id string) (*model.PartialJob, error)   { return nil, nil }
 func (f *fakeBackend) GetOpen(partialJobType string) ([]*model.PartialJob, error) {
 	return nil, nil
 }
@@ -47,6 +47,9 @@ func (f *fakeBackend) SetProgressDetails(jobID string, details map[string]any) e
 	return nil
 }
 func (f *fakeBackend) SetOutput(jobID, key string, value model.OutputValue) error {
+	return nil
+}
+func (f *fakeBackend) SetOutputs(jobID string, outputs map[string]any) error {
 	return nil
 }
 func (f *fakeBackend) InitJob(jobID string, totalDelta int, updates []model.ProgressUpdate) error {

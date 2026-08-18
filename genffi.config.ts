@@ -76,6 +76,9 @@ export namespace GenModel {
       total: number;
       details: { [key: string]: any };
     };
+    export type SetOutputs = {
+      outputs: { [key: string]: any };
+    };
     export type JobSequence = {
       /** @TJS-type integer */
       current: number;
@@ -132,7 +135,7 @@ export namespace GenModel {
       label: string;
       description: string;
       inputs: { [key: string]: any };
-      outputs: { [key: string]: OutputValue };
+      outputs: { [key: string]: any };
       /** @optional */
       setup: PartialJob;
       /** @optional */
@@ -215,23 +218,26 @@ export namespace GenApi {
 
     stop: () => void;
 
-    /**
-     * @scoped
-     */
     push: (
       job: GenModel.Config.JobConfiguration,
       onProgress: JobListener,
-    ) => Promise<GenModel.Config.Job>;
+    ) => GenModel.Config.Job;
 
     pushPartial: (
       partialJob: GenModel.Config.PartialJobConfiguration,
-    ) => Promise<GenModel.Config.PartialJob>;
+    ) => GenModel.Config.PartialJob;
 
-    repushPartial: (id: string) => Promise<GenModel.Config.PartialJob>;
+    repushPartial: (id: string) => GenModel.Config.PartialJob;
+
+    waitFor: (id: string) => Promise<GenModel.Config.Job>;
+
+    waitForPartial: (id: string) => Promise<GenModel.Config.PartialJob>;
 
     init(id: string, progress: GenModel.Config.InitProgress): void;
 
     updatePartial(id: string, delta: int): void;
+
+    outputs(id: string, outputs: GenModel.Config.SetOutputs): void;
 
     cancel(id: string): boolean;
 

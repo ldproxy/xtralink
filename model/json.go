@@ -43,6 +43,24 @@ func MarshalInitProgress(value InitProgress) []byte {
 	return data
 }
 
+// UnmarshalSetOutputs decodes a SetOutputs from its JSON representation.
+func UnmarshalSetOutputs(data []byte) (SetOutputs, error) {
+	var value SetOutputs
+	err := json.Unmarshal(data, &value)
+	return value, err
+}
+
+// MarshalSetOutputs encodes a SetOutputs as JSON. It panics rather than returning an error:
+// every field of a generated type is JSON-representable by construction, so a failure
+// here is a bug in genffi and not a condition a caller can act on.
+func MarshalSetOutputs(value SetOutputs) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("marshaling SetOutputs: %v", err))
+	}
+	return data
+}
+
 // UnmarshalJobSequence decodes a JobSequence from its JSON representation.
 func UnmarshalJobSequence(data []byte) (JobSequence, error) {
 	var value JobSequence

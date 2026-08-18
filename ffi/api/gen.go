@@ -25,8 +25,11 @@ type JobQueue interface {
   Push(job model.JobConfiguration, onProgress JobListener) model.Job
   PushPartial(partialJob model.PartialJobConfiguration) model.PartialJob
   RepushPartial(id string) model.PartialJob
+  WaitFor(id string) model.Job
+  WaitForPartial(id string) model.PartialJob
   Init(id string, progress model.InitProgress) 
   UpdatePartial(id string, delta int32) 
+  Outputs(id string, outputs model.SetOutputs) 
   Cancel(id string) bool
   Get(id string) (model.Job, bool)
   GetPartial(id string) (model.PartialJob, bool)
