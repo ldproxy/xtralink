@@ -184,3 +184,118 @@ func TestSupportsSyncBack(t *testing.T) {
 		}
 	}
 }
+
+func TestMvFileAction_TargetPathDefaultsToTheSourcePath(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	bar := fsPackage(t, "bar", targetDir)
+	seedMirror(t, foo, map[string]string{"sub/a.zip": "a"})
+	seedMirror(t, bar, nil)
+	appCtx, _ := newTestAppContext(t, targetDir, foo, bar)
+
+	action := &MvFileAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"from": "foo", "to": "bar", "path": "sub/a.zip",
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertFileContent(t, filepath.Join(bar.ResolvedLocalPath, "sub", "a.zip"), "a")
+}
+
+func TestMvFileAction_TargetPathCanDifferFromTheSourcePath(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	bar := fsPackage(t, "bar", targetDir)
+	seedMirror(t, foo, map[string]string{"incoming/a.zip": "a"})
+	seedMirror(t, bar, nil)
+	appCtx, _ := newTestAppContext(t, targetDir, foo, bar)
+
+	action := &MvFileAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"from": "foo", "to": "bar",
+		"path":       "incoming/a.zip",
+		"targetPath": "archive/2026/renamed.zip",
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertFileMissing(t, filepath.Join(foo.ResolvedLocalPath, "incoming", "a.zip"))
+	assertFileContent(t, filepath.Join(bar.ResolvedLocalPath, "archive", "2026", "renamed.zip"), "a")
+}
+
+func TestMvFileAction_EmptyTargetPathIsError(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	bar := fsPackage(t, "bar", targetDir)
+	seedMirror(t, foo, map[string]string{"a.zip": "a"})
+	seedMirror(t, bar, nil)
+	appCtx, _ := newTestAppContext(t, targetDir, foo, bar)
+
+	action := &MvFileAction{AppCtx: appCtx}
+	for name, value := range map[string]any{"empty": "", "not a string": 42} {
+		t.Run(name, func(t *testing.T) {
+			_, err := action.Run(&workflows.StepContext{Params: map[string]any{
+				"from": "foo", "to": "bar", "path": "a.zip", "targetPath": value,
+			}})
+			if err == nil {
+				t.Fatal("expected an error for an unusable targetPath")
+			}
+			if !strings.Contains(err.Error(), "targetPath") {
+				t.Errorf("error %q should name the targetPath parameter", err.Error())
+			}
+		})
+	}
+}
+
+// A path climbing out of a package's mirror would write where the package
+// does not own anything, and where SyncBack would never look.
+func TestMvFileAction_PathsEscapingAMirrorAreRejected(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	bar := fsPackage(t, "bar", targetDir)
+	seedMirror(t, foo, map[string]string{"a.zip": "a"})
+	seedMirror(t, bar, nil)
+	appCtx, _ := newTestAppContext(t, targetDir, foo, bar)
+	action := &MvFileAction{AppCtx: appCtx}
+
+	cases := map[string]map[string]any{
+		"escaping path":       {"from": "foo", "to": "bar", "path": "../bar/a.zip"},
+		"escaping targetPath": {"from": "foo", "to": "bar", "path": "a.zip", "targetPath": "../../escaped.zip"},
+	}
+	for name, params := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := action.Run(&workflows.StepContext{Params: params})
+			if err == nil {
+				t.Fatal("expected an error for a path outside the mirror")
+			}
+			if !strings.Contains(err.Error(), "outside the local mirror") {
+				t.Errorf("error %q should say the path leaves the mirror", err.Error())
+			}
+		})
+	}
+
+	assertFileMissing(t, filepath.Join(targetDir, "escaped.zip"))
+	assertFileContent(t, filepath.Join(foo.ResolvedLocalPath, "a.zip"), "a")
+}
+
+func TestMvFileAction_PathStaysInsideAfterCleaning(t *testing.T) {
+	// A path that climbs out and back in is contained, so it is allowed.
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	bar := fsPackage(t, "bar", targetDir)
+	seedMirror(t, foo, map[string]string{"a.zip": "a"})
+	seedMirror(t, bar, nil)
+	appCtx, _ := newTestAppContext(t, targetDir, foo, bar)
+
+	action := &MvFileAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"from": "foo", "to": "bar",
+		"path":       "sub/../a.zip",
+		"targetPath": "archive/../a.zip",
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertFileContent(t, filepath.Join(bar.ResolvedLocalPath, "a.zip"), "a")
+}

@@ -67,7 +67,7 @@ func WorkflowJobProcessor(appCtx *app.AppContext, kind string) (*jobs.JobProcess
 				"workflow %q produced %d parallel results, expected exactly 1 - job-wrapped workflows must not fork", wf.Id, len(leaves)))
 		}
 
-		if err := writeOutputs(backend, job.Id, leaves[0], def); err != nil {
+		if err := writeOutputs(backend, job, leaves[0], def); err != nil {
 			return model.Error(fmt.Sprintf("writing outputs: %v", err))
 		}
 
@@ -101,15 +101,11 @@ func resolveImplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]a
 }
 
 // resolveExplicitParams resolves Def.Parameters as workflow-style
-// ${...} template expressions against packages/parent - parent.outputs is
-// the shared Job's own Outputs (s. PartialJob.PartOf), i.e. whatever an
-// earlier PartialJob of the same Job already wrote; there is no separate
-// "parent job" to look up, since every part of a Job is a PartialJob of the
-// very same Job.
+// ${...} template expressions against packages/parent (s. parentVars).
 func resolveExplicitParams(appCtx *app.AppContext, def *app.JobDefinition, wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	resolveVars := map[string]any{
 		"packages": packageVars(appCtx.Settings.Packages),
-		"parent":   map[string]any{"outputs": outputValues(job.Outputs)},
+		"parent":   parentVars(job),
 	}
 	resolved, err := workflows.ResolveValue(map[string]any(def.Parameters), resolveVars)
 	if err != nil {
@@ -143,17 +139,53 @@ func applyParamDefaults(wf *workflows.Workflow, provided map[string]any) (map[st
 	return result, nil
 }
 
-func writeOutputs(backend jobs.Backend, jobID string, leafVars map[string]any, def *app.JobDefinition) error {
+// parentVars exposes the Job a PartialJob belongs to (s.
+// PartialJob.PartOf) to both of a JobDefinition's template mappings. There
+// is no separate "parent job" to look up: every part of a Job is a
+// PartialJob of the very same Job, so parent is that Job.
+//
+//   - parent.id is the Job's id, the one thing a workflow cannot work out
+//     for itself and what it needs to name the Job it runs as.
+//   - parent.inputs are the Job's Inputs. An explicit mapping stops them
+//     being auto-filled by name (s. resolveParams), and this is how it
+//     picks out the ones it does want.
+//   - parent.outputs is the Job's Outputs, i.e. whatever an earlier
+//     PartialJob of it already wrote. Distinct from a workflow's own
+//     ${outputs.<step>}, which are the current run's step outputs.
+func parentVars(job *model.Job) map[string]any {
+	return map[string]any{
+		"id":      job.Id,
+		"inputs":  job.Inputs,
+		"outputs": outputValues(job.Outputs),
+	}
+}
+
+// writeOutputs resolves the JobDefinition's output mapping and writes the
+// result into the shared Job's Outputs.
+//
+// The mapping sees the finished run's own vars (packages, params, and the
+// step outputs under ${outputs.<step>}) plus the same ${parent...} the
+// input mapping had, so both mappings of one definition are written against
+// the same vocabulary. parent is layered on a copy: leafVars belongs to the
+// run that produced it, and this is not the place to alter it.
+func writeOutputs(backend jobs.Backend, job *model.Job, leafVars map[string]any, def *app.JobDefinition) error {
 	if len(def.Outputs) == 0 {
 		return nil
 	}
-	resolved, err := workflows.ResolveValue(map[string]any(def.Outputs), leafVars)
+
+	resolveVars := make(map[string]any, len(leafVars)+1)
+	for key, value := range leafVars {
+		resolveVars[key] = value
+	}
+	resolveVars["parent"] = parentVars(job)
+
+	resolved, err := workflows.ResolveValue(map[string]any(def.Outputs), resolveVars)
 	if err != nil {
 		return err
 	}
 	outputs, _ := resolved.(map[string]any)
 	for key, value := range outputs {
-		if err := backend.SetOutput(jobID, key, model.OutputValue{Value: value}); err != nil {
+		if err := backend.SetOutput(job.Id, key, model.OutputValue{Value: value}); err != nil {
 			return err
 		}
 	}

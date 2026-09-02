@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
 	"github.com/ldproxy/xtralink/app"
@@ -664,5 +665,111 @@ workflows:
 		Drivers:  drivers.NewFactory(),
 		Jobs:     &fakeBackend{},
 		Locks:    lock.NoopLocker{},
+	}
+}
+
+// uuid:gen has no parameters to validate and no references to check - what
+// matters is that it is registered, so a workflow using it runs and its
+// output reaches a later step.
+func TestRun_UUIDGenOutputReachesALaterStep(t *testing.T) {
+	targetDir := t.TempDir()
+	config := `
+targetDir: ` + targetDir + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+
+workflows:
+  - id: names-a-file
+    steps:
+      - id: name
+        action: uuid:gen
+      - action: cmd:exec
+        cmd: touch ` + targetDir + `/${outputs.name.uuid}
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	if err := Run(appCtx, "names-a-file", nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one created file, got %+v", entries)
+	}
+	if _, err := uuid.Parse(entries[0].Name()); err != nil {
+		t.Errorf("created file %q is not named after a uuid: %v", entries[0].Name(), err)
+	}
+}
+
+// pkg:write_file is validated like pkg:push: the package must exist and
+// support sync-back, since a file written into a mirror that can never be
+// pushed is a file nobody sees.
+func TestValidate_WriteFileRequiresASyncBackPackage(t *testing.T) {
+	config := `
+targetDir: ` + t.TempDir() + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+  - id: gitpkg
+    type: GIT
+    url: https://example.com/repo.git
+
+workflows:
+  - id: writes-to-git
+    steps:
+      - action: pkg:write_file
+        pkg: gitpkg
+        path: a.txt
+        content: x
+  - id: writes-to-unknown
+    steps:
+      - action: pkg:write_file
+        pkg: no-such-package
+        path: a.txt
+        content: x
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	for _, id := range []string{"writes-to-git", "writes-to-unknown"} {
+		t.Run(id, func(t *testing.T) {
+			if err := Run(appCtx, id, nil); err == nil {
+				t.Fatal("expected the workflow to be rejected before it ran")
+			}
+		})
 	}
 }

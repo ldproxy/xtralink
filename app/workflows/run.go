@@ -25,7 +25,9 @@ func NewRegistry(appCtx *app.AppContext) *workflows.Registry {
 	registry.Register(&actions.JobPushAction{AppCtx: appCtx})
 	registry.Register(&actions.PullAction{AppCtx: appCtx})
 	registry.Register(&actions.PushAction{AppCtx: appCtx})
+	registry.Register(&actions.WriteFileAction{AppCtx: appCtx})
 	registry.Register(&actions.CmdExecAction{})
+	registry.Register(&actions.UUIDGenAction{})
 	return registry
 }
 
@@ -115,7 +117,7 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "to"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
-		case "pkg:push":
+		case "pkg:push", "pkg:write_file":
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "pkg"); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}

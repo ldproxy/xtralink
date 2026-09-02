@@ -32,6 +32,12 @@ func SupportsSyncBack(pkgType string) bool {
 // must already have been pulled, and neither is synced back - a workflow
 // adds pkg:push steps for that, which is what lets several moves land on
 // the remote as one sync instead of one per move.
+//
+// `path:` is where the file sits in the source package, and where it lands
+// in the target one unless `targetPath:` says otherwise. Keeping the same
+// path is the common case, so it stays the default; a differing
+// targetPath is for a target laid out differently from the source, and it
+// may name directories that do not exist yet.
 type MvFileAction struct {
 	AppCtx *app.AppContext
 }
@@ -47,9 +53,16 @@ func (a *MvFileAction) Run(ctx *workflows.StepContext) (workflows.StepResult, er
 	if !ok || toId == "" {
 		return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "to" parameter is required`)
 	}
-	relPath, ok := ctx.Params["path"].(string)
-	if !ok || relPath == "" {
+	sourceRelPath, ok := ctx.Params["path"].(string)
+	if !ok || sourceRelPath == "" {
 		return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "path" parameter is required`)
+	}
+	targetRelPath := sourceRelPath
+	if raw, ok := ctx.Params["targetPath"]; ok {
+		targetRelPath, ok = raw.(string)
+		if !ok || targetRelPath == "" {
+			return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "targetPath" must be a non-empty path, got %v`, raw)
+		}
 	}
 
 	fromPkg, err := a.AppCtx.Settings.GetPackage(fromId)
@@ -71,11 +84,22 @@ func (a *MvFileAction) Run(ctx *workflows.StepContext) (workflows.StepResult, er
 		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: to: %w", err)
 	}
 
-	srcPath := filepath.Join(fromPkg.ResolvedLocalPath, filepath.FromSlash(relPath))
-	dstPath := filepath.Join(toPkg.ResolvedLocalPath, filepath.FromSlash(relPath))
-	if err := moveFile(srcPath, dstPath); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("could not move %q from %q to %q: %w", relPath, fromId, toId, err)
+	srcPath, err := mirrorPath(fromPkg, sourceRelPath)
+	if err != nil {
+		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: path: %w", err)
 	}
+	dstPath, err := mirrorPath(toPkg, targetRelPath)
+	if err != nil {
+		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: targetPath: %w", err)
+	}
+
+	if err := moveFile(srcPath, dstPath); err != nil {
+		return workflows.StepResult{}, fmt.Errorf("could not move %q from %q to %q as %q: %w",
+			sourceRelPath, fromId, toId, targetRelPath, err)
+	}
+
+	ctx.Logger.Debug().Str("from", fromId).Str("to", toId).
+		Str("path", sourceRelPath).Str("target_path", targetRelPath).Msg("moved file between mirrors")
 
 	return workflows.Success(), nil
 }

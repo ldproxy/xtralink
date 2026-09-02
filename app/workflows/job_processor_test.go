@@ -274,3 +274,223 @@ func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
 		t.Fatal("expected a failure result instead of a panic when job is nil")
 	}
 }
+
+// The Job's id is the one thing a workflow cannot work out for itself, so
+// an explicit parameter mapping can name it as ${parent.id}.
+func TestWorkflowJobProcessor_ExplicitParamsCanReferenceTheJobId(t *testing.T) {
+	config := `
+targetDir: ` + t.TempDir() + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+
+workflows:
+  - id: echoes-the-job
+    params:
+      - name: job
+        type: string
+        required: true
+    steps:
+      - id: only
+        action: pkg:pull
+        pkg: foo
+
+jobs:
+  - kind: step-a
+    workflow: echoes-the-job
+    parameters:
+      job: ${parent.id}
+    outputs:
+      seen: ${params.job}
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	backend := jobs.NewMemoryBackend()
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     backend,
+		Locks:    lock.NoopLocker{},
+	}
+
+	job := jobs.NewJob("job-42", "pipeline", 1000, "", nil)
+	if err := backend.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1000, job.Id)
+	partialJob.Progress.Total = 1
+	if err := backend.InitJob(job.Id, 1, nil); err != nil {
+		t.Fatalf("InitJob: %v", err)
+	}
+	if err := backend.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	processor, err := WorkflowJobProcessor(appCtx, "step-a")
+	if err != nil {
+		t.Fatalf("WorkflowJobProcessor: %v", err)
+	}
+	taken, err := backend.Take("step-a", "test")
+	if err != nil || taken == nil {
+		t.Fatalf("Take: %v, %+v", err, taken)
+	}
+
+	if result := processor.Process(taken, job, backend); !result.IsSuccess() {
+		t.Fatalf("Process: %+v", result)
+	}
+
+	stored, err := backend.GetJob(job.Id)
+	if err != nil || stored == nil {
+		t.Fatalf("GetJob: %v, %+v", err, stored)
+	}
+	outs := outputValues(stored.Outputs)
+	if outs["seen"] != "job-42" {
+		t.Errorf("Outputs[seen] = %+v, want job-42 (relayed via ${parent.id} -> params.job)", outs["seen"])
+	}
+}
+
+// An explicit parameter mapping stops the Job's Inputs being auto-filled by
+// name, so ${parent.inputs...} is how it picks out the ones it wants.
+func TestWorkflowJobProcessor_ExplicitParamsCanPickOutJobInputs(t *testing.T) {
+	appCtx, backend := parentVarsAppCtx(t, `
+    parameters:
+      job: ${parent.id}
+      wanted: ${parent.inputs.wanted}
+    outputs:
+      seen: ${params.wanted}
+`)
+
+	job := jobs.NewJob("job-7", "pipeline", 1000, "", map[string]any{
+		"wanted":  "keep-me",
+		"ignored": "drop-me",
+	})
+	runOnePartialJob(t, appCtx, backend, job)
+
+	stored, err := backend.GetJob(job.Id)
+	if err != nil || stored == nil {
+		t.Fatalf("GetJob: %v, %+v", err, stored)
+	}
+	if outs := outputValues(stored.Outputs); outs["seen"] != "keep-me" {
+		t.Errorf("Outputs[seen] = %+v, want keep-me (via ${parent.inputs.wanted})", outs["seen"])
+	}
+}
+
+// Both of a definition's mappings resolve against the same vocabulary, so
+// an output mapping can name ${parent...} exactly as the input mapping does.
+func TestWorkflowJobProcessor_OutputMappingSeesParentToo(t *testing.T) {
+	appCtx, backend := parentVarsAppCtx(t, `
+    parameters:
+      job: ${parent.id}
+      wanted: ${parent.inputs.wanted}
+    outputs:
+      forJob: ${parent.id}
+      relayed: ${parent.inputs.wanted}
+      fromStep: ${outputs.only.path}
+`)
+
+	job := jobs.NewJob("job-9", "pipeline", 1000, "", map[string]any{"wanted": "keep-me"})
+	wantPath := appCtx.Settings.Packages[0].ResolvedLocalPath
+	runOnePartialJob(t, appCtx, backend, job)
+
+	stored, err := backend.GetJob(job.Id)
+	if err != nil || stored == nil {
+		t.Fatalf("GetJob: %v, %+v", err, stored)
+	}
+	outs := outputValues(stored.Outputs)
+	if outs["forJob"] != "job-9" {
+		t.Errorf("Outputs[forJob] = %+v, want job-9", outs["forJob"])
+	}
+	if outs["relayed"] != "keep-me" {
+		t.Errorf("Outputs[relayed] = %+v, want keep-me", outs["relayed"])
+	}
+	if outs["fromStep"] != wantPath {
+		t.Errorf("Outputs[fromStep] = %+v, want %q - the run's own step outputs must still resolve", outs["fromStep"], wantPath)
+	}
+}
+
+// parentVarsAppCtx builds an AppContext around one job definition whose
+// mappings are given as the yaml fragment appended under it.
+func parentVarsAppCtx(t *testing.T, mappings string) (*app.AppContext, *jobs.MemoryBackend) {
+	t.Helper()
+
+	config := `
+targetDir: ` + t.TempDir() + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+
+workflows:
+  - id: echoes-the-job
+    params:
+      - name: job
+        type: string
+        required: true
+      - name: wanted
+        type: string
+    steps:
+      - id: only
+        action: pkg:pull
+        pkg: foo
+
+jobs:
+  - kind: step-a
+    workflow: echoes-the-job` + mappings
+
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	backend := jobs.NewMemoryBackend()
+	return &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     backend,
+		Locks:    lock.NoopLocker{},
+	}, backend
+}
+
+// runOnePartialJob pushes job with a single step-a PartialJob and runs it
+// through the processor, failing the test if it does not succeed.
+func runOnePartialJob(t *testing.T, appCtx *app.AppContext, backend *jobs.MemoryBackend, job *model.Job) {
+	t.Helper()
+
+	if err := backend.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1000, job.Id)
+	partialJob.Progress.Total = 1
+	if err := backend.InitJob(job.Id, 1, nil); err != nil {
+		t.Fatalf("InitJob: %v", err)
+	}
+	if err := backend.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	processor, err := WorkflowJobProcessor(appCtx, "step-a")
+	if err != nil {
+		t.Fatalf("WorkflowJobProcessor: %v", err)
+	}
+	taken, err := backend.Take("step-a", "test")
+	if err != nil || taken == nil {
+		t.Fatalf("Take: %v, %+v", err, taken)
+	}
+	if result := processor.Process(taken, job, backend); !result.IsSuccess() {
+		t.Fatalf("Process: %+v", result)
+	}
+}
