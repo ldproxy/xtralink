@@ -33,7 +33,7 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 	if isDev || verbosity == 1 {
 		logLevel = zerolog.DebugLevel
 	}
-	if verbosity == 2 {
+	if verbosity >= 2 {
 		logLevel = zerolog.TraceLevel
 	}
 	if raw := strings.TrimSpace(os.Getenv("LOG_LEVEL")); raw != "" {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/workflows"
@@ -24,10 +25,23 @@ func (c *FlowRunCmd) Run(appCtx *app.AppContext) error {
 		return err
 	}
 	if err := workflows.Run(appCtx, c.Id, overrides); err != nil {
-		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("workflow run failed")
+		appCtx.Logger.Error().Err(err).Str("id", c.Id).Strs("inputs", inputNames(c.Inputs)).Msg("workflow run failed")
 		return err
 	}
 	return nil
+}
+
+// inputNames reduces the --input flags to the parameter names they set.
+// Their values are deliberately left out: they come from whoever invoked
+// the CLI and may well be credentials, and a log line is exactly the wrong
+// place for those.
+func inputNames(inputs []string) []string {
+	names := make([]string, 0, len(inputs))
+	for _, entry := range inputs {
+		name, _, _ := strings.Cut(entry, "=")
+		names = append(names, name)
+	}
+	return names
 }
 
 type FlowListCmd struct{}

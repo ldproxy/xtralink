@@ -1,13 +1,25 @@
 package workflows
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/rs/zerolog"
+)
 
 // StepContext is what the engine hands to an Action.Run call: the Step's
 // parameters, already template-resolved against the current branch's
 // outputs/packages state (s. template.go) - Actions never see raw ${...}
-// placeholders or the outputs of other steps directly.
+// placeholders or the outputs of other steps directly - plus the logger to
+// report through.
+//
+// Logger is a child of the run-scoped logger, already carrying the step id
+// and action type as fields, so an Action logs its own detail without
+// having to know which step it is running as. Actions get their logger
+// here rather than from an injected *app.AppContext so that an Action
+// needing nothing else from the app (s. CmdExecAction) stays free of it.
 type StepContext struct {
 	Params map[string]any
+	Logger zerolog.Logger
 }
 
 // Action is the plugin contract for a Step type, analogous to JobProcessor

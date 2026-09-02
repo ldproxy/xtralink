@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/workflows/actions"
@@ -64,7 +65,15 @@ func Run(appCtx *app.AppContext, workflowId string, overrides map[string]string)
 		"packages": packageVars(appCtx.Settings.Packages),
 		"params":   params,
 	}
-	return workflows.Run(*wf, registry, vars)
+
+	logger := appCtx.Logger.With().Str("workflow", workflowId).Logger()
+	started := time.Now()
+	if err := workflows.Run(*wf, registry, vars, logger); err != nil {
+		return err
+	}
+	logger.Info().Int("steps", len(wf.Steps)).Dur("duration", time.Since(started)).Msg("workflow completed")
+
+	return nil
 }
 
 // ParseOverrides turns "name=value" strings, as collected from repeated

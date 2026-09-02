@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 // funcAction lets tests supply Run() as a plain closure instead of a new
@@ -42,7 +44,7 @@ func TestRun_LinearSequencePassesOutputsForward(t *testing.T) {
 		},
 	}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if seenByStep2 != "a.zip" {
@@ -64,7 +66,7 @@ func TestRun_ZeroOutputsHaltsWithoutError(t *testing.T) {
 
 	wf := Workflow{Steps: []Step{{Id: "input", Action: "find"}, {Action: "use"}}}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if laterStepRan {
@@ -97,7 +99,7 @@ func TestRun_NOutputsForksRemainingStepsIndependently(t *testing.T) {
 		},
 	}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(seenPaths) != 3 {
@@ -135,7 +137,7 @@ func TestRun_NestedForksProduceCartesianProduct(t *testing.T) {
 		},
 	}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(combos) != 4 {
@@ -157,7 +159,7 @@ func TestRun_FailingStepAbortsBranch(t *testing.T) {
 
 	wf := Workflow{Steps: []Step{{Action: "fail"}, {Action: "use"}}}
 
-	err := Run(wf, registry, map[string]any{})
+	err := Run(wf, registry, map[string]any{}, zerolog.Nop())
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -178,7 +180,7 @@ func TestRun_NoRetryPolicyAnywhereMeansSingleAttempt(t *testing.T) {
 	// Neither the Step nor the Workflow define a retry_policy.
 	wf := Workflow{Steps: []Step{{Action: "fail"}}}
 
-	if err := Run(wf, registry, map[string]any{}); err == nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err == nil {
 		t.Fatal("expected an error")
 	}
 	if attempts != 1 {
@@ -188,7 +190,7 @@ func TestRun_NoRetryPolicyAnywhereMeansSingleAttempt(t *testing.T) {
 
 func TestRun_UnknownActionIsError(t *testing.T) {
 	wf := Workflow{Steps: []Step{{Action: "does-not-exist"}}}
-	if err := Run(wf, NewRegistry(), map[string]any{}); err == nil {
+	if err := Run(wf, NewRegistry(), map[string]any{}, zerolog.Nop()); err == nil {
 		t.Fatal("expected an error for an unregistered action type")
 	}
 }
@@ -210,7 +212,7 @@ func TestRun_RetryPolicyRetriesUpToLimitThenSucceeds(t *testing.T) {
 		RetryPolicy: &RetryPolicy{Limit: 5, IntervalSec: 0},
 	}}}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if attempts != 3 {
@@ -232,7 +234,7 @@ func TestRun_RetryPolicyGivesUpAfterLimit(t *testing.T) {
 		RetryPolicy: &RetryPolicy{Limit: 2, IntervalSec: 0},
 	}}}
 
-	if err := Run(wf, registry, map[string]any{}); err == nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err == nil {
 		t.Fatal("expected an error after exhausting retries")
 	}
 	if attempts != 3 {
@@ -257,7 +259,7 @@ func TestRun_StepRetryPolicyReplacesWorkflowDefaultsCompletely(t *testing.T) {
 		}},
 	}
 
-	if err := Run(wf, registry, map[string]any{}); err == nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err == nil {
 		t.Fatal("expected an error")
 	}
 	if attempts != 2 {
@@ -282,7 +284,7 @@ func TestRun_StepWithoutRetryPolicyInheritsWorkflowDefaults(t *testing.T) {
 		Steps:    []Step{{Action: "flaky"}}, // no own retry_policy
 	}
 
-	if err := Run(wf, registry, map[string]any{}); err != nil {
+	if err := Run(wf, registry, map[string]any{}, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if attempts != 3 {
@@ -328,7 +330,7 @@ func TestRun_PackagesVarsAreVisibleToFirstStep(t *testing.T) {
 	wf := Workflow{Steps: []Step{{Action: "use", Params: map[string]any{"url": "${packages.bar.url}"}}}}
 	vars := map[string]any{"packages": map[string]any{"bar": map[string]any{"url": "s3://bucket"}}}
 
-	if err := Run(wf, registry, vars); err != nil {
+	if err := Run(wf, registry, vars, zerolog.Nop()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if seenURL != "s3://bucket" {
@@ -344,7 +346,7 @@ func TestRunWithResults_LinearWorkflowReturnsExactlyOneLeaf(t *testing.T) {
 
 	wf := Workflow{Steps: []Step{{Id: "input", Action: "find"}}}
 
-	leaves, err := RunWithResults(wf, registry, map[string]any{})
+	leaves, err := RunWithResults(wf, registry, map[string]any{}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("RunWithResults: %v", err)
 	}
@@ -366,7 +368,7 @@ func TestRunWithResults_ForkingWorkflowReturnsOneLeafPerBranch(t *testing.T) {
 
 	wf := Workflow{Steps: []Step{{Id: "input", Action: "find_each"}}}
 
-	leaves, err := RunWithResults(wf, registry, map[string]any{})
+	leaves, err := RunWithResults(wf, registry, map[string]any{}, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("RunWithResults: %v", err)
 	}

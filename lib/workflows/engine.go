@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 // Run executes every Step of workflow in order, starting from vars (the
@@ -11,8 +13,11 @@ import (
 // least {"packages": {...}}, s. template.go). It does not know about
 // locking a concurrent run of the same workflow out - that is an
 // orchestration concern above this package (s. app/workflows/run.go).
-func Run(workflow Workflow, registry *Registry, vars map[string]any) error {
-	_, err := RunWithResults(workflow, registry, vars)
+//
+// logger is the run-scoped logger the engine writes step progress to and
+// derives every Action's own logger from; zerolog.Nop() disables all of it.
+func Run(workflow Workflow, registry *Registry, vars map[string]any, logger zerolog.Logger) error {
+	_, err := RunWithResults(workflow, registry, vars, logger)
 	return err
 }
 
@@ -23,37 +28,56 @@ func Run(workflow Workflow, registry *Registry, vars map[string]any) error {
 // Job whose steps each run one) needs this to resolve an output-mapping
 // template expression against the workflow's own final outputs once it
 // finishes - Run's plain error-only result can't answer that.
-func RunWithResults(workflow Workflow, registry *Registry, vars map[string]any) ([]map[string]any, error) {
+func RunWithResults(workflow Workflow, registry *Registry, vars map[string]any, logger zerolog.Logger) ([]map[string]any, error) {
 	seeded := cloneTopLevel(vars)
 	if _, ok := seeded["outputs"]; !ok {
 		seeded["outputs"] = map[string]any{}
 	}
-	return runFrom(workflow.Steps, 0, workflow.Defaults, registry, seeded)
+	r := &runner{defaults: workflow.Defaults, registry: registry, logger: logger}
+	return r.from(workflow.Steps, 0, seeded)
 }
 
-// runFrom recursively executes steps[index:] against vars, returning the
+// runner holds what stays the same for the whole run, so the recursive
+// descent below passes only what actually varies per call.
+type runner struct {
+	defaults *Defaults
+	registry *Registry
+	logger   zerolog.Logger
+}
+
+// from recursively executes steps[index:] against vars, returning the
 // vars tree at every leaf reached. Every Step whose Action returns N output
 // sets forks: the remaining steps run once per output set, independently,
 // each with outputs.<stepId> set to that one output set (s. StepResult doc
 // comment) and contributing its own leaves to the result. Nested forks are
 // allowed and fall out of this naturally - no special-casing needed.
-func runFrom(steps []Step, index int, defaults *Defaults, registry *Registry, vars map[string]any) ([]map[string]any, error) {
+func (r *runner) from(steps []Step, index int, vars map[string]any) ([]map[string]any, error) {
 	if index >= len(steps) {
 		return []map[string]any{vars}, nil
 	}
 
 	step := steps[index]
 	stepId := step.EffectiveId(index)
+	stepLogger := r.logger.With().Str("step", stepId).Str("action", step.Action).Logger()
 
-	result, err := runStepWithRetry(step, defaults, registry, vars)
+	stepLogger.Debug().Int("index", index).Msg("step starting")
+	started := time.Now()
+
+	result, err := r.step(step, stepLogger, vars)
 	if err != nil {
 		return nil, fmt.Errorf("step %d (id=%s, action=%s): %w", index, stepId, step.Action, err)
 	}
+	stepLogger.Debug().Dur("duration", time.Since(started)).Int("outputs", len(result.Outputs)).Msg("step finished")
 
 	var leaves []map[string]any
-	for _, outputSet := range result.Outputs {
+	for branch, outputSet := range result.Outputs {
+		if len(result.Outputs) > 1 {
+			stepLogger.Debug().Int("branch", branch+1).Int("of", len(result.Outputs)).
+				Interface("output", outputSet).Msg("branch starting")
+		}
+
 		branchVars := withOutput(vars, stepId, outputSet)
-		branchLeaves, err := runFrom(steps, index+1, defaults, registry, branchVars)
+		branchLeaves, err := r.from(steps, index+1, branchVars)
 		if err != nil {
 			if len(result.Outputs) > 1 {
 				return nil, fmt.Errorf("branch %s=%v: %w", stepId, outputSet, err)
@@ -66,22 +90,23 @@ func runFrom(steps []Step, index int, defaults *Defaults, registry *Registry, va
 	return leaves, nil
 }
 
-// runStepWithRetry resolves the Step's Action and parameters, then runs it,
-// retrying on error per the effective RetryPolicy (the Step's own, or the
-// Workflow's Defaults if the Step has none - s. effectiveRetryPolicy).
-func runStepWithRetry(step Step, defaults *Defaults, registry *Registry, vars map[string]any) (StepResult, error) {
-	action, err := registry.Lookup(step.Action)
+// step resolves the Step's Action and parameters, then runs it, retrying on
+// error per the effective RetryPolicy (the Step's own, or the Workflow's
+// Defaults if the Step has none - s. effectiveRetryPolicy).
+func (r *runner) step(step Step, stepLogger zerolog.Logger, vars map[string]any) (StepResult, error) {
+	action, err := r.registry.Lookup(step.Action)
 	if err != nil {
 		return StepResult{}, err
 	}
 
 	resolved, err := ResolveValue(step.Params, vars)
 	if err != nil {
-		return StepResult{}, err
+		return StepResult{}, fmt.Errorf("resolving params: %w", err)
 	}
 	params, _ := resolved.(map[string]any)
+	stepLogger.Trace().Interface("params", params).Msg("step params resolved")
 
-	policy := effectiveRetryPolicy(step, defaults)
+	policy := effectiveRetryPolicy(step, r.defaults)
 	attempts := 1
 	if policy != nil && policy.Limit > 0 {
 		attempts = policy.Limit + 1
@@ -90,13 +115,19 @@ func runStepWithRetry(step Step, defaults *Defaults, registry *Registry, vars ma
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			time.Sleep(retryDelay(*policy, attempt))
+			delay := retryDelay(*policy, attempt)
+			stepLogger.Warn().Err(lastErr).Int("attempt", attempt).Int("of", attempts).
+				Dur("retry_in", delay).Msg("step attempt failed, retrying")
+			time.Sleep(delay)
 		}
-		result, err := action.Run(&StepContext{Params: params})
+		result, err := action.Run(&StepContext{Params: params, Logger: stepLogger})
 		if err == nil {
 			return result, nil
 		}
 		lastErr = err
+	}
+	if attempts > 1 {
+		return StepResult{}, fmt.Errorf("after %d attempts: %w", attempts, lastErr)
 	}
 	return StepResult{}, lastErr
 }

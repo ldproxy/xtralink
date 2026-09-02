@@ -51,7 +51,8 @@ func WorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*jobs.JobProce
 			"packages": packageVars(appCtx.Settings.Packages),
 			"params":   params,
 		}
-		leaves, err := workflows.RunWithResults(*wf, registry, vars)
+		logger := appCtx.Logger.With().Str("workflow", wf.Id).Str("job", job.Id).Logger()
+		leaves, err := workflows.RunWithResults(*wf, registry, vars, logger)
 		if err != nil {
 			return model.Error(fmt.Sprintf("workflow %q failed: %v", wf.Id, err))
 		}

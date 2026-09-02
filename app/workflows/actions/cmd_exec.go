@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/ldproxy/xtralink/lib/workflows"
@@ -19,6 +20,11 @@ import (
 // let shell metacharacters in that value (e.g. ";", "|") break out of their
 // intended argument position and inject additional commands. Executing the
 // tokenized argv directly closes that off entirely.
+//
+// The command's output is logged line by line at debug level as it arrives
+// (s. logWriter) and is deliberately not exposed as a step output - a
+// following step reads files the command wrote, not its stdout. On failure
+// the tail of that output goes into the error.
 type CmdExecAction struct{}
 
 func (a *CmdExecAction) Type() string { return "cmd:exec" }
@@ -37,11 +43,25 @@ func (a *CmdExecAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 		return workflows.StepResult{}, fmt.Errorf("cmd:exec: %q resolved to an empty command", cmdStr)
 	}
 
-	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	tail := newTailBuffer(maxTailBytes)
+	stdout := newLogWriter(ctx.Logger, "stdout", tail)
+	stderr := newLogWriter(ctx.Logger, "stderr", tail)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+
+	ctx.Logger.Debug().Strs("argv", argv).Msg("executing command")
+	started := time.Now()
+	err = cmd.Run()
+	elapsed := time.Since(started)
+	stdout.Flush()
+	stderr.Flush()
+
 	if err != nil {
-		return workflows.StepResult{}, fmt.Errorf("cmd:exec: command %q failed: %w (output: %s)", cmdStr, err, out)
+		return workflows.StepResult{}, fmt.Errorf("cmd:exec: command %q failed after %s: %w\nlast output:\n%s",
+			cmdStr, elapsed.Round(time.Millisecond), err, tail.String())
 	}
 
+	ctx.Logger.Debug().Dur("duration", elapsed).Msg("command finished")
 	return workflows.Success(), nil
 }
 
