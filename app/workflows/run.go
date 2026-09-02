@@ -150,7 +150,7 @@ func validateSteps(appCtx *app.AppContext, steps []workflows.Step, registry *wor
 				return fmt.Errorf("%s: %w", where, err)
 			}
 		case "job:push":
-			if err := validateJobPush(appCtx, step.Params); err != nil {
+			if err := validateJobPush(step.Params); err != nil {
 				return fmt.Errorf("%s: %w", where, err)
 			}
 		}
@@ -158,18 +158,18 @@ func validateSteps(appCtx *app.AppContext, steps []workflows.Step, registry *wor
 	return nil
 }
 
-// validateJobPush checks a job:push Step ahead of the run: `partials:`
-// must reference kinds that already exist under jobs: (the same check
-// validateJobDefinitions performs), and every other parameter must be of
-// the type the Job model expects. It is optional - without partials,
-// job:push falls back to a bare Job, unchanged from before.
+// validateJobPush checks a job:push Step ahead of the run: every parameter
+// must be of the type the Job model expects, and `partials:` entries must
+// each name a kind.
 //
-// `followUps:` kinds are deliberately not checked against the
-// JobDefinitions: the backend pushes follow-ups as plain Jobs with no
-// PartialJobs of their own, so any kind is legitimate there, exactly as for
-// a direct `job push <kind>`.
-func validateJobPush(appCtx *app.AppContext, params map[string]any) error {
-	if err := validateJobPushPartials(appCtx, params); err != nil {
+// No kind here - a partial's, a follow-up's, or the Job's own - is checked
+// against this configuration's job definitions. A definition binds a kind
+// to a workflow xtralink runs itself, but a Job may be composed partly of
+// parts another service processes, and follow-ups are pushed as plain Jobs
+// with no parts at all. Requiring a definition would make both impossible
+// to express (s. actions.resolvePartials).
+func validateJobPush(params map[string]any) error {
+	if err := validateJobPushPartials(params); err != nil {
 		return err
 	}
 	return validateJobPushShapes(params)
@@ -216,7 +216,7 @@ func isTemplate(value any) bool {
 	return ok && strings.Contains(s, "${")
 }
 
-func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) error {
+func validateJobPushPartials(params map[string]any) error {
 	raw, ok := params["partials"]
 	if !ok {
 		return nil
@@ -230,15 +230,8 @@ func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) erro
 		if !ok {
 			return fmt.Errorf("partials[%d]: invalid entry", i)
 		}
-		kind, _ := entry["kind"].(string)
-		if kind == "" {
+		if kind, _ := entry["kind"].(string); kind == "" {
 			return fmt.Errorf("partials[%d]: \"kind\" is required", i)
-		}
-		if strings.Contains(kind, "${") {
-			continue // only known once earlier steps have run
-		}
-		if _, err := appCtx.Settings.GetJobDefinition(kind); err != nil {
-			return fmt.Errorf("partials[%d]: %w", i, err)
 		}
 	}
 	return nil

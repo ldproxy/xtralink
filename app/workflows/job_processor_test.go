@@ -106,7 +106,7 @@ jobs:
 	}
 	job, err := appjobs.Push(appCtx, appjobs.PushRequest{
 		JobConfiguration: model.JobConfiguration{Kind: "nba-apply", Priority: 1000},
-		Partials:         []app.JobDefinition{*def1, *def2},
+		Partials:         []string{def1.Kind, def2.Kind},
 		Sequential:       true,
 	})
 	if err != nil {

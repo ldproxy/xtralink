@@ -21,9 +21,16 @@ import (
 type PushRequest struct {
 	model.JobConfiguration
 
-	// Partials are the parts this Job is made of, one PartialJob per
-	// JobDefinition. Empty means a bare Job with no PartialJobs of its own.
-	Partials []app.JobDefinition
+	// Partials are the kinds this Job is made of, one PartialJob each.
+	// Empty means a bare Job with no PartialJobs of its own.
+	//
+	// A kind does not have to be one of this configuration's own job
+	// definitions: a Job can be composed partly of parts some other service
+	// processes, and only whoever runs a processor for a kind needs to know
+	// what it means. Nothing here can tell that apart from a typo, though,
+	// and a kind no processor ever registers leaves the Job waiting until
+	// its TTL.
+	Partials []string
 
 	// Sequential makes the PartialJobs run strictly in the order Partials
 	// lists them, each becoming takeable only once its predecessor has
@@ -37,7 +44,7 @@ type PushRequest struct {
 // forget, it never waits for the Job to finish.
 //
 // With no Partials, a Kind that matches a configured JobDefinition gets
-// exactly one PartialJob of that same type; anything else stays a bare Job
+// exactly one PartialJob of that same kind; anything else stays a bare Job
 // with no PartialJobs at all, exactly as before JobDefinitions existed.
 func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 	if req.Kind == "" {
@@ -47,7 +54,7 @@ func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 	partials := req.Partials
 	if len(partials) == 0 && appCtx.Settings != nil {
 		if def, _ := appCtx.Settings.GetJobDefinition(req.Kind); def != nil {
-			partials = []app.JobDefinition{*def}
+			partials = []string{def.Kind}
 		}
 	}
 
@@ -63,8 +70,8 @@ func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 		return nil, fmt.Errorf("could not push job: %w", err)
 	}
 
-	for _, def := range partials {
-		partialJob := jobs.NewPartialJob(uuid.NewString(), def.Kind, req.Priority, job.Id)
+	for _, kind := range partials {
+		partialJob := jobs.NewPartialJob(uuid.NewString(), kind, req.Priority, job.Id)
 		partialJob.Progress.Total = 1
 
 		// Each PartialJob counts as exactly one unit of the Job's total - it
@@ -75,10 +82,10 @@ func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 		// (current==total) would trivially - and wrongly - already be
 		// true.
 		if err := appCtx.Jobs.InitJob(job.Id, 1, nil); err != nil {
-			return nil, fmt.Errorf("could not grow job total for partial job %q: %w", def.Kind, err)
+			return nil, fmt.Errorf("could not grow job total for partial job %q: %w", kind, err)
 		}
 		if err := appCtx.Jobs.PushPartialJob(partialJob, false); err != nil {
-			return nil, fmt.Errorf("could not push partial job %q: %w", def.Kind, err)
+			return nil, fmt.Errorf("could not push partial job %q: %w", kind, err)
 		}
 	}
 

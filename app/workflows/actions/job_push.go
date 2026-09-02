@@ -41,10 +41,27 @@ func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 		return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
 	}
 
+	// external names the partial kinds this configuration has no job
+	// definition for: another service is expected to process them, and if
+	// none does the Job waits until its TTL. It is also where a mistyped
+	// kind shows up.
 	ctx.Logger.Debug().Str("job", job.Id).Str("kind", job.Kind).
-		Int("partials", len(req.Partials)).Bool("sequential", req.Sequential).Msg("pushed job")
+		Strs("partials", req.Partials).Strs("external", a.externalKinds(req.Partials)).
+		Bool("sequential", req.Sequential).Msg("pushed job")
 
 	return workflows.Success(), nil
+}
+
+// externalKinds returns the partial kinds with no job definition here, so
+// the pushed-job log line says which parts depend on another service.
+func (a *JobPushAction) externalKinds(kinds []string) []string {
+	var external []string
+	for _, kind := range kinds {
+		if _, err := a.AppCtx.Settings.GetJobDefinition(kind); err != nil {
+			external = append(external, kind)
+		}
+	}
+	return external
 }
 
 func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, error) {
@@ -53,7 +70,7 @@ func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, 
 		return nil, err
 	}
 
-	partials, err := resolvePartials(a.AppCtx, params)
+	partials, err := resolvePartials(params)
 	if err != nil {
 		return nil, err
 	}
@@ -120,13 +137,15 @@ func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
 	}, nil
 }
 
-// resolvePartials turns `partials: [{kind: ...}, ...]` into the
-// JobDefinitions those kinds already reference - job:push does not declare
-// new ones itself, it only reuses existing entries (their Workflow
-// binding, Parameters/Outputs mapping), the same way `job process <kind>`
-// already resolves them. An absent `partials:` is fine: the Job then has
-// whatever PartialJobs its own kind implies.
-func resolvePartials(appCtx *app.AppContext, params map[string]any) ([]app.JobDefinition, error) {
+// resolvePartials reads `partials: [{kind: ...}, ...]` as the kinds the
+// pushed Job's PartialJobs run as. An absent `partials:` is fine: the Job
+// then has whatever PartialJobs its own kind implies.
+//
+// A kind is not checked against this configuration's job definitions. One
+// of them binds a kind to a workflow xtralink runs itself, but a Job can
+// just as well be composed partly of parts another service processes, and
+// requiring a definition would make those impossible to name.
+func resolvePartials(params map[string]any) ([]string, error) {
 	raw, ok := params["partials"]
 	if !ok {
 		return nil, nil
@@ -137,7 +156,7 @@ func resolvePartials(appCtx *app.AppContext, params map[string]any) ([]app.JobDe
 		return nil, fmt.Errorf("partials: at least one entry is required")
 	}
 
-	defs := make([]app.JobDefinition, 0, len(entries))
+	kinds := make([]string, 0, len(entries))
 	for i, item := range entries {
 		entry, ok := item.(map[string]any)
 		if !ok {
@@ -147,13 +166,9 @@ func resolvePartials(appCtx *app.AppContext, params map[string]any) ([]app.JobDe
 		if kind == "" {
 			return nil, fmt.Errorf("partials[%d]: \"kind\" is required", i)
 		}
-		def, err := appCtx.Settings.GetJobDefinition(kind)
-		if err != nil {
-			return nil, fmt.Errorf("partials[%d]: %w", i, err)
-		}
-		defs = append(defs, *def)
+		kinds = append(kinds, kind)
 	}
-	return defs, nil
+	return kinds, nil
 }
 
 // resolveFollowUps reads `followUps: [{kind, label, inputs}, ...]` as the

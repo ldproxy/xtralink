@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -149,21 +150,62 @@ func TestJobPushAction_PartialsSequentialGatesLaterPartials(t *testing.T) {
 	}
 }
 
-func TestJobPushAction_PartialsUnknownKindIsError(t *testing.T) {
+// A partial kind needs no job definition here: another service may be the
+// one that processes it (s. actions.resolvePartials).
+func TestJobPushAction_PartialsAcceptAnArbitraryKind(t *testing.T) {
 	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
 
 	action := &JobPushAction{AppCtx: appCtx}
-	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
 		"kind": "nba-apply",
 		"partials": []any{
-			map[string]any{"kind": "does-not-exist"},
+			map[string]any{"kind": "nba-transformation"},
+			map[string]any{"kind": "processed-elsewhere"},
 		},
-	}})
-	if err == nil {
-		t.Fatal("expected an error for a partials entry referencing an unknown kind")
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if jobsList, _ := backend.GetJobs(); len(jobsList) != 0 {
-		t.Errorf("expected no Job to have been pushed, got %+v", jobsList)
+
+	jobsList, err := backend.GetJobs()
+	if err != nil || len(jobsList) != 1 {
+		t.Fatalf("GetJobs: %v, %+v", err, jobsList)
+	}
+
+	// The PartialJob is queued under the kind as given, waiting for
+	// whoever registers a processor for it.
+	taken, err := backend.Take("processed-elsewhere", "test")
+	if err != nil || taken == nil {
+		t.Fatalf("Take(processed-elsewhere): %v, %+v", err, taken)
+	}
+	if taken.PartOf != jobsList[0].Id {
+		t.Errorf("PartOf = %q, want %q", taken.PartOf, jobsList[0].Id)
+	}
+}
+
+// The external kinds go on the pushed-job log line, since that is where a
+// mistyped kind shows up - nothing else can tell one from a part another
+// service is meant to process.
+func TestJobPushAction_LogsWhichPartialKindsAreExternal(t *testing.T) {
+	appCtx, _ := jobDefinitionsAppCtx(nbaPipelineDefs())
+	var buf bytes.Buffer
+
+	action := &JobPushAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{
+		Params: map[string]any{
+			"kind": "nba-apply",
+			"partials": []any{
+				map[string]any{"kind": "nba-transformation"},
+				map[string]any{"kind": "processed-elsewhere"},
+			},
+		},
+		Logger: zerolog.New(&buf).Level(zerolog.DebugLevel),
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, `"external":["processed-elsewhere"]`) {
+		t.Errorf("log should name the external kind only:\n%s", logged)
 	}
 }
 

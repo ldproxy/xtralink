@@ -453,23 +453,31 @@ func TestValidate_AcceptsJobPushPartialsReferencingExistingSteps(t *testing.T) {
 	}
 }
 
-func TestValidate_RejectsJobPushPartialsReferencingUnknownStep(t *testing.T) {
+// A partial kind with no job definition here is legitimate: another
+// service may process it (s. actions.resolvePartials). Only a missing kind
+// is a mistake validation can name.
+func TestValidate_AcceptsJobPushPartialsWithNoJobDefinition(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
 	registry := NewRegistry(appCtx)
-	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
-		Action: "job:push",
-		Params: map[string]any{
-			"kind":     "nba-apply",
-			"partials": []any{map[string]any{"kind": "does-not-exist"}},
-		},
-	}}}
+	stepWith := func(partials any) workflows.Workflow {
+		return workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+			Action: "job:push",
+			Params: map[string]any{"kind": "nba-apply", "partials": partials},
+		}}}
+	}
 
-	if err := Validate(appCtx, wf, registry); err == nil {
-		t.Fatal("expected an error for partials referencing an unknown kind")
+	external := stepWith([]any{map[string]any{"kind": "processed-elsewhere"}})
+	if err := Validate(appCtx, external, registry); err != nil {
+		t.Errorf("expected a kind with no definition to be valid, got: %v", err)
+	}
+
+	nameless := stepWith([]any{map[string]any{"workflow": "oops"}})
+	if err := Validate(appCtx, nameless, registry); err == nil {
+		t.Fatal("expected an error for a partials entry with no kind")
 	}
 }
 
-func TestValidate_SkipsTemplatedJobPushPartialsType(t *testing.T) {
+func TestValidate_AcceptsTemplatedJobPushPartialKind(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
 	registry := NewRegistry(appCtx)
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{

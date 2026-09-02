@@ -182,14 +182,11 @@ func TestPush_SequentialAssignsSequenceSlots(t *testing.T) {
 	backend := jobs.NewMemoryBackend()
 	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
 
-	defs := []app.JobDefinition{
-		{Kind: "step-a", Workflow: "wf-a"},
-		{Kind: "step-b", Workflow: "wf-b"},
-	}
+	kinds := []string{"step-a", "step-b"}
 
 	job, err := Push(appCtx, PushRequest{
 		JobConfiguration: model.JobConfiguration{Kind: "pipeline"},
-		Partials:         defs,
+		Partials:         kinds,
 		Sequential:       true,
 	})
 	if err != nil {
