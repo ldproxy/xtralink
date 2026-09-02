@@ -14,18 +14,20 @@ import (
 // PushRequest is everything a caller can decide about a Job it pushes: the
 // Job itself as the generated model already describes it, plus the two
 // things that model has no word for because they are xtralink's own -
-// which JobDefinitions the Job's steps run, and whether they run in order.
+// which JobDefinitions the Job's PartialJobs run, and whether they run in
+// order.
 //
 // Only Kind is required; every other field has a working zero value.
 type PushRequest struct {
 	model.JobConfiguration
 
-	// Partials are the steps this Job is made of, one PartialJob each. Empty
-	// means a bare Job with no steps of its own.
+	// Partials are the parts this Job is made of, one PartialJob per
+	// JobDefinition. Empty means a bare Job with no PartialJobs of its own.
 	Partials []app.JobDefinition
 
-	// Sequential makes the steps run strictly in the order Partials lists
-	// them, each becoming takeable only once its predecessor has finished.
+	// Sequential makes the PartialJobs run strictly in the order Partials
+	// lists them, each becoming takeable only once its predecessor has
+	// finished.
 	// The default runs them all at once. A Job's setup and cleanup sit
 	// outside this ordering (s. lib/jobs.isSetupOrCleanup).
 	Sequential bool
@@ -54,7 +56,7 @@ func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 		job.Sequence = &model.JobSequence{Current: 0, Remaining: 0}
 	}
 
-	// PushJob pushes the setup step itself, so the Job has to be complete
+	// PushJob pushes the setup PartialJob itself, so the Job has to be complete
 	// before it goes in - NewJobFromConfiguration having already built
 	// Setup is what makes that possible.
 	if err := appCtx.Jobs.PushJob(&job); err != nil {
@@ -62,21 +64,21 @@ func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
 	}
 
 	for _, def := range partials {
-		partialJob := jobs.NewPartialJob(uuid.NewString(), def.Id, req.Priority, job.Id)
+		partialJob := jobs.NewPartialJob(uuid.NewString(), def.Kind, req.Priority, job.Id)
 		partialJob.Progress.Total = 1
 
-		// Each step counts as exactly one unit of the Job's total - a step
+		// Each PartialJob counts as exactly one unit of the Job's total - it
 		// either fully completes or it doesn't, there's no finer-grained
 		// progress within it (s. WorkflowJobProcessor, which reports the
 		// matching +1 on success). Without this, Job.Total/Current would
-		// both still be 0 once the first step finishes, and IsDone()
+		// both still be 0 once the first one finishes, and IsDone()
 		// (current==total) would trivially - and wrongly - already be
 		// true.
 		if err := appCtx.Jobs.InitJob(job.Id, 1, nil); err != nil {
-			return nil, fmt.Errorf("could not grow job total for step %q: %w", def.Id, err)
+			return nil, fmt.Errorf("could not grow job total for partial job %q: %w", def.Kind, err)
 		}
 		if err := appCtx.Jobs.PushPartialJob(partialJob, false); err != nil {
-			return nil, fmt.Errorf("could not push partial job for step %q: %w", def.Id, err)
+			return nil, fmt.Errorf("could not push partial job %q: %w", def.Kind, err)
 		}
 	}
 

@@ -14,7 +14,7 @@ import (
 )
 
 type JobProcessCmd struct {
-	Id string `arg:"" help:"Job step id to process, or \"*\" for every configured step"`
+	Kind string `arg:"" help:"PartialJob kind to process, or \"*\" for every kind configured under jobs:"`
 }
 
 func (c *JobProcessCmd) Run(appCtx *app.AppContext) error {
@@ -28,7 +28,7 @@ func (c *JobProcessCmd) Run(appCtx *app.AppContext) error {
 // directly instead of having to send a real signal to the whole test
 // process.
 func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
-	stepIds, err := stepIdsToProcess(appCtx, c.Id)
+	kinds, err := kindsToProcess(appCtx, c.Kind)
 	if err != nil {
 		return err
 	}
@@ -39,15 +39,15 @@ func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
 		appCtx.Logger.Error().Err(err).Msg("job runner error")
 	}
 
-	for _, stepId := range stepIds {
-		processor, err := appworkflows.WorkflowJobProcessor(appCtx, stepId)
+	for _, kind := range kinds {
+		processor, err := appworkflows.WorkflowJobProcessor(appCtx, kind)
 		if err != nil {
 			return err
 		}
 		runner.Register(processor)
 	}
 
-	appCtx.Logger.Info().Strs("steps", stepIds).Int("concurrency", runner.Concurrency).Msg("job runner starting")
+	appCtx.Logger.Info().Strs("kinds", kinds).Int("concurrency", runner.Concurrency).Msg("job runner starting")
 	if err := runner.Run(ctx); err != nil {
 		return err
 	}
@@ -55,25 +55,25 @@ func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
 	return nil
 }
 
-// stepIdsToProcess resolves id ("*" for every configured JobDefinition, or
-// one specific id) into the PartialJob types job process should register a
-// WorkflowJobProcessor for.
-func stepIdsToProcess(appCtx *app.AppContext, id string) ([]string, error) {
-	if id != "*" {
-		if _, err := appCtx.Settings.GetJobDefinition(id); err != nil {
+// kindsToProcess resolves the command's argument ("*" for every configured
+// JobDefinition, or one specific kind) into the PartialJob kinds job
+// process should register a WorkflowJobProcessor for.
+func kindsToProcess(appCtx *app.AppContext, kind string) ([]string, error) {
+	if kind != "*" {
+		if _, err := appCtx.Settings.GetJobDefinition(kind); err != nil {
 			return nil, err
 		}
-		return []string{id}, nil
+		return []string{kind}, nil
 	}
 
-	var ids []string
+	var kinds []string
 	for _, def := range appCtx.Settings.JobDefinitions {
-		ids = append(ids, def.Id)
+		kinds = append(kinds, def.Kind)
 	}
-	if len(ids) == 0 {
+	if len(kinds) == 0 {
 		return nil, fmt.Errorf("no jobs configured")
 	}
-	return ids, nil
+	return kinds, nil
 }
 
 // executorId identifies this Runner instance to the Backend (e.g. shown as

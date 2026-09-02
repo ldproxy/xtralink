@@ -134,7 +134,7 @@ workflows:
       - action: pkg:push
         pkg: bar
       - action: job:push
-        type: nba-apply
+        kind: nba-apply
         inputs:
           package: ${packages.bar.url}
           file: ${outputs.input.path}
@@ -246,7 +246,7 @@ workflows:
       - action: pkg:push
         pkg: bar
       - action: job:push
-        type: nba-apply
+        kind: nba-apply
         inputs:
           file: ${outputs.input.path}
 `
@@ -432,19 +432,19 @@ func TestValidate_SkipsTemplatedPackageRefs(t *testing.T) {
 
 func TestValidate_AcceptsJobPushPartialsReferencingExistingSteps(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{JobDefinitions: []app.JobDefinition{
-		{Id: "nba-transformation", Workflow: "nba-transform"},
+		{Kind: "nba-transformation", Workflow: "nba-transform"},
 	}}}
 	registry := NewRegistry(appCtx)
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
 		Action: "job:push",
 		Params: map[string]any{
-			"type":     "nba-apply",
-			"partials": []any{map[string]any{"type": "nba-transformation"}},
+			"kind":     "nba-apply",
+			"partials": []any{map[string]any{"kind": "nba-transformation"}},
 		},
 	}}}
 
 	if err := Validate(appCtx, wf, registry); err != nil {
-		t.Errorf("expected partials referencing an existing step id to be valid, got: %v", err)
+		t.Errorf("expected partials referencing an existing kind to be valid, got: %v", err)
 	}
 }
 
@@ -454,13 +454,13 @@ func TestValidate_RejectsJobPushPartialsReferencingUnknownStep(t *testing.T) {
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
 		Action: "job:push",
 		Params: map[string]any{
-			"type":     "nba-apply",
-			"partials": []any{map[string]any{"type": "does-not-exist"}},
+			"kind":     "nba-apply",
+			"partials": []any{map[string]any{"kind": "does-not-exist"}},
 		},
 	}}}
 
 	if err := Validate(appCtx, wf, registry); err == nil {
-		t.Fatal("expected an error for partials referencing an unknown step id")
+		t.Fatal("expected an error for partials referencing an unknown kind")
 	}
 }
 
@@ -470,8 +470,8 @@ func TestValidate_SkipsTemplatedJobPushPartialsType(t *testing.T) {
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
 		Action: "job:push",
 		Params: map[string]any{
-			"type":     "nba-apply",
-			"partials": []any{map[string]any{"type": "${outputs.x.y}"}},
+			"kind":     "nba-apply",
+			"partials": []any{map[string]any{"kind": "${outputs.x.y}"}},
 		},
 	}}}
 
@@ -485,7 +485,7 @@ func TestValidate_JobPushWithoutPartialsIsFine(t *testing.T) {
 	registry := NewRegistry(appCtx)
 	wf := workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
 		Action: "job:push",
-		Params: map[string]any{"type": "nba-apply"},
+		Params: map[string]any{"kind": "nba-apply"},
 	}}}
 
 	if err := Validate(appCtx, wf, registry); err != nil {
@@ -588,26 +588,26 @@ func TestValidate_JobPushRejectsWrongParameterShapes(t *testing.T) {
 	cases := map[string]string{
 		"inputs as a name/value list": `
       - action: job:push
-        type: demo
+        kind: demo
         inputs:
           - name: file
             value: a.zip`,
 		"context as a list": `
       - action: job:push
-        type: demo
+        kind: demo
         context:
           - trace`,
 		"ttlSeconds as a string": `
       - action: job:push
-        type: demo
+        kind: demo
         ttlSeconds: soon`,
 		"sequential as a string": `
       - action: job:push
-        type: demo
+        kind: demo
         sequential: maybe`,
 		"setup as a definition id": `
       - action: job:push
-        type: demo
+        kind: demo
         setup: no-such-definition`,
 	}
 
@@ -626,7 +626,7 @@ func TestValidate_JobPushAcceptsTemplatedParameters(t *testing.T) {
 	// run, so validation must let it through rather than guess.
 	appCtx := jobPushValidationAppCtx(t, `
       - action: job:push
-        type: demo
+        kind: demo
         inputs: ${params.blob}
         ttlSeconds: ${params.ttl}`)
 

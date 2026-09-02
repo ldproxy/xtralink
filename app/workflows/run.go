@@ -129,16 +129,15 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 }
 
 // validateJobPush checks a job:push Step ahead of the run: `partials:`
-// must reference types that already exist as step ids under
-// jobs: (the same check validateJobDefinitions performs), and
-// every other parameter must be of the kind the Job model expects. It is
-// optional - without partials, job:push falls back to a bare Job,
-// unchanged from before.
+// must reference kinds that already exist under jobs: (the same check
+// validateJobDefinitions performs), and every other parameter must be of
+// the type the Job model expects. It is optional - without partials,
+// job:push falls back to a bare Job, unchanged from before.
 //
-// `followUps:` types are deliberately not checked against the
-// JobDefinitions: the backend pushes follow-ups as plain Jobs with no steps
-// of their own, so any type is legitimate there, exactly as for a direct
-// `job push <type>`.
+// `followUps:` kinds are deliberately not checked against the
+// JobDefinitions: the backend pushes follow-ups as plain Jobs with no
+// PartialJobs of their own, so any kind is legitimate there, exactly as for
+// a direct `job push <kind>`.
 func validateJobPush(appCtx *app.AppContext, params map[string]any) error {
 	if err := validateJobPushPartials(appCtx, params); err != nil {
 		return err
@@ -201,14 +200,14 @@ func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) erro
 		if !ok {
 			return fmt.Errorf("partials[%d]: invalid entry", i)
 		}
-		typ, _ := entry["type"].(string)
-		if typ == "" {
-			return fmt.Errorf("partials[%d]: \"type\" is required", i)
+		kind, _ := entry["kind"].(string)
+		if kind == "" {
+			return fmt.Errorf("partials[%d]: \"kind\" is required", i)
 		}
-		if strings.Contains(typ, "${") {
+		if strings.Contains(kind, "${") {
 			continue // only known once earlier steps have run
 		}
-		if _, err := appCtx.Settings.GetJobDefinition(typ); err != nil {
+		if _, err := appCtx.Settings.GetJobDefinition(kind); err != nil {
 			return fmt.Errorf("partials[%d]: %w", i, err)
 		}
 	}

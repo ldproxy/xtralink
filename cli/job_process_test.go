@@ -17,42 +17,42 @@ import (
 	"github.com/ldproxy/xtralink/model"
 )
 
-func TestStepIdsToProcess_SpecificId(t *testing.T) {
+func TestKindsToProcess_SpecificKind(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
 		JobDefinitions: []app.JobDefinition{
-			{Id: "step-a", Workflow: "wf-a"},
-			{Id: "step-b", Workflow: "wf-b"},
+			{Kind: "step-a", Workflow: "wf-a"},
+			{Kind: "step-b", Workflow: "wf-b"},
 		},
 	}}
 
-	ids, err := stepIdsToProcess(appCtx, "step-b")
+	ids, err := kindsToProcess(appCtx, "step-b")
 	if err != nil {
-		t.Fatalf("stepIdsToProcess: %v", err)
+		t.Fatalf("kindsToProcess: %v", err)
 	}
 	if len(ids) != 1 || ids[0] != "step-b" {
 		t.Errorf("ids = %v, want [step-b]", ids)
 	}
 }
 
-func TestStepIdsToProcess_UnknownIdIsError(t *testing.T) {
+func TestKindsToProcess_UnknownKindIsError(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
-	if _, err := stepIdsToProcess(appCtx, "does-not-exist"); err == nil {
-		t.Fatal("expected an error for an unknown step id")
+	if _, err := kindsToProcess(appCtx, "does-not-exist"); err == nil {
+		t.Fatal("expected an error for an unknown kind")
 	}
 }
 
-func TestStepIdsToProcess_WildcardReturnsEveryStep(t *testing.T) {
+func TestKindsToProcess_WildcardReturnsEveryKind(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
 		JobDefinitions: []app.JobDefinition{
-			{Id: "step-a", Workflow: "wf-a"},
-			{Id: "step-b1", Workflow: "wf-b"},
-			{Id: "step-b2", Workflow: "wf-b"},
+			{Kind: "step-a", Workflow: "wf-a"},
+			{Kind: "step-b1", Workflow: "wf-b"},
+			{Kind: "step-b2", Workflow: "wf-b"},
 		},
 	}}
 
-	ids, err := stepIdsToProcess(appCtx, "*")
+	ids, err := kindsToProcess(appCtx, "*")
 	if err != nil {
-		t.Fatalf("stepIdsToProcess: %v", err)
+		t.Fatalf("kindsToProcess: %v", err)
 	}
 	want := map[string]bool{"step-a": true, "step-b1": true, "step-b2": true}
 	if len(ids) != len(want) {
@@ -69,9 +69,9 @@ func TestStepIdsToProcess_WildcardReturnsEveryStep(t *testing.T) {
 	}
 }
 
-func TestStepIdsToProcess_WildcardWithNoJobDefinitionsIsError(t *testing.T) {
+func TestKindsToProcess_WildcardWithNoJobDefinitionsIsError(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
-	if _, err := stepIdsToProcess(appCtx, "*"); err == nil {
+	if _, err := kindsToProcess(appCtx, "*"); err == nil {
 		t.Fatal("expected an error when no jobs are configured")
 	}
 }
@@ -88,9 +88,9 @@ func TestExecutorId_IncludesPid(t *testing.T) {
 // pipeline: pushes a Job via app/jobs.Push, starts JobProcessCmd's run()
 // with a cancellable context (standing in for SIGTERM, s. run's doc
 // comment), waits for the Job to finish, then cancels - proving the CLI
-// wiring (stepIdsToProcess -> NewWorkflowJobProcessor -> Runner) works
+// wiring (kindsToProcess -> NewWorkflowJobProcessor -> Runner) works
 // together, not just each piece in isolation.
-func TestJobProcessCmd_ProcessesOneStepThenStopsOnCancel(t *testing.T) {
+func TestJobProcessCmd_ProcessesOnePartialJobThenStopsOnCancel(t *testing.T) {
 	targetDir := t.TempDir()
 	fooRemote := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fooRemote, "a.zip"), []byte("a"), 0o644); err != nil {
@@ -115,7 +115,7 @@ workflows:
         path: "*.zip"
 
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
     workflow: nba-transform
     outputs:
       foo: ${outputs.found.path}
@@ -146,7 +146,7 @@ jobs:
 		t.Fatalf("Push: %v", err)
 	}
 
-	cmd := &JobProcessCmd{Id: "nba-transformation"}
+	cmd := &JobProcessCmd{Kind: "nba-transformation"}
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
 	go func() { runDone <- cmd.run(appCtx, ctx) }()

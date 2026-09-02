@@ -17,7 +17,7 @@ func TestJobPushAction_PushesJobWithInputs(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	result, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":   "nba-apply",
+		"kind":   "nba-apply",
 		"inputs": map[string]any{"package": "s3://bucket", "file": "a.zip"},
 	}})
 	if err != nil {
@@ -40,13 +40,13 @@ func TestJobPushAction_PushesJobWithInputs(t *testing.T) {
 	}
 }
 
-func TestJobPushAction_MissingTypeIsError(t *testing.T) {
+func TestJobPushAction_MissingKindIsError(t *testing.T) {
 	targetDir := t.TempDir()
 	appCtx, _ := newTestAppContext(t, targetDir)
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{}}); err == nil {
-		t.Fatal("expected an error for a missing type param")
+		t.Fatal("expected an error for a missing kind param")
 	}
 }
 
@@ -55,7 +55,7 @@ func TestJobPushAction_NoInputsIsFine(t *testing.T) {
 	appCtx, backend := newTestAppContext(t, targetDir)
 
 	action := &JobPushAction{AppCtx: appCtx}
-	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{"type": "demo"}}); err != nil {
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{"kind": "demo"}}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if backend.pushedJob == nil {
@@ -66,7 +66,7 @@ func TestJobPushAction_NoInputsIsFine(t *testing.T) {
 // jobDefinitionsAppCtx builds a real *app.AppContext around a real
 // jobs.MemoryBackend (not fakeBackend, which never records PartialJobs) and
 // Settings with the given JobDefinitions - needed for `partials:`, which
-// resolves each referenced type via Settings.GetJobDefinition.
+// resolves each referenced kind via Settings.GetJobDefinition.
 func jobDefinitionsAppCtx(defs []app.JobDefinition) (*app.AppContext, *jobs.MemoryBackend) {
 	backend := jobs.NewMemoryBackend()
 	return &app.AppContext{
@@ -78,20 +78,20 @@ func jobDefinitionsAppCtx(defs []app.JobDefinition) (*app.AppContext, *jobs.Memo
 
 func nbaPipelineDefs() []app.JobDefinition {
 	return []app.JobDefinition{
-		{Id: "nba-transformation", Workflow: "nba-transform"},
-		{Id: "nba-transaction-step", Workflow: "nba-transaction"},
+		{Kind: "nba-transformation", Workflow: "nba-transform"},
+		{Kind: "nba-transaction-step", Workflow: "nba-transaction"},
 	}
 }
 
-func TestJobPushAction_PartialsBuildsMultiStepPipeline(t *testing.T) {
+func TestJobPushAction_PartialsBuildsMultiPartPipeline(t *testing.T) {
 	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type": "nba-apply",
+		"kind": "nba-apply",
 		"partials": []any{
-			map[string]any{"type": "nba-transformation"},
-			map[string]any{"type": "nba-transaction-step"},
+			map[string]any{"kind": "nba-transformation"},
+			map[string]any{"kind": "nba-transaction-step"},
 		},
 	}}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -126,16 +126,16 @@ func TestJobPushAction_PartialsBuildsMultiStepPipeline(t *testing.T) {
 	}
 }
 
-func TestJobPushAction_PartialsSequentialGatesLaterSteps(t *testing.T) {
+func TestJobPushAction_PartialsSequentialGatesLaterPartials(t *testing.T) {
 	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":       "nba-apply",
+		"kind":       "nba-apply",
 		"sequential": true,
 		"partials": []any{
-			map[string]any{"type": "nba-transformation"},
-			map[string]any{"type": "nba-transaction-step"},
+			map[string]any{"kind": "nba-transformation"},
+			map[string]any{"kind": "nba-transaction-step"},
 		},
 	}}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -149,18 +149,18 @@ func TestJobPushAction_PartialsSequentialGatesLaterSteps(t *testing.T) {
 	}
 }
 
-func TestJobPushAction_PartialsUnknownTypeIsError(t *testing.T) {
+func TestJobPushAction_PartialsUnknownKindIsError(t *testing.T) {
 	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
 
 	action := &JobPushAction{AppCtx: appCtx}
 	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type": "nba-apply",
+		"kind": "nba-apply",
 		"partials": []any{
-			map[string]any{"type": "does-not-exist"},
+			map[string]any{"kind": "does-not-exist"},
 		},
 	}})
 	if err == nil {
-		t.Fatal("expected an error for a partials entry referencing an unknown step id")
+		t.Fatal("expected an error for a partials entry referencing an unknown kind")
 	}
 	if jobsList, _ := backend.GetJobs(); len(jobsList) != 0 {
 		t.Errorf("expected no Job to have been pushed, got %+v", jobsList)
@@ -172,7 +172,7 @@ func TestJobPushAction_PartialsEmptyListIsError(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":     "nba-apply",
+		"kind":     "nba-apply",
 		"partials": []any{},
 	}}); err == nil {
 		t.Fatal("expected an error for an empty partials list")
@@ -184,7 +184,7 @@ func TestJobPushAction_CarriesEveryJobField(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":       "nba-apply",
+		"kind":       "nba-apply",
 		"label":      "a readable label",
 		"priority":   500,
 		"inputs":     map[string]any{"file": "a.zip"},
@@ -193,7 +193,7 @@ func TestJobPushAction_CarriesEveryJobField(t *testing.T) {
 		"setup":      true,
 		"cleanup":    true,
 		"followUps": []any{
-			map[string]any{"type": "notify", "label": "tell ops", "inputs": map[string]any{"to": "ops"}},
+			map[string]any{"kind": "notify", "label": "tell ops", "inputs": map[string]any{"to": "ops"}},
 		},
 	}}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -240,7 +240,7 @@ func TestJobPushAction_InputsMustBeAMap(t *testing.T) {
 	action := &JobPushAction{AppCtx: appCtx}
 	// The pre-map shape: a list of {name, value} entries.
 	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":   "demo",
+		"kind":   "demo",
 		"inputs": []any{map[string]any{"name": "file", "value": "a.zip"}},
 	}})
 	if err == nil {
@@ -257,7 +257,7 @@ func TestJobPushAction_TtlSecondsMustBeANumber(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":       "demo",
+		"kind":       "demo",
 		"ttlSeconds": "not a number",
 	}})
 	if err == nil {
@@ -273,7 +273,7 @@ func TestJobPushAction_SetupAndCleanupMustBeBooleans(t *testing.T) {
 	for _, key := range []string{"setup", "cleanup"} {
 		t.Run(key, func(t *testing.T) {
 			_, err := action.Run(&workflows.StepContext{Params: map[string]any{
-				"type": "nba-apply",
+				"kind": "nba-apply",
 				key:    "nba-transformation",
 			}})
 			if err == nil {
@@ -294,11 +294,11 @@ func TestJobPushAction_SequentialWithSetupAndCleanupStillRuns(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":       "nba-apply",
+		"kind":       "nba-apply",
 		"sequential": true,
 		"setup":      true,
 		"partials": []any{
-			map[string]any{"type": "nba-transaction-step"},
+			map[string]any{"kind": "nba-transaction-step"},
 		},
 	}}); err != nil {
 		t.Fatalf("Run: %v", err)

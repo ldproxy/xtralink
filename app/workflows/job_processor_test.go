@@ -59,11 +59,11 @@ workflows:
     steps: []
 
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
     workflow: nba-transform
     outputs:
       foo: ${outputs.found.path}
-  - id: nba-transaction-step
+  - kind: nba-transaction-step
     workflow: nba-transaction
     parameters:
       foo: ${parent.outputs.foo}
@@ -199,7 +199,7 @@ workflows:
     steps: []
 
 jobs:
-  - id: step-a
+  - kind: step-a
     workflow: needs-param
     parameters:
       unrelated: "value"
@@ -261,7 +261,7 @@ jobs:
 func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{
 		Workflows:      []workflows.Workflow{{Id: "wf"}},
-		JobDefinitions: []app.JobDefinition{{Id: "step-a", Workflow: "wf"}},
+		JobDefinitions: []app.JobDefinition{{Kind: "step-a", Workflow: "wf"}},
 	}}
 	processor, err := WorkflowJobProcessor(appCtx, "step-a")
 	if err != nil {

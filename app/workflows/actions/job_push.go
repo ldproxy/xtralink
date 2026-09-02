@@ -9,19 +9,19 @@ import (
 	"github.com/ldproxy/xtralink/model"
 )
 
-// JobPushAction implements "job:push": builds a Job from the Step's
-// parameters and pushes it via app/jobs.Push - fire-and-forget, it never
-// waits for the Job to finish.
+// JobPushAction implements "job:push": builds a Job from the workflow
+// step's parameters and pushes it via app/jobs.Push - fire-and-forget, it
+// never waits for the Job to finish.
 //
-// Each parameter maps onto one field of model.JobConfiguration, so a step
-// reads the same way the pushed Job looks: type, label, description,
+// Each parameter maps onto one field of model.JobConfiguration, so the
+// step reads the same way the pushed Job looks: kind, label, description,
 // priority, inputs, context, ttlSeconds, setup, cleanup, followUps.
 //
-// `partials:` names the JobDefinitions the Job's steps run, which is what
-// binds each step to a workflow; job:push never declares new ones itself.
-// The pushed Job then gets one PartialJob per listed type - an ad-hoc
-// pipeline under the Step's own type, without that type needing its own
-// JobDefinition entry. `setup:`/`cleanup:` are plain booleans instead,
+// `partials:` names the JobDefinitions the Job's PartialJobs run, which is
+// what binds each of them to a workflow; job:push never declares new ones
+// itself. The pushed Job then gets one PartialJob per listed kind - an
+// ad-hoc pipeline under the Job's own kind, without that kind needing its
+// own JobDefinition entry. `setup:`/`cleanup:` are plain booleans instead,
 // since their kinds follow from the Job's own by convention
 // (s. lib/jobs.SetupKind).
 type JobPushAction struct {
@@ -53,7 +53,7 @@ func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, 
 		return nil, err
 	}
 
-	partials, err := resolvePartialSteps(a.AppCtx, params)
+	partials, err := resolvePartials(a.AppCtx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +73,9 @@ func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, 
 // shape the generated model already defines - so there is one description
 // of a Job to push, not a second one owned by this action.
 func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
-	jobType, _ := params["type"].(string)
-	if jobType == "" {
-		return nil, fmt.Errorf(`"type" parameter is required`)
+	kind, _ := params["kind"].(string)
+	if kind == "" {
+		return nil, fmt.Errorf(`"kind" parameter is required`)
 	}
 
 	label, _ := params["label"].(string)
@@ -107,7 +107,7 @@ func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
 	}
 
 	return &model.JobConfiguration{
-		Kind:        jobType,
+		Kind:        kind,
 		Label:       label,
 		Description: description,
 		Priority:    intParam(params, "priority", 1000),
@@ -120,13 +120,13 @@ func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
 	}, nil
 }
 
-// resolvePartialSteps turns `partials: [{type: ...}, ...]` into the
-// JobDefinitions those types already reference - job:push does not declare
+// resolvePartials turns `partials: [{kind: ...}, ...]` into the
+// JobDefinitions those kinds already reference - job:push does not declare
 // new ones itself, it only reuses existing entries (their Workflow
-// binding, Parameters/Outputs mapping), the same way job process <id>
+// binding, Parameters/Outputs mapping), the same way `job process <kind>`
 // already resolves them. An absent `partials:` is fine: the Job then has
-// whatever steps its own type implies.
-func resolvePartialSteps(appCtx *app.AppContext, params map[string]any) ([]app.JobDefinition, error) {
+// whatever PartialJobs its own kind implies.
+func resolvePartials(appCtx *app.AppContext, params map[string]any) ([]app.JobDefinition, error) {
 	raw, ok := params["partials"]
 	if !ok {
 		return nil, nil
@@ -143,11 +143,11 @@ func resolvePartialSteps(appCtx *app.AppContext, params map[string]any) ([]app.J
 		if !ok {
 			return nil, fmt.Errorf("partials[%d]: invalid entry", i)
 		}
-		typ, _ := entry["type"].(string)
-		if typ == "" {
-			return nil, fmt.Errorf("partials[%d]: \"type\" is required", i)
+		kind, _ := entry["kind"].(string)
+		if kind == "" {
+			return nil, fmt.Errorf("partials[%d]: \"kind\" is required", i)
 		}
-		def, err := appCtx.Settings.GetJobDefinition(typ)
+		def, err := appCtx.Settings.GetJobDefinition(kind)
 		if err != nil {
 			return nil, fmt.Errorf("partials[%d]: %w", i, err)
 		}
@@ -156,14 +156,14 @@ func resolvePartialSteps(appCtx *app.AppContext, params map[string]any) ([]app.J
 	return defs, nil
 }
 
-// resolveFollowUps reads `followUps: [{type, label, inputs}, ...]` as the
+// resolveFollowUps reads `followUps: [{kind, label, inputs}, ...]` as the
 // nested JobConfigurations the model carries, so a follow-up accepts the
 // same parameters the step itself does - recursively, since a follow-up may
 // declare follow-ups of its own.
 //
-// A follow-up's type is not resolved against the JobDefinitions: the
-// backend pushes follow-ups as plain Jobs, so any type is legitimate there,
-// the same freedom a direct `job push <type>` has.
+// A follow-up's kind is not resolved against the JobDefinitions: the
+// backend pushes follow-ups as plain Jobs, so any kind is legitimate there,
+// the same freedom a direct `job push <kind>` has.
 func resolveFollowUps(params map[string]any) ([]model.JobConfiguration, error) {
 	raw, ok := params["followUps"]
 	if !ok {

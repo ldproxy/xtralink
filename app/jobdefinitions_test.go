@@ -27,11 +27,11 @@ workflows:
 func TestLoadSettings_ParsesJobDefinitions(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
     workflow: nba-transform
     outputs:
       foo: ${outputs.0.foo}
-  - id: nba-transaction-step
+  - kind: nba-transaction-step
     workflow: nba-transaction
     parameters:
       foo: ${parent.outputs.foo}
@@ -47,8 +47,8 @@ jobs:
 		t.Fatalf("len(JobDefinitions) = %d, want 2", len(settings.JobDefinitions))
 	}
 
-	if settings.JobDefinitions[0].Id != "nba-transformation" {
-		t.Errorf("[0].Id = %q", settings.JobDefinitions[0].Id)
+	if settings.JobDefinitions[0].Kind != "nba-transformation" {
+		t.Errorf("[0].Kind = %q", settings.JobDefinitions[0].Kind)
 	}
 	if settings.JobDefinitions[0].Workflow != "nba-transform" {
 		t.Errorf("[0].Workflow = %q", settings.JobDefinitions[0].Workflow)
@@ -61,9 +61,9 @@ jobs:
 func TestLoadSettings_RejectsDuplicateJobDefinitionId(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
 jobs:
-  - id: shared-id
+  - kind: shared-id
     workflow: nba-transform
-  - id: shared-id
+  - kind: shared-id
     workflow: nba-transaction
 `)
 	if _, err := LoadSettings(path); err == nil {
@@ -74,7 +74,7 @@ jobs:
 func TestLoadSettings_RejectsDefinitionWithoutWorkflow(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
 `)
 	if _, err := LoadSettings(path); err == nil {
 		t.Fatal("expected an error for a jobDefinition without a workflow")
@@ -84,7 +84,7 @@ jobs:
 func TestLoadSettings_RejectsDefinitionReferencingUnknownWorkflow(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
     workflow: does-not-exist
 `)
 	if _, err := LoadSettings(path); err == nil {
@@ -95,9 +95,9 @@ jobs:
 func TestSettings_GetJobDefinition(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
 jobs:
-  - id: nba-transformation
+  - kind: nba-transformation
     workflow: nba-transform
-  - id: nba-transaction-step
+  - kind: nba-transaction-step
     workflow: nba-transaction
 `)
 	settings, err := LoadSettings(path)
@@ -109,7 +109,7 @@ jobs:
 	if err != nil {
 		t.Fatalf("GetJobDefinition: %v", err)
 	}
-	if def.Id != "nba-transaction-step" || def.Workflow != "nba-transaction" {
+	if def.Kind != "nba-transaction-step" || def.Workflow != "nba-transaction" {
 		t.Errorf("GetJobDefinition returned %+v", def)
 	}
 	if _, err := settings.GetJobDefinition("missing"); err == nil {

@@ -356,7 +356,7 @@ workflows:
         action: pkg:pull
         pkg: foo
       - action: job:push
-        type: nba-apply
+        kind: nba-apply
         anything: at all
         nested:
           deeper: value

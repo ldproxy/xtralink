@@ -10,20 +10,20 @@ import (
 )
 
 // WorkflowJobProcessor makes a Job a thin wrapper around a single Workflow
-// run: one instance handles exactly one JobDefinition (its JobType() is
-// that definition's id), resolving its input-parameter mapping, running the
+// run: one instance handles exactly one JobDefinition, and so exactly one
+// PartialJob kind - resolving its input-parameter mapping, running the
 // referenced Workflow, and writing its output mapping into the shared
-// Job's Outputs. A multi-step Job (several JobDefinitions composed ad-hoc,
+// Job's Outputs. A multi-part Job (several JobDefinitions composed ad-hoc,
 // s. the job:push workflow action's `partials:`) registers one
 // WorkflowJobProcessor per JobDefinition - not one processor handling all
-// of them - so `job process <id>` can scale a single PartialJob type's
-// workers independently of the rest.
-func WorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*jobs.JobProcessor, error) {
-	def, err := appCtx.Settings.GetJobDefinition(stepId)
+// of them - so `job process <kind>` can scale one kind's workers
+// independently of the rest.
+func WorkflowJobProcessor(appCtx *app.AppContext, kind string) (*jobs.JobProcessor, error) {
+	def, err := appCtx.Settings.GetJobDefinition(kind)
 	if err != nil {
 		return nil, err
 	}
-	return &jobs.JobProcessor{Kind: stepId, Priority: 1000, Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+	return &jobs.JobProcessor{Kind: kind, Priority: 1000, Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
 		if job == nil {
 			// Can legitimately happen if the Job was deleted/expired while an
 			// orphaned PartialJob for it still lingered in the queue (s. the
@@ -56,8 +56,9 @@ func WorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*jobs.JobProce
 		if err != nil {
 			return model.Error(fmt.Sprintf("workflow %q failed: %v", wf.Id, err))
 		}
-		// A job-wrapped Workflow is expected to complete linearly - a step that
-		// forks (pkg:find_each and the like) would produce more than one
+		// A job-wrapped Workflow is expected to complete linearly - a
+		// workflow step that forks (pkg:find_each and the like) would
+		// produce more than one
 		// result here, and there's no defined way to pick "the" one for the
 		// outputs mapping below, so treat it as a configuration error rather
 		// than silently guessing.
@@ -70,10 +71,11 @@ func WorkflowJobProcessor(appCtx *app.AppContext, stepId string) (*jobs.JobProce
 			return model.Error(fmt.Sprintf("writing outputs: %v", err))
 		}
 
-		// This step has no progressDetails fan-out (no intermediate progress,
-		// s. concept) - it's atomic, either fully done or not, so it reports a
-		// single +1 once. UpdatePartialJob carries that through to the Job's
-		// own current as well, so there is nothing to report separately.
+		// This PartialJob has no progressDetails fan-out (no intermediate
+		// progress, s. concept) - it's atomic, either fully done or not, so
+		// it reports a single +1 once. UpdatePartialJob carries that through
+		// to the Job's own current as well, so there is nothing to report
+		// separately.
 		if err := backend.UpdatePartialJob(partialJob.Id, 1); err != nil {
 			return model.Error(fmt.Sprintf("updating partial job progress: %v", err))
 		}
@@ -101,8 +103,8 @@ func resolveImplicitParams(wf *workflows.Workflow, job *model.Job) (map[string]a
 // resolveExplicitParams resolves Def.Parameters as workflow-style
 // ${...} template expressions against packages/parent - parent.outputs is
 // the shared Job's own Outputs (s. PartialJob.PartOf), i.e. whatever an
-// earlier step of the same Job already wrote; there is no separate
-// "parent job" to look up, since all steps of a Job are PartialJobs of the
+// earlier PartialJob of the same Job already wrote; there is no separate
+// "parent job" to look up, since every part of a Job is a PartialJob of the
 // very same Job.
 func resolveExplicitParams(appCtx *app.AppContext, def *app.JobDefinition, wf *workflows.Workflow, job *model.Job) (map[string]any, error) {
 	resolveVars := map[string]any{

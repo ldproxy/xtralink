@@ -142,7 +142,7 @@ func TestPush_MatchingJobDefinitionBuildsSinglePartialJob(t *testing.T) {
 		Jobs: backend,
 		Settings: &app.Settings{
 			JobDefinitions: []app.JobDefinition{
-				{Id: "nba-transformation", Workflow: "nba-transform"},
+				{Kind: "nba-transformation", Workflow: "nba-transform"},
 			},
 		},
 	}
@@ -183,8 +183,8 @@ func TestPush_SequentialAssignsSequenceSlots(t *testing.T) {
 	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
 
 	defs := []app.JobDefinition{
-		{Id: "step-a", Workflow: "wf-a"},
-		{Id: "step-b", Workflow: "wf-b"},
+		{Kind: "step-a", Workflow: "wf-a"},
+		{Kind: "step-b", Workflow: "wf-b"},
 	}
 
 	job, err := Push(appCtx, PushRequest{
