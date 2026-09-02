@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
 const (
@@ -98,5 +99,40 @@ func TestJobQueue_DeleteUnknownIdIsFalse(t *testing.T) {
 
 	if q.Delete(uuid.NewString()) {
 		t.Error("expected Delete to report false for an unknown id")
+	}
+}
+
+func TestJobQueue_CancelDismissesUnfinishedJob(t *testing.T) {
+	q := newTestJobQueue()
+	jobID := pushJob(t, q)
+
+	if !q.Cancel(jobID) {
+		t.Fatal("expected Cancel to dismiss a Job that has not finished")
+	}
+
+	job, ok := q.Get(jobID)
+	if !ok {
+		t.Fatal("expected the dismissed Job to still be readable")
+	}
+	if job.Status != model.StatusDISMISSED {
+		t.Errorf("Status = %q, want DISMISSED", job.Status)
+	}
+}
+
+func TestJobQueue_CancelRefusesFinishedJob(t *testing.T) {
+	q := newTestJobQueue()
+	jobID := pushJob(t, q)
+	finishJob(t, q, jobID)
+
+	if q.Cancel(jobID) {
+		t.Error("expected Cancel to refuse a Job that has already finished")
+	}
+}
+
+func TestJobQueue_CancelUnknownIdIsFalse(t *testing.T) {
+	q := newTestJobQueue()
+
+	if q.Cancel(uuid.NewString()) {
+		t.Error("expected Cancel to report false for an unknown id")
 	}
 }

@@ -436,6 +436,9 @@ func (b *RedisBackend) onPartialJobDone(ctx context.Context, partialJob *model.P
 		}
 	}
 
+	if job.Status == model.StatusDISMISSED {
+		return b.finalizeIfDismissed(ctx, job)
+	}
 	return b.finalizeIfDone(ctx, job)
 }
 
@@ -521,6 +524,9 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 		}
 	}
 
+	if job.Status == model.StatusDISMISSED {
+		return b.finalizeIfDismissed(ctx, job)
+	}
 	return b.finalizeIfDone(ctx, job)
 }
 
@@ -616,7 +622,13 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 	return b.setStatus(ctx, job.Id, job.GetStatus())
 }
 
+// pushFollowUps spawns the Job's follow-up Jobs - never for a dismissed
+// one, since spawning more work is the opposite of cancelling.
 func (b *RedisBackend) pushFollowUps(job *model.Job) error {
+	if job.Status == model.StatusDISMISSED {
+		return nil
+	}
+
 	for _, followUp := range job.FollowUps {
 		if err := b.PushJob(&followUp); err != nil {
 			return err
@@ -700,6 +712,166 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 
 	if partialJob.PartOf != "" {
 		return b.onPartialJobPermanentlyFailed(ctx, partialJob)
+	}
+	return nil
+}
+
+// Cancel dismisses a Job (s. Backend.Cancel).
+func (b *RedisBackend) Cancel(jobID string) (bool, error) {
+	ctx := context.Background()
+
+	job, err := b.getJob(ctx, jobID)
+	if err != nil || job == nil {
+		return false, err
+	}
+	if job.FinishedAt > 0 || job.Status == model.StatusDISMISSED {
+		return false, nil
+	}
+
+	if err := b.setStatus(ctx, jobID, model.StatusDISMISSED); err != nil {
+		return false, err
+	}
+	if err := b.jsonSet(ctx, b.keyJob+jobID, "$.updatedAt", nowMillis()); err != nil {
+		return true, err
+	}
+	job.Status = model.StatusDISMISSED
+
+	queued, _, err := b.livePartials(ctx, jobID)
+	if err != nil {
+		return true, err
+	}
+	for _, id := range queued {
+		if err := b.dropQueuedPartialJob(ctx, jobID, id); err != nil {
+			return true, err
+		}
+	}
+
+	return true, b.finalizeIfDismissed(ctx, job)
+}
+
+// livePartials reports which of jobID's PartialJobs are still waiting in a
+// queue and which are currently taken. Permanently failed ones are in
+// neither list, so they correctly do not count.
+//
+// Enumerating every queue means a KEYS scan over the priority registrations
+// plus one LRANGE per (kind, priority) - the same shape GetJobs already
+// uses. Only dismissed Jobs ever reach this, so the cost stays off every
+// hot path.
+func (b *RedisBackend) livePartials(ctx context.Context, jobID string) (queued []string, taken []string, err error) {
+	keys, err := b.client.Keys(ctx, b.keyPriorities+"*").Result()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, key := range keys {
+		partialJobType := strings.TrimPrefix(key, b.keyPriorities)
+		priorities, err := b.priorities(ctx, partialJobType)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, p := range priorities {
+			ids, err := b.client.LRange(ctx, b.queueKey(partialJobType, p), 0, -1).Result()
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, id := range ids {
+				partOf, err := b.partialJobPartOf(ctx, id)
+				if err != nil {
+					return nil, nil, err
+				}
+				if partOf == jobID {
+					queued = append(queued, id)
+				}
+			}
+		}
+	}
+
+	takenIds, err := b.client.LRange(ctx, b.keyTaken, 0, -1).Result()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, id := range takenIds {
+		partOf, err := b.partialJobPartOf(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		if partOf == jobID {
+			taken = append(taken, id)
+		}
+	}
+
+	return queued, taken, nil
+}
+
+// partialJobPartOf returns the Job a PartialJob belongs to, or "" if the
+// record is gone (a queue entry can outlive it).
+func (b *RedisBackend) partialJobPartOf(ctx context.Context, partialJobID string) (string, error) {
+	partialJob, err := b.getPartialJob(ctx, partialJobID)
+	if err != nil || partialJob == nil {
+		return "", err
+	}
+	return partialJob.PartOf, nil
+}
+
+// dropQueuedPartialJob removes a never-taken PartialJob, advancing the same
+// sequence bookkeeping a completion would so a Parallel=false Job cannot
+// stall on a slot that will now never run.
+func (b *RedisBackend) dropQueuedPartialJob(ctx context.Context, jobID, partialJobID string) error {
+	partialJob, err := b.getPartialJob(ctx, partialJobID)
+	if err != nil || partialJob == nil {
+		return err
+	}
+
+	queue := b.queueKey(partialJob.Kind, partialJob.Priority)
+	if err := b.client.LRem(ctx, queue, 1, partialJobID).Err(); err != nil {
+		return err
+	}
+	if err := b.jsonDel(ctx, b.keyPartial+partialJobID); err != nil {
+		return err
+	}
+
+	// advanceSequence is a no-op for a Job without a Sequence, so it needs
+	// no guard here.
+	return b.advanceSequence(ctx, jobID)
+}
+
+// finalizeIfDismissed is finalizeIfDone for a cancelled Job, gated on
+// "nothing of this Job is left to run" instead of on progress, which a
+// dismissed Job never completes.
+func (b *RedisBackend) finalizeIfDismissed(ctx context.Context, job *model.Job) error {
+	fresh, err := b.getJob(ctx, job.Id)
+	if err != nil || fresh == nil {
+		return err
+	}
+	if fresh.Status != model.StatusDISMISSED || fresh.FinishedAt > 0 {
+		return nil
+	}
+
+	queued, taken, err := b.livePartials(ctx, job.Id)
+	if err != nil {
+		return err
+	}
+	if len(queued) > 0 || len(taken) > 0 {
+		return nil
+	}
+
+	// The same claim finalizeIfDone takes, so a dismissed wind-down and a
+	// normal finalization can never both fire for one Job.
+	claimed, err := b.client.SetNX(ctx, b.keyFinalized+job.Id, "1", 24*time.Hour).Result()
+	if err != nil || !claimed {
+		return err
+	}
+
+	// Progress is deliberately left where cancellation caught it: a Job
+	// stopped at 3 of 10 reports 30%, not a completion it never reached.
+	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", nowMillis()); err != nil {
+		return err
+	}
+
+	// Cleanup still runs - it is the release-resources step - but followUps
+	// never do.
+	if fresh.Cleanup != nil {
+		return b.PushPartialJob(fresh.Cleanup, false)
 	}
 	return nil
 }

@@ -103,23 +103,32 @@ func TestJobStatus(t *testing.T) {
 		startedAt  int64
 		finishedAt int64
 		errors     []string
+		stored     Status
 		want       Status
 	}{
-		{"accepted", -1, -1, nil, StatusACCEPTED},
-		{"running", 1, -1, nil, StatusRUNNING},
-		{"running with errors mid-flight", 1, -1, []string{"transient"}, StatusRUNNING},
-		{"successful", 1, 2, nil, StatusSUCCESSFUL},
-		{"failed", 1, 2, []string{"boom"}, StatusFAILED},
+		{"accepted", -1, -1, nil, "", StatusACCEPTED},
+		{"running", 1, -1, nil, "", StatusRUNNING},
+		{"running with errors mid-flight", 1, -1, []string{"transient"}, "", StatusRUNNING},
+		{"successful", 1, 2, nil, "", StatusSUCCESSFUL},
+		{"failed", 1, 2, []string{"boom"}, "", StatusFAILED},
 		// Regression: a permanently failed setup PartialJob can finish a
 		// Job that was never started (RedisBackend.forceFail) - finished
 		// must win over the "never started -> accepted" rule, or the Job
 		// would incorrectly show "accepted" forever.
-		{"finished without ever starting, no errors", -1, 5, nil, StatusSUCCESSFUL},
-		{"finished without ever starting, with errors", -1, 5, []string{"setup failed"}, StatusFAILED},
+		{"finished without ever starting, no errors", -1, 5, nil, "", StatusSUCCESSFUL},
+		{"finished without ever starting, with errors", -1, 5, []string{"setup failed"}, "", StatusFAILED},
+		// A dismissal is an explicit decision rather than something the
+		// timestamps imply, so once stored it has to outrank every rule
+		// above - otherwise the next write that recomputes the status would
+		// relabel a cancelled Job as successful or failed.
+		{"dismissed while still running", 1, -1, nil, StatusDISMISSED, StatusDISMISSED},
+		{"dismissed and finished", 1, 2, nil, StatusDISMISSED, StatusDISMISSED},
+		{"dismissed with errors", 1, 2, []string{"boom"}, StatusDISMISSED, StatusDISMISSED},
+		{"dismissed before ever starting", -1, -1, nil, StatusDISMISSED, StatusDISMISSED},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			job := &Job{BaseJob: BaseJob{StartedAt: tt.startedAt, FinishedAt: tt.finishedAt, Errors: tt.errors}}
+			job := &Job{BaseJob: BaseJob{StartedAt: tt.startedAt, FinishedAt: tt.finishedAt, Errors: tt.errors, Status: tt.stored}}
 			if got := job.GetStatus(); got != tt.want {
 				t.Errorf("Status() = %s, want %s", got, tt.want)
 			}

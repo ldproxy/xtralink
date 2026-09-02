@@ -52,6 +52,13 @@ func (b *BaseJob) HasErrors() bool {
 
 // Status derives the OGC-facing lifecycle status.
 func (j *BaseJob) GetStatus() Status {
+	// Dismissal is an explicit decision rather than something the
+	// timestamps imply, so once stored it outranks everything they say -
+	// including the errors a cancelled PartialJob may have left behind.
+	if j.Status == StatusDISMISSED {
+		return StatusDISMISSED
+	}
+
 	switch {
 	case j.FinishedAt > 0:
 		// Checked first, ahead of StartedAt: a permanently failed setup

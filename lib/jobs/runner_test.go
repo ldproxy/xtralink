@@ -472,3 +472,78 @@ func assertJobSurvivesSweeps(t *testing.T, b *MemoryBackend, r *Runner, jobID st
 		t.Errorf("expected the Job to have finished, got %+v", got)
 	}
 }
+
+func TestRunner_CancellableProcessorStopsEarly(t *testing.T) {
+	b := NewMemoryBackend()
+	fixture := pushCancelJob(t, b, 1, 1, false)
+
+	var once sync.Once
+	started := make(chan struct{})
+	r := NewRunner(b, "test")
+	r.PollInterval = 10 * time.Millisecond
+	r.Register(&JobProcessor{Kind: fixture.workerKind, Priority: 1000,
+		Process: func(_ *model.PartialJob, job *model.Job, backend Backend) model.JobResult {
+			once.Do(func() { close(started) })
+			for !IsCancelled(backend, job.Id) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			return model.Success()
+		}})
+
+	go func() {
+		<-started
+		b.Cancel(fixture.id)
+	}()
+
+	runRunnerUntil(t, r, 3*time.Second, func() bool {
+		got, _ := b.GetJob(fixture.id)
+		return got != nil && got.FinishedAt > 0
+	})
+
+	job := requireJob(t, b, fixture.id)
+	if job.Status != model.StatusDISMISSED {
+		t.Errorf("Status = %q, want DISMISSED", job.Status)
+	}
+	if job.HasErrors() {
+		t.Errorf("expected a cancelled processor to report success, not errors: %v", job.Errors)
+	}
+}
+
+func TestRunner_NonCancellableProcessorRunsToCompletion(t *testing.T) {
+	b := NewMemoryBackend()
+	fixture := pushCancelJob(t, b, 1, 1, false)
+
+	var once sync.Once
+	started := make(chan struct{})
+	r := NewRunner(b, "test")
+	r.PollInterval = 10 * time.Millisecond
+	// Never asks whether it was cancelled, which is what "not cancellable"
+	// looks like: it finishes its work and the Job winds down afterwards.
+	r.Register(&JobProcessor{Kind: fixture.workerKind, Priority: 1000,
+		Process: func(p *model.PartialJob, _ *model.Job, backend Backend) model.JobResult {
+			once.Do(func() { close(started) })
+			time.Sleep(100 * time.Millisecond)
+			if err := backend.UpdatePartialJob(p.Id, 1); err != nil {
+				return model.Error(err.Error())
+			}
+			return model.Success()
+		}})
+
+	go func() {
+		<-started
+		b.Cancel(fixture.id)
+	}()
+
+	runRunnerUntil(t, r, 3*time.Second, func() bool {
+		got, _ := b.GetJob(fixture.id)
+		return got != nil && got.FinishedAt > 0
+	})
+
+	job := requireJob(t, b, fixture.id)
+	if job.Status != model.StatusDISMISSED {
+		t.Errorf("Status = %q, want DISMISSED even though the processor ignored the cancellation", job.Status)
+	}
+	if job.Progress.Current != 1 {
+		t.Errorf("expected the work it completed anyway to still count, current = %d", job.Progress.Current)
+	}
+}

@@ -257,6 +257,9 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *model.PartialJob) err
 	if job.Sequence != nil {
 		b.advanceSequenceLocked(job)
 	}
+	if job.Status == model.StatusDISMISSED {
+		return b.finalizeIfDismissedLocked(job)
+	}
 	return b.finalizeIfDoneLocked(job)
 }
 
@@ -311,6 +314,9 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 		listener.OnProgress(*job)
 	}
 
+	if job.Status == model.StatusDISMISSED {
+		return b.finalizeIfDismissedLocked(job)
+	}
 	return b.finalizeIfDoneLocked(job)
 }
 
@@ -367,7 +373,13 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) {
 	}
 }
 
+// pushFollowUpsLocked mirrors RedisBackend.pushFollowUps, including its
+// refusal to spawn follow-up work for a dismissed Job.
 func (b *MemoryBackend) pushFollowUpsLocked(job *model.Job) error {
+	if job.Status == model.StatusDISMISSED {
+		return nil
+	}
+
 	for _, followUp := range job.FollowUps {
 		if err := b.pushJobLocked(&followUp, NoopJobListener{}); err != nil {
 			return err
@@ -472,6 +484,111 @@ func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 
 	if partialJob.PartOf != "" {
 		return b.onPartialJobPermanentlyFailedLocked(partialJob)
+	}
+	return nil
+}
+
+// Cancel dismisses a Job (s. Backend.Cancel).
+func (b *MemoryBackend) Cancel(jobID string) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	job := b.jobs[jobID]
+	if job == nil || job.FinishedAt > 0 || job.Status == model.StatusDISMISSED {
+		return false, nil
+	}
+
+	job.Status = model.StatusDISMISSED
+	job.UpdatedAt = nowMillis()
+
+	queued, _ := b.livePartialsLocked(jobID)
+	for _, id := range queued {
+		b.dropQueuedPartialJobLocked(job, id)
+	}
+
+	if err := b.finalizeIfDismissedLocked(job); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// livePartialsLocked reports which of jobID's PartialJobs are still waiting
+// in a queue and which are currently taken. Permanently failed ones live on
+// in b.partial but are in neither, so they correctly do not count.
+func (b *MemoryBackend) livePartialsLocked(jobID string) (queued []string, taken []string) {
+	for _, byPriority := range b.queues {
+		for _, ids := range byPriority {
+			for _, id := range ids {
+				if pj := b.partial[id]; pj != nil && pj.PartOf == jobID {
+					queued = append(queued, id)
+				}
+			}
+		}
+	}
+	for id := range b.taken {
+		if pj := b.partial[id]; pj != nil && pj.PartOf == jobID {
+			taken = append(taken, id)
+		}
+	}
+	return queued, taken
+}
+
+// dropQueuedPartialJobLocked removes a never-taken PartialJob, advancing the
+// same sequence bookkeeping a completion would so a Parallel=false Job
+// cannot stall on a slot that will now never run.
+func (b *MemoryBackend) dropQueuedPartialJobLocked(job *model.Job, partialJobID string) {
+	partialJob := b.partial[partialJobID]
+	if partialJob == nil {
+		return
+	}
+
+	if byPriority := b.queues[partialJob.Kind]; byPriority != nil {
+		ids := byPriority[partialJob.Priority]
+		for i, id := range ids {
+			if id == partialJobID {
+				remaining := make([]string, 0, len(ids)-1)
+				remaining = append(remaining, ids[:i]...)
+				remaining = append(remaining, ids[i+1:]...)
+				byPriority[partialJob.Priority] = remaining
+				break
+			}
+		}
+	}
+
+	delete(b.partial, partialJobID)
+
+	if job.Sequence != nil {
+		b.advanceSequenceLocked(job)
+	}
+}
+
+// finalizeIfDismissedLocked mirrors RedisBackend.finalizeIfDismissed: the
+// finalizeIfDoneLocked of a cancelled Job, gated on "nothing of this Job is
+// left to run" instead of on progress, which a dismissed Job never
+// completes.
+func (b *MemoryBackend) finalizeIfDismissedLocked(job *model.Job) error {
+	if job.Status != model.StatusDISMISSED || job.FinishedAt > 0 {
+		return nil
+	}
+
+	queued, taken := b.livePartialsLocked(job.Id)
+	if len(queued) > 0 || len(taken) > 0 {
+		return nil
+	}
+
+	// Progress is deliberately left where cancellation caught it: a Job
+	// stopped at 3 of 10 reports 30%, not a completion it never reached.
+	job.FinishedAt = nowMillis()
+
+	listener := b.listeners[job.Id]
+	if listener != nil {
+		listener.OnProgress(*job)
+	}
+
+	// Cleanup still runs - it is the release-resources step - but followUps
+	// never do, since spawning more work is the opposite of cancelling.
+	if job.Cleanup != nil {
+		return b.pushPartialJobLocked(job.Cleanup, false)
 	}
 	return nil
 }

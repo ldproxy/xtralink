@@ -189,8 +189,11 @@ func (s *JobQueue) Outputs(id string, outputs model.SetOutputs) {
 	s.backend.SetOutputs(id, outputs.Outputs)
 }
 
+// Cancel dismisses a Job: queued PartialJobs are dropped, running ones are
+// left to finish, and the Job winds down once the last of them reports.
 func (s *JobQueue) Cancel(id string) bool {
-	return false
+	cancelled, err := s.backend.Cancel(id)
+	return err == nil && cancelled
 }
 
 // Delete retires a finished Job ahead of its TTL. An unfinished Job is left

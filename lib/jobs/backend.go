@@ -44,6 +44,15 @@ type Backend interface {
 	// interest. Its PartialJobs are already gone by then - Done deletes
 	// each one as it finishes. Unknown ids are not an error.
 	DoneJob(jobID string) error
+	// Cancel dismisses a Job: its queued PartialJobs are dropped, its
+	// running ones are left to finish, and the Job winds down to DISMISSED
+	// once the last of them reports. Reports false if the Job is unknown or
+	// already terminal (finished, or dismissed by an earlier call).
+	//
+	// Unlike its neighbours this reports a bool as well as an error: whether
+	// the Job was still cancellable has to be decided where the state is,
+	// not in a caller-side pre-read that races other executors.
+	Cancel(jobID string) (bool, error)
 
 	GetJobs() ([]*model.Job, error)
 	GetJob(id string) (*model.Job, error)
