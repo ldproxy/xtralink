@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -16,11 +17,8 @@ func TestJobPushAction_PushesJobWithInputs(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	result, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type": "nba-apply",
-		"inputs": []any{
-			map[string]any{"name": "package", "value": "s3://bucket"},
-			map[string]any{"name": "file", "value": "a.zip"},
-		},
+		"type":   "nba-apply",
+		"inputs": map[string]any{"package": "s3://bucket", "file": "a.zip"},
 	}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -104,8 +102,8 @@ func TestJobPushAction_PartialsBuildsMultiStepPipeline(t *testing.T) {
 		t.Fatalf("GetJobs: %v, %+v", err, jobsList)
 	}
 	job := jobsList[0]
-	// Parallel defaults to true (no `parallel: false` given), so the Job
-	// opts out of sequencing entirely and its steps carry no Sequence slot.
+	// Sequencing is opt-in (no `sequential: true` given), so the Job opts
+	// out of it entirely and its steps carry no Sequence slot.
 	if job.Kind != "nba-apply" || job.Sequence != nil {
 		t.Errorf("unexpected Job: kind=%q sequence=%+v, want nba-apply/nil", job.Kind, job.Sequence)
 	}
@@ -133,8 +131,8 @@ func TestJobPushAction_PartialsSequentialGatesLaterSteps(t *testing.T) {
 
 	action := &JobPushAction{AppCtx: appCtx}
 	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
-		"type":     "nba-apply",
-		"parallel": false,
+		"type":       "nba-apply",
+		"sequential": true,
 		"partials": []any{
 			map[string]any{"type": "nba-transformation"},
 			map[string]any{"type": "nba-transaction-step"},
@@ -178,5 +176,150 @@ func TestJobPushAction_PartialsEmptyListIsError(t *testing.T) {
 		"partials": []any{},
 	}}); err == nil {
 		t.Fatal("expected an error for an empty partials list")
+	}
+}
+
+func TestJobPushAction_CarriesEveryJobField(t *testing.T) {
+	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
+
+	action := &JobPushAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"type":       "nba-apply",
+		"label":      "a readable label",
+		"priority":   500,
+		"inputs":     map[string]any{"file": "a.zip"},
+		"context":    map[string]any{"trace": "abc"},
+		"ttlSeconds": 900,
+		"setup":      true,
+		"cleanup":    true,
+		"followUps": []any{
+			map[string]any{"type": "notify", "label": "tell ops", "inputs": map[string]any{"to": "ops"}},
+		},
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	jobsList, err := backend.GetJobs()
+	if err != nil || len(jobsList) != 1 {
+		t.Fatalf("GetJobs: %v, %+v", err, jobsList)
+	}
+	job := jobsList[0]
+
+	if job.Label != "a readable label" || job.Priority != 500 {
+		t.Errorf("label/priority = %q/%d", job.Label, job.Priority)
+	}
+	if job.Inputs["file"] != "a.zip" {
+		t.Errorf("Inputs = %v", job.Inputs)
+	}
+	if job.Context["trace"] != "abc" {
+		t.Errorf("Context = %v", job.Context)
+	}
+	if job.TtlSeconds == nil || *job.TtlSeconds != 900 {
+		t.Errorf("TtlSeconds = %v, want 900", job.TtlSeconds)
+	}
+	// A boolean is all setup/cleanup need: their kinds follow from the Job's
+	// own kind by convention (s. lib/jobs.SetupKind).
+	if job.Setup == nil || job.Setup.Kind != "nba-apply:setup" {
+		t.Errorf("Setup = %+v, want kind nba-apply:setup", job.Setup)
+	}
+	if job.Cleanup == nil || job.Cleanup.Kind != "nba-apply:cleanup" {
+		t.Errorf("Cleanup = %+v, want kind nba-apply:cleanup", job.Cleanup)
+	}
+	if len(job.FollowUps) != 1 || job.FollowUps[0].Kind != "notify" {
+		t.Fatalf("FollowUps = %+v", job.FollowUps)
+	}
+	if job.FollowUps[0].Inputs["to"] != "ops" {
+		t.Errorf("follow-up inputs = %v", job.FollowUps[0].Inputs)
+	}
+}
+
+func TestJobPushAction_InputsMustBeAMap(t *testing.T) {
+	targetDir := t.TempDir()
+	appCtx, _ := newTestAppContext(t, targetDir)
+
+	action := &JobPushAction{AppCtx: appCtx}
+	// The pre-map shape: a list of {name, value} entries.
+	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"type":   "demo",
+		"inputs": []any{map[string]any{"name": "file", "value": "a.zip"}},
+	}})
+	if err == nil {
+		t.Fatal("expected an error for a list of name/value pairs")
+	}
+	if !strings.Contains(err.Error(), "inputs") {
+		t.Errorf("error %q should name the inputs parameter", err.Error())
+	}
+}
+
+func TestJobPushAction_TtlSecondsMustBeANumber(t *testing.T) {
+	targetDir := t.TempDir()
+	appCtx, _ := newTestAppContext(t, targetDir)
+
+	action := &JobPushAction{AppCtx: appCtx}
+	_, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"type":       "demo",
+		"ttlSeconds": "not a number",
+	}})
+	if err == nil {
+		t.Fatal("expected an error for a non-numeric ttlSeconds")
+	}
+}
+
+func TestJobPushAction_SetupAndCleanupMustBeBooleans(t *testing.T) {
+	appCtx, _ := jobDefinitionsAppCtx(nbaPipelineDefs())
+	action := &JobPushAction{AppCtx: appCtx}
+
+	// The pre-boolean shape: a JobDefinition id naming the step to run.
+	for _, key := range []string{"setup", "cleanup"} {
+		t.Run(key, func(t *testing.T) {
+			_, err := action.Run(&workflows.StepContext{Params: map[string]any{
+				"type": "nba-apply",
+				key:    "nba-transformation",
+			}})
+			if err == nil {
+				t.Fatal("expected an error for a non-boolean value")
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q should name the %s parameter", err.Error(), key)
+			}
+		})
+	}
+}
+
+// A sequenced Job's setup and cleanup sit outside the sequence. Without
+// the exemption in lib/jobs.isSetupOrCleanup, setup would claim slot 0 and
+// leave every ordinary step waiting on a Current that nothing advances.
+func TestJobPushAction_SequentialWithSetupAndCleanupStillRuns(t *testing.T) {
+	appCtx, backend := jobDefinitionsAppCtx(nbaPipelineDefs())
+
+	action := &JobPushAction{AppCtx: appCtx}
+	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{
+		"type":       "nba-apply",
+		"sequential": true,
+		"setup":      true,
+		"partials": []any{
+			map[string]any{"type": "nba-transaction-step"},
+		},
+	}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	setup, err := backend.Take("nba-apply:setup", "test")
+	if err != nil || setup == nil {
+		t.Fatalf("Take(setup): %v, %+v", err, setup)
+	}
+	if setup.Sequence != nil {
+		t.Errorf("setup claimed sequence slot %d, want none", *setup.Sequence)
+	}
+	if err := backend.Done(setup.Id); err != nil {
+		t.Fatalf("Done(setup): %v", err)
+	}
+
+	step, err := backend.Take("nba-transaction-step", "test")
+	if err != nil || step == nil {
+		t.Fatalf("Take(step) after setup finished: %v, %+v - the first step must be takeable", err, step)
+	}
+	if step.Sequence == nil || *step.Sequence != 0 {
+		t.Errorf("step: Sequence = %v, want slot 0", step.Sequence)
 	}
 }

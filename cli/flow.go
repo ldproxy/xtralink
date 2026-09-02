@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 
 type Flow struct {
 	Run  FlowRunCmd  `cmd:"" help:"Run a workflow"`
+	Get  FlowGetCmd  `cmd:"" help:"Print full details of a workflow as JSON"`
 	List FlowListCmd `cmd:"" help:"List configured workflows"`
 }
 
@@ -44,11 +46,31 @@ func inputNames(inputs []string) []string {
 	return names
 }
 
+type FlowGetCmd struct {
+	Id string `arg:"" help:"Workflow id"`
+}
+
+func (c *FlowGetCmd) Run(appCtx *app.AppContext) error {
+	wf, err := appCtx.Settings.GetWorkflow(c.Id)
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Str("id", c.Id).Msg("get failed")
+		return err
+	}
+
+	raw, err := json.MarshalIndent(wf, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not encode workflow as json: %w", err)
+	}
+
+	fmt.Println(string(raw))
+	return nil
+}
+
 type FlowListCmd struct{}
 
 func (c *FlowListCmd) Run(appCtx *app.AppContext) error {
 	for _, wf := range appCtx.Settings.Workflows {
-		fmt.Printf("%s\t%d steps\n", wf.Id, len(wf.Steps))
+		fmt.Printf("%s\t%s\n", wf.Id, wf.Description)
 	}
 	return nil
 }

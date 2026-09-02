@@ -1,20 +1,29 @@
 package actions
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/jobs"
 	"github.com/ldproxy/xtralink/lib/workflows"
+	"github.com/ldproxy/xtralink/model"
 )
 
-// JobPushAction implements "job:push": builds a Job from the Step's inputs
-// list and pushes it via the existing app/jobs.Push - fire-and-forget, it
-// never waits for the Job to finish. If `partials:` is given, the pushed
-// Job gets one PartialJob per listed type instead (s. resolvePartialSteps)
-// - an ad-hoc, multi-step pipeline under the Step's own `type`, without
-// that type needing its own JobDefinition entry.
+// JobPushAction implements "job:push": builds a Job from the Step's
+// parameters and pushes it via app/jobs.Push - fire-and-forget, it never
+// waits for the Job to finish.
+//
+// Each parameter maps onto one field of model.JobConfiguration, so a step
+// reads the same way the pushed Job looks: type, label, description,
+// priority, inputs, context, ttlSeconds, setup, cleanup, followUps.
+//
+// `partials:` names the JobDefinitions the Job's steps run, which is what
+// binds each step to a workflow; job:push never declares new ones itself.
+// The pushed Job then gets one PartialJob per listed type - an ad-hoc
+// pipeline under the Step's own type, without that type needing its own
+// JobDefinition entry. `setup:`/`cleanup:` are plain booleans instead,
+// since their kinds follow from the Job's own by convention
+// (s. lib/jobs.SetupKind).
 type JobPushAction struct {
 	AppCtx *app.AppContext
 }
@@ -22,52 +31,107 @@ type JobPushAction struct {
 func (a *JobPushAction) Type() string { return "job:push" }
 
 func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, error) {
-	jobType, ok := ctx.Params["type"].(string)
-	if !ok || jobType == "" {
-		return workflows.StepResult{}, fmt.Errorf(`job:push: "type" parameter is required`)
-	}
-	label, _ := ctx.Params["label"].(string)
-	priority := 1000
-	switch v := ctx.Params["priority"].(type) {
-	case int:
-		priority = v
-	case float64:
-		priority = int(v)
-	}
-
-	inputsJSON, err := buildInputsJSON(ctx.Params["inputs"])
+	req, err := a.buildRequest(ctx.Params)
 	if err != nil {
 		return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
 	}
 
-	if raw, ok := ctx.Params["partials"]; ok {
-		steps, err := resolvePartialSteps(a.AppCtx, raw)
-		if err != nil {
-			return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
-		}
-		parallel := true
-		if v, ok := ctx.Params["parallel"].(bool); ok {
-			parallel = v
-		}
-		if _, err := jobs.PushPipeline(a.AppCtx, jobType, label, priority, inputsJSON, steps, parallel); err != nil {
-			return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
-		}
-		return workflows.Success(), nil
-	}
-
-	if _, err := jobs.Push(a.AppCtx, jobType, label, priority, inputsJSON); err != nil {
+	job, err := jobs.Push(a.AppCtx, *req)
+	if err != nil {
 		return workflows.StepResult{}, fmt.Errorf("job:push: %w", err)
 	}
 
+	ctx.Logger.Debug().Str("job", job.Id).Str("kind", job.Kind).
+		Int("partials", len(req.Partials)).Bool("sequential", req.Sequential).Msg("pushed job")
+
 	return workflows.Success(), nil
+}
+
+func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, error) {
+	cfg, err := jobConfiguration(params)
+	if err != nil {
+		return nil, err
+	}
+
+	partials, err := resolvePartialSteps(a.AppCtx, params)
+	if err != nil {
+		return nil, err
+	}
+	sequential, err := boolParam(params, "sequential")
+	if err != nil {
+		return nil, err
+	}
+
+	return &jobs.PushRequest{
+		JobConfiguration: *cfg,
+		Partials:         partials,
+		Sequential:       sequential,
+	}, nil
+}
+
+// jobConfiguration reads the parameters that are the Job itself, in the
+// shape the generated model already defines - so there is one description
+// of a Job to push, not a second one owned by this action.
+func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
+	jobType, _ := params["type"].(string)
+	if jobType == "" {
+		return nil, fmt.Errorf(`"type" parameter is required`)
+	}
+
+	label, _ := params["label"].(string)
+	description, _ := params["description"].(string)
+
+	inputs, err := mapParam(params, "inputs")
+	if err != nil {
+		return nil, err
+	}
+	context, err := mapParam(params, "context")
+	if err != nil {
+		return nil, err
+	}
+	ttlSeconds, err := optionalIntParam(params, "ttlSeconds")
+	if err != nil {
+		return nil, err
+	}
+	setup, err := boolParam(params, "setup")
+	if err != nil {
+		return nil, err
+	}
+	cleanup, err := boolParam(params, "cleanup")
+	if err != nil {
+		return nil, err
+	}
+	followUps, err := resolveFollowUps(params)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.JobConfiguration{
+		Kind:        jobType,
+		Label:       label,
+		Description: description,
+		Priority:    intParam(params, "priority", 1000),
+		Inputs:      inputs,
+		Context:     context,
+		TtlSeconds:  ttlSeconds,
+		Setup:       setup,
+		Cleanup:     cleanup,
+		FollowUps:   followUps,
+	}, nil
 }
 
 // resolvePartialSteps turns `partials: [{type: ...}, ...]` into the
 // JobDefinitions those types already reference - job:push does not declare
 // new ones itself, it only reuses existing entries (their Workflow
 // binding, Parameters/Outputs mapping), the same way job process <id>
-// already resolves them.
-func resolvePartialSteps(appCtx *app.AppContext, raw any) ([]app.JobDefinition, error) {
+// already resolves them. An absent `partials:` is fine: the Job then has
+// whatever steps its own type implies.
+func resolvePartialSteps(appCtx *app.AppContext, params map[string]any) ([]app.JobDefinition, error) {
+	raw, ok := params["partials"]
+	if !ok {
+		return nil, nil
+	}
+
 	entries, _ := raw.([]any)
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("partials: at least one entry is required")
@@ -92,31 +156,101 @@ func resolvePartialSteps(appCtx *app.AppContext, raw any) ([]app.JobDefinition, 
 	return defs, nil
 }
 
-// buildInputsJSON turns the Step's `inputs: [{name, value}, ...]` list into
-// the flat JSON object app/jobs.Push expects as its inputsRaw string.
-func buildInputsJSON(raw any) (string, error) {
-	entries, _ := raw.([]any)
-	inputs := make(map[string]any, len(entries))
+// resolveFollowUps reads `followUps: [{type, label, inputs}, ...]` as the
+// nested JobConfigurations the model carries, so a follow-up accepts the
+// same parameters the step itself does - recursively, since a follow-up may
+// declare follow-ups of its own.
+//
+// A follow-up's type is not resolved against the JobDefinitions: the
+// backend pushes follow-ups as plain Jobs, so any type is legitimate there,
+// the same freedom a direct `job push <type>` has.
+func resolveFollowUps(params map[string]any) ([]model.JobConfiguration, error) {
+	raw, ok := params["followUps"]
+	if !ok {
+		return nil, nil
+	}
 
-	for _, item := range entries {
+	entries, _ := raw.([]any)
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("followUps: at least one entry is required")
+	}
+
+	followUps := make([]model.JobConfiguration, 0, len(entries))
+	for i, item := range entries {
 		entry, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("followUps[%d]: invalid entry", i)
 		}
-		name, _ := entry["name"].(string)
-		if name == "" {
-			continue
+		cfg, err := jobConfiguration(entry)
+		if err != nil {
+			return nil, fmt.Errorf("followUps[%d]: %w", i, err)
 		}
-		inputs[name] = entry["value"]
+		followUps = append(followUps, *cfg)
+	}
+	return followUps, nil
+}
+
+// boolParam reads an optional boolean parameter, refusing anything that
+// only looks like one - a "true" typed as a string is a mistake worth
+// reporting, not a value to coerce.
+func boolParam(params map[string]any, key string) (bool, error) {
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return false, nil
 	}
 
-	if len(inputs) == 0 {
-		return "", nil
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("%s: must be true or false, got %T", key, raw)
+	}
+	return value, nil
+}
+
+// mapParam reads a parameter that goes onto the Job as an opaque
+// map[string]any (inputs, context) and passes it straight through - the
+// model carries exactly what the workflow wrote, no name/value wrapping in
+// between.
+func mapParam(params map[string]any, key string) (map[string]any, error) {
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return nil, nil
 	}
 
-	encoded, err := json.Marshal(inputs)
-	if err != nil {
-		return "", fmt.Errorf("could not encode inputs: %w", err)
+	value, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s: must be a map of names to values, got %T", key, raw)
 	}
-	return string(encoded), nil
+	if len(value) == 0 {
+		return nil, nil
+	}
+	return value, nil
+}
+
+// intParam reads an integer parameter, tolerating the float64 a JSON- or
+// YAML-decoded number can arrive as.
+func intParam(params map[string]any, key string, fallback int) int {
+	switch v := params[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return fallback
+}
+
+// optionalIntParam is intParam for a field the model keeps as a pointer,
+// where "not set" and "set to zero" are different things.
+func optionalIntParam(params map[string]any, key string) (*int, error) {
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch raw.(type) {
+	case int, int64, float64:
+		value := intParam(params, key, 0)
+		return &value, nil
+	}
+	return nil, fmt.Errorf("%s: must be a number, got %T", key, raw)
 }

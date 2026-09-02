@@ -136,10 +136,8 @@ workflows:
       - action: job:push
         type: nba-apply
         inputs:
-          - name: package
-            value: ${packages.bar.url}
-          - name: file
-            value: ${outputs.input.path}
+          package: ${packages.bar.url}
+          file: ${outputs.input.path}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -250,8 +248,7 @@ workflows:
       - action: job:push
         type: nba-apply
         inputs:
-          - name: file
-            value: ${outputs.input.path}
+          file: ${outputs.input.path}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -583,4 +580,89 @@ workflows:
 
 	assertContent(t, filepath.Join(fooRemote, "a.zip"), "a")
 	assertContent(t, filepath.Join(fooRemote, "COPY_a.zip"), "a")
+}
+
+// A job:push parameter of the wrong kind must fail validation, before any
+// earlier step of the workflow has run.
+func TestValidate_JobPushRejectsWrongParameterShapes(t *testing.T) {
+	cases := map[string]string{
+		"inputs as a name/value list": `
+      - action: job:push
+        type: demo
+        inputs:
+          - name: file
+            value: a.zip`,
+		"context as a list": `
+      - action: job:push
+        type: demo
+        context:
+          - trace`,
+		"ttlSeconds as a string": `
+      - action: job:push
+        type: demo
+        ttlSeconds: soon`,
+		"sequential as a string": `
+      - action: job:push
+        type: demo
+        sequential: maybe`,
+		"setup as a definition id": `
+      - action: job:push
+        type: demo
+        setup: no-such-definition`,
+	}
+
+	for name, steps := range cases {
+		t.Run(name, func(t *testing.T) {
+			appCtx := jobPushValidationAppCtx(t, steps)
+			if err := Run(appCtx, "dispatch", nil); err == nil {
+				t.Fatal("expected the workflow to be rejected")
+			}
+		})
+	}
+}
+
+func TestValidate_JobPushAcceptsTemplatedParameters(t *testing.T) {
+	// A whole-value template's type is only known once earlier steps have
+	// run, so validation must let it through rather than guess.
+	appCtx := jobPushValidationAppCtx(t, `
+      - action: job:push
+        type: demo
+        inputs: ${params.blob}
+        ttlSeconds: ${params.ttl}`)
+
+	if err := Validate(appCtx, appCtx.Settings.Workflows[0], NewRegistry(appCtx)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func jobPushValidationAppCtx(t *testing.T, steps string) *app.AppContext {
+	t.Helper()
+
+	config := `
+targetDir: ` + t.TempDir() + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+
+workflows:
+  - id: dispatch
+    steps:` + steps + `
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	return &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
 }

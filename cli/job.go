@@ -6,6 +6,7 @@ import (
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
 type Job struct {
@@ -24,7 +25,20 @@ type JobPushCmd struct {
 }
 
 func (c *JobPushCmd) Run(appCtx *app.AppContext) error {
-	job, err := jobs.Push(appCtx, c.Type, c.Label, c.Priority, c.Inputs)
+	inputs, err := jobs.ParseInputs(c.Inputs)
+	if err != nil {
+		appCtx.Logger.Error().Err(err).Str("type", c.Type).Msg("invalid --inputs")
+		return err
+	}
+
+	job, err := jobs.Push(appCtx, jobs.PushRequest{
+		JobConfiguration: model.JobConfiguration{
+			Kind:     c.Type,
+			Label:    c.Label,
+			Priority: c.Priority,
+			Inputs:   inputs,
+		},
+	})
 	if err != nil {
 		appCtx.Logger.Error().Err(err).Str("type", c.Type).Msg("push failed")
 		return err

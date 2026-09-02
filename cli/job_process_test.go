@@ -139,7 +139,9 @@ jobDefinitions:
 		Locks:    lock.NoopLocker{},
 	}
 
-	job, err := appjobs.Push(appCtx, "nba-transformation", "", 1000, "")
+	job, err := appjobs.Push(appCtx, appjobs.PushRequest{
+		JobConfiguration: model.JobConfiguration{Kind: "nba-transformation", Priority: 1000},
+	})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}

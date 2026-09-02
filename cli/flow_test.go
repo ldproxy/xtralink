@@ -4,6 +4,10 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/rs/zerolog"
+
+	"github.com/ldproxy/xtralink/app"
+	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
 // TestFlowRunCmd_RepeatedInputFlagsAccumulate verifies the actual Kong
@@ -53,5 +57,36 @@ func TestFlowRunCmd_NoInputFlagsIsEmpty(t *testing.T) {
 	}
 	if len(cli.Flow.Run.Inputs) != 0 {
 		t.Errorf("Inputs = %+v, want empty", cli.Flow.Run.Inputs)
+	}
+}
+
+func TestFlowGetCmd_TakesTheWorkflowIdAsAnArgument(t *testing.T) {
+	var cli struct {
+		Flow Flow `cmd:""`
+	}
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatalf("kong.New: %v", err)
+	}
+
+	if _, err := parser.Parse([]string{"flow", "get", "check-ldm"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cli.Flow.Get.Id != "check-ldm" {
+		t.Errorf("Id = %q, want check-ldm", cli.Flow.Get.Id)
+	}
+}
+
+func TestFlowGetCmd_UnknownWorkflowIsError(t *testing.T) {
+	appCtx := &app.AppContext{
+		Logger: zerolog.Nop(),
+		Settings: &app.Settings{Workflows: []workflows.Workflow{
+			{Id: "check-ldm", Description: "what this does"},
+		}},
+	}
+
+	cmd := &FlowGetCmd{Id: "no-such-workflow"}
+	if err := cmd.Run(appCtx); err == nil {
+		t.Fatal("expected an error for an unknown workflow id")
 	}
 }

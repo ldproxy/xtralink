@@ -120,7 +120,7 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untak
 	// a PartialJob already counted once at its original push, incrementing
 	// again would double-count it.
 	if !untake && stored.PartOf != "" {
-		if job := b.jobs[stored.PartOf]; job != nil && job.Sequence != nil {
+		if job := b.jobs[stored.PartOf]; job != nil && job.Sequence != nil && !isSetupOrCleanup(job, stored.Id) {
 			next := job.Sequence.Remaining
 			stored.Sequence = &next
 			job.Sequence.Remaining++
@@ -187,16 +187,17 @@ func (b *MemoryBackend) Take(partialJobType, executor string) (*model.PartialJob
 }
 
 // sequenceReadyLocked reports whether partialJob may run right now: always
-// true for a standalone PartialJob (no parent Job) or one whose parent Job
-// has Parallel=true (the default, plain sharding - no ordering
-// constraint); otherwise only once its parent's CurrentSequence has
-// reached its own Sequence.
+// true for a standalone PartialJob (no parent Job), one whose parent Job is
+// unsequenced (the default, plain sharding - no ordering constraint), and
+// for the Job's setup/cleanup, which sit outside the sequence entirely
+// (s. isSetupOrCleanup); otherwise only once its parent's CurrentSequence
+// has reached its own Sequence.
 func (b *MemoryBackend) sequenceReadyLocked(partialJob *model.PartialJob) bool {
 	if partialJob.PartOf == "" {
 		return true
 	}
 	job := b.jobs[partialJob.PartOf]
-	if job == nil || job.Sequence == nil {
+	if job == nil || job.Sequence == nil || isSetupOrCleanup(job, partialJob.Id) {
 		return true
 	}
 	return partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current

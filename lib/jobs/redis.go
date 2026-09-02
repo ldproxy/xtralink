@@ -365,10 +365,10 @@ func (b *RedisBackend) sequenceReady(ctx context.Context, partialJob *model.Part
 	if err != nil {
 		return false, err
 	}
-	if job == nil || job.Sequence == nil {
+	if job == nil || job.Sequence == nil || isSetupOrCleanup(job, partialJob.Id) {
 		return true, nil
 	}
-	return *partialJob.Sequence == job.Sequence.Current, nil
+	return partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current, nil
 }
 
 // Done removes partialJobID from the taken list, runs the setup/cleanup/
@@ -1070,7 +1070,7 @@ func (b *RedisBackend) registerSequence(ctx context.Context, partialJob *model.P
 	if err != nil || job == nil {
 		return err
 	}
-	if job.Sequence == nil {
+	if job.Sequence == nil || isSetupOrCleanup(job, partialJob.Id) {
 		return nil
 	}
 

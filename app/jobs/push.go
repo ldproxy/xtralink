@@ -11,78 +11,58 @@ import (
 	"github.com/ldproxy/xtralink/model"
 )
 
-// Push builds a new Job from CLI input and pushes it onto the queue. A
-// caller pushes a Job (the "order"), not a raw PartialJob. If jobType
-// matches a configured JobDefinition (s. app.JobDefinition), the Job gets
-// exactly one PartialJob of that same type (via PushPipeline) - a
-// multi-step Job is only ever built ad-hoc, by the job:push workflow
-// action's `partials:` support, never by a direct `job push <id>`.
-// Otherwise (no matching JobDefinition - e.g. an ad-hoc type like
-// "nba-apply") it stays a bare Job with no PartialJobs of its own, exactly
-// as before JobDefinitions existed.
-func Push(appCtx *app.AppContext, jobType, label string, priority int, inputsRaw string) (*model.Job, error) {
-	var def *app.JobDefinition
-	if appCtx.Settings != nil {
-		def, _ = appCtx.Settings.GetJobDefinition(jobType)
-	}
-	if def == nil {
-		inputs, err := parseInputs(inputsRaw)
-		if err != nil {
-			return nil, err
-		}
-		job := jobs.NewJob(uuid.NewString(), jobType, priority, label, inputs)
-		if err := appCtx.Jobs.PushJob(job); err != nil {
-			return nil, fmt.Errorf("could not push job: %w", err)
-		}
-		return job, nil
-	}
-
-	return PushPipeline(appCtx, jobType, label, priority, inputsRaw, []app.JobDefinition{*def}, true)
-}
-
-// parseInputs decodes the CLI's raw inputs JSON into the opaque map the
-// model carries. An empty string stays nil (no inputs at all), rather than
-// an empty map.
-func parseInputs(inputsRaw string) (map[string]any, error) {
-	if inputsRaw == "" {
-		return nil, nil
-	}
-	var inputs map[string]any
-	if err := json.Unmarshal([]byte(inputsRaw), &inputs); err != nil {
-		return nil, fmt.Errorf("inputs is not a valid json object: %s", inputsRaw)
-	}
-	return inputs, nil
-}
-
-// PushPipeline pushes a Job of jobType with one PartialJob per given
-// JobDefinition (Kind=def.Id), all created together up front - there is no
-// setup step that creates them dynamically, since the shape is already
-// fully known by the caller. Shared by Push (a single JobDefinition match -
-// exactly one PartialJob) and the job:push workflow action's `partials:`
-// support (several JobDefinitions resolved ad-hoc via
-// Settings.GetJobDefinition, without the pushed Job's own type needing to
-// be a JobDefinition itself).
+// PushRequest is everything a caller can decide about a Job it pushes: the
+// Job itself as the generated model already describes it, plus the two
+// things that model has no word for because they are xtralink's own -
+// which JobDefinitions the Job's steps run, and whether they run in order.
 //
-// With parallel=false the Job opts into sequencing, and the backend assigns
-// each PartialJob its Sequence slot as it is pushed - so the steps run
-// strictly in the order defs lists them, each becoming takeable only once
-// its predecessor has finished.
-func PushPipeline(appCtx *app.AppContext, jobType, label string, priority int, inputsRaw string, defs []app.JobDefinition, parallel bool) (*model.Job, error) {
-	inputs, err := parseInputs(inputsRaw)
-	if err != nil {
-		return nil, err
+// Only Kind is required; every other field has a working zero value.
+type PushRequest struct {
+	model.JobConfiguration
+
+	// Partials are the steps this Job is made of, one PartialJob each. Empty
+	// means a bare Job with no steps of its own.
+	Partials []app.JobDefinition
+
+	// Sequential makes the steps run strictly in the order Partials lists
+	// them, each becoming takeable only once its predecessor has finished.
+	// The default runs them all at once. A Job's setup and cleanup sit
+	// outside this ordering (s. lib/jobs.isSetupOrCleanup).
+	Sequential bool
+}
+
+// Push builds a Job from req and pushes it onto the queue - fire and
+// forget, it never waits for the Job to finish.
+//
+// With no Partials, a Kind that matches a configured JobDefinition gets
+// exactly one PartialJob of that same type; anything else stays a bare Job
+// with no PartialJobs at all, exactly as before JobDefinitions existed.
+func Push(appCtx *app.AppContext, req PushRequest) (*model.Job, error) {
+	if req.Kind == "" {
+		return nil, fmt.Errorf(`"kind" is required`)
 	}
 
-	job := jobs.NewJob(uuid.NewString(), jobType, priority, label, inputs)
-	if !parallel {
+	partials := req.Partials
+	if len(partials) == 0 && appCtx.Settings != nil {
+		if def, _ := appCtx.Settings.GetJobDefinition(req.Kind); def != nil {
+			partials = []app.JobDefinition{*def}
+		}
+	}
+
+	job := jobs.NewJobFromConfiguration(req.JobConfiguration)
+	if req.Sequential {
 		job.Sequence = &model.JobSequence{Current: 0, Remaining: 0}
 	}
-	if err := appCtx.Jobs.PushJob(job); err != nil {
+
+	// PushJob pushes the setup step itself, so the Job has to be complete
+	// before it goes in - NewJobFromConfiguration having already built
+	// Setup is what makes that possible.
+	if err := appCtx.Jobs.PushJob(&job); err != nil {
 		return nil, fmt.Errorf("could not push job: %w", err)
 	}
 
-	for _, def := range defs {
-		partialJob := jobs.NewPartialJob(uuid.NewString(), def.Id, priority, job.Id)
+	for _, def := range partials {
+		partialJob := jobs.NewPartialJob(uuid.NewString(), def.Id, req.Priority, job.Id)
 		partialJob.Progress.Total = 1
 
 		// Each step counts as exactly one unit of the Job's total - a step
@@ -100,5 +80,19 @@ func PushPipeline(appCtx *app.AppContext, jobType, label string, priority int, i
 		}
 	}
 
-	return job, nil
+	return &job, nil
+}
+
+// ParseInputs decodes a raw inputs JSON object, as typed on the command
+// line, into the opaque map the model carries. An empty string stays nil
+// (no inputs at all), rather than an empty map.
+func ParseInputs(inputsRaw string) (map[string]any, error) {
+	if inputsRaw == "" {
+		return nil, nil
+	}
+	var inputs map[string]any
+	if err := json.Unmarshal([]byte(inputsRaw), &inputs); err != nil {
+		return nil, fmt.Errorf("inputs is not a valid json object: %s", inputsRaw)
+	}
+	return inputs, nil
 }

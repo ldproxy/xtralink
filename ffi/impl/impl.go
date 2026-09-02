@@ -101,7 +101,7 @@ func (s *JobQueue) Register(jobType string, priority int32, processor api.JobPro
 }
 
 func (s *JobQueue) Push(cfg model.JobConfiguration, onProgress api.JobListener) model.Job {
-	job := Create(cfg)
+	job := jobs.NewJobFromConfiguration(cfg)
 
 	//TODO: pass listener to backend and have it call back on progress updates, not just on job creation
 
@@ -221,46 +221,6 @@ func (s *JobQueue) GetPartial(id string) (model.PartialJob, bool) {
 		return model.PartialJob{}, false
 	}
 	return *job, true
-}
-
-func Create(cfg model.JobConfiguration) model.Job {
-	job := *jobs.NewJob(
-		uuid.NewString(),
-		cfg.Kind,
-		cfg.Priority,
-		cfg.Label,
-		map[string]any{},
-	)
-	job.Description = cfg.Description
-	job.Inputs = cfg.Inputs
-	job.Context = cfg.Context
-	job.Progress = cfg.Progress
-	job.TtlSeconds = cfg.TtlSeconds
-
-	//TODO: could be booleans, create and push in runner
-	if cfg.Setup {
-		job.Setup = jobs.NewPartialJob(
-			uuid.NewString(),
-			fmt.Sprintf("%v:setup", cfg.Kind),
-			cfg.Priority,
-			job.Id,
-		)
-	}
-	if cfg.Cleanup {
-		job.Cleanup = jobs.NewPartialJob(
-			uuid.NewString(),
-			fmt.Sprintf("%v:cleanup", cfg.Kind),
-			cfg.Priority,
-			job.Id,
-		)
-	}
-
-	job.FollowUps = make([]model.Job, len(cfg.FollowUps))
-	for i, followUpCfg := range cfg.FollowUps {
-		job.FollowUps[i] = Create(followUpCfg)
-	}
-
-	return job
 }
 
 func CreatePartial(cfg model.PartialJobConfiguration) model.PartialJob {

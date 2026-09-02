@@ -6,17 +6,34 @@ import (
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/jobs"
+	"github.com/ldproxy/xtralink/model"
 )
 
-func TestPush_RejectsInvalidJSON(t *testing.T) {
+func TestParseInputs_RejectsInvalidJSON(t *testing.T) {
+	if _, err := ParseInputs("{not json"); err == nil {
+		t.Fatal("expected an error for invalid JSON inputs")
+	}
+}
+
+func TestParseInputs_EmptyStaysNil(t *testing.T) {
+	inputs, err := ParseInputs("")
+	if err != nil {
+		t.Fatalf("ParseInputs: %v", err)
+	}
+	if inputs != nil {
+		t.Errorf("expected nil for an empty inputs string, got %v", inputs)
+	}
+}
+
+func TestPush_RequiresAKind(t *testing.T) {
 	backend := &fakeBackend{}
 	appCtx := &app.AppContext{Jobs: backend}
 
-	if _, err := Push(appCtx, "demo", "label", 1000, "{not json"); err == nil {
-		t.Fatal("expected an error for invalid JSON inputs")
+	if _, err := Push(appCtx, PushRequest{}); err == nil {
+		t.Fatal("expected an error for a missing kind")
 	}
 	if backend.pushedJob != nil {
-		t.Error("expected PushJob not to be called for invalid inputs")
+		t.Error("expected PushJob not to be called without a kind")
 	}
 }
 
@@ -24,7 +41,12 @@ func TestPush_BuildsAndPushesJob(t *testing.T) {
 	backend := &fakeBackend{}
 	appCtx := &app.AppContext{Jobs: backend}
 
-	job, err := Push(appCtx, "demo", "my-label", 500, `{"foo":"bar"}`)
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{
+		Kind:     "demo",
+		Label:    "my-label",
+		Priority: 500,
+		Inputs:   map[string]any{"foo": "bar"},
+	}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -39,16 +61,69 @@ func TestPush_BuildsAndPushesJob(t *testing.T) {
 	}
 }
 
-func TestPush_EmptyInputsStaysNil(t *testing.T) {
+func TestPush_CarriesEveryRequestedJobField(t *testing.T) {
+	backend := jobs.NewMemoryBackend()
+	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
+	ttl := 900
+
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{
+		Kind:        "demo",
+		Priority:    500,
+		Inputs:      map[string]any{"foo": "bar"},
+		Context:     map[string]any{"trace": "abc"},
+		TtlSeconds:  &ttl,
+		Setup:       true,
+		Cleanup:     true,
+		Description: "what this job is for",
+		FollowUps: []model.JobConfiguration{
+			{Kind: "notify", Label: "tell someone", Inputs: map[string]any{"to": "ops"}},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	if job.Inputs["foo"] != "bar" {
+		t.Errorf("Inputs = %v", job.Inputs)
+	}
+	if job.Context["trace"] != "abc" {
+		t.Errorf("Context = %v", job.Context)
+	}
+	if job.TtlSeconds == nil || *job.TtlSeconds != 900 {
+		t.Errorf("TtlSeconds = %v, want 900", job.TtlSeconds)
+	}
+	if job.Description != "what this job is for" {
+		t.Errorf("Description = %q", job.Description)
+	}
+	// The kinds follow from the Job's own kind, so a boolean is all the
+	// configuration needed (s. lib/jobs.SetupKind).
+	if job.Setup == nil || job.Setup.Kind != "demo:setup" {
+		t.Errorf("Setup = %+v, want kind demo:setup", job.Setup)
+	}
+	if job.Cleanup == nil || job.Cleanup.Kind != "demo:cleanup" {
+		t.Errorf("Cleanup = %+v, want kind demo:cleanup", job.Cleanup)
+	}
+	if job.Setup.PartOf != job.Id || job.Cleanup.PartOf != job.Id {
+		t.Errorf("setup/cleanup must belong to the Job: %q/%q, want %q", job.Setup.PartOf, job.Cleanup.PartOf, job.Id)
+	}
+	if len(job.FollowUps) != 1 || job.FollowUps[0].Kind != "notify" {
+		t.Fatalf("FollowUps = %+v, want one notify job", job.FollowUps)
+	}
+	if job.FollowUps[0].Inputs["to"] != "ops" {
+		t.Errorf("follow-up inputs = %v", job.FollowUps[0].Inputs)
+	}
+}
+
+func TestPush_NoInputsStaysNil(t *testing.T) {
 	backend := &fakeBackend{}
 	appCtx := &app.AppContext{Jobs: backend}
 
-	job, err := Push(appCtx, "demo", "", 1000, "")
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{Kind: "demo"}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
 	if job.Inputs != nil {
-		t.Errorf("expected nil Inputs for empty inputsRaw, got %v", job.Inputs)
+		t.Errorf("expected nil Inputs when none were given, got %v", job.Inputs)
 	}
 }
 
@@ -56,7 +131,7 @@ func TestPush_WrapsBackendError(t *testing.T) {
 	backend := &fakeBackend{pushJobErr: errors.New("boom")}
 	appCtx := &app.AppContext{Jobs: backend}
 
-	if _, err := Push(appCtx, "demo", "", 1000, ""); err == nil {
+	if _, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{Kind: "demo"}}); err == nil {
 		t.Fatal("expected an error to be returned")
 	}
 }
@@ -72,7 +147,9 @@ func TestPush_MatchingJobDefinitionBuildsSinglePartialJob(t *testing.T) {
 		},
 	}
 
-	job, err := Push(appCtx, "nba-transformation", "my label", 500, "")
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{
+		Kind: "nba-transformation", Label: "my label", Priority: 500,
+	}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -97,11 +174,11 @@ func TestPush_MatchingJobDefinitionBuildsSinglePartialJob(t *testing.T) {
 	}
 }
 
-// TestPushPipeline_SequentialAssignsSequenceSlots covers the multi-step,
-// parallel=false shape the job:push workflow action builds: each step gets
-// its Sequence slot in defs order, so step 1 only becomes takeable once
+// TestPush_SequentialAssignsSequenceSlots covers the multi-step,
+// sequential shape the job:push workflow action builds: each step gets
+// its Sequence slot in Partials order, so step 1 only becomes takeable once
 // step 0 is done.
-func TestPushPipeline_SequentialAssignsSequenceSlots(t *testing.T) {
+func TestPush_SequentialAssignsSequenceSlots(t *testing.T) {
 	backend := jobs.NewMemoryBackend()
 	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
 
@@ -110,12 +187,16 @@ func TestPushPipeline_SequentialAssignsSequenceSlots(t *testing.T) {
 		{Id: "step-b", Workflow: "wf-b"},
 	}
 
-	job, err := PushPipeline(appCtx, "pipeline", "", 1000, "", defs, false)
+	job, err := Push(appCtx, PushRequest{
+		JobConfiguration: model.JobConfiguration{Kind: "pipeline"},
+		Partials:         defs,
+		Sequential:       true,
+	})
 	if err != nil {
-		t.Fatalf("PushPipeline: %v", err)
+		t.Fatalf("Push: %v", err)
 	}
 	if job.Sequence == nil {
-		t.Fatal("expected parallel=false to opt the Job into sequencing")
+		t.Fatal("expected Sequential to opt the Job into sequencing")
 	}
 
 	if taken, err := backend.Take("step-b", "test"); err != nil || taken != nil {
@@ -146,7 +227,7 @@ func TestPush_UnknownTypeStaysBareJob(t *testing.T) {
 	backend := jobs.NewMemoryBackend()
 	appCtx := &app.AppContext{Jobs: backend, Settings: &app.Settings{}}
 
-	job, err := Push(appCtx, "ad-hoc-type", "", 1000, "")
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{Kind: "ad-hoc-type"}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}

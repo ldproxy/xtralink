@@ -102,12 +102,16 @@ jobDefinitions:
 	if err != nil {
 		t.Fatalf("GetJobDefinition(nba-transaction-step): %v", err)
 	}
-	job, err := appjobs.PushPipeline(appCtx, "nba-apply", "", 1000, "", []app.JobDefinition{*def1, *def2}, false)
+	job, err := appjobs.Push(appCtx, appjobs.PushRequest{
+		JobConfiguration: model.JobConfiguration{Kind: "nba-apply", Priority: 1000},
+		Partials:         []app.JobDefinition{*def1, *def2},
+		Sequential:       true,
+	})
 	if err != nil {
-		t.Fatalf("PushPipeline: %v", err)
+		t.Fatalf("Push: %v", err)
 	}
 	if job.Sequence == nil {
-		t.Error("expected parallel=false to opt the Job into sequencing")
+		t.Error("expected Sequential to opt the Job into sequencing")
 	}
 
 	step1, err := WorkflowJobProcessor(appCtx, "nba-transformation")

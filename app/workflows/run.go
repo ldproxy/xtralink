@@ -120,7 +120,7 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
 		case "job:push":
-			if err := validateJobPushPartials(appCtx, step.Params); err != nil {
+			if err := validateJobPush(appCtx, step.Params); err != nil {
 				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
 			}
 		}
@@ -128,11 +128,65 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 	return nil
 }
 
-// validateJobPushPartials checks a job:push Step's optional `partials:`
-// list the same way JobDefinitions themselves are checked (s.
-// validateJobDefinitions): every referenced type must already exist as a
-// step id somewhere under jobDefinitions:. A missing/absent `partials:` is
-// fine - job:push falls back to a bare Job then, unchanged from before.
+// validateJobPush checks a job:push Step ahead of the run: `partials:`
+// must reference types that already exist as step ids under
+// jobDefinitions: (the same check validateJobDefinitions performs), and
+// every other parameter must be of the kind the Job model expects. It is
+// optional - without partials, job:push falls back to a bare Job,
+// unchanged from before.
+//
+// `followUps:` types are deliberately not checked against the
+// JobDefinitions: the backend pushes follow-ups as plain Jobs with no steps
+// of their own, so any type is legitimate there, exactly as for a direct
+// `job push <type>`.
+func validateJobPush(appCtx *app.AppContext, params map[string]any) error {
+	if err := validateJobPushPartials(appCtx, params); err != nil {
+		return err
+	}
+	return validateJobPushShapes(params)
+}
+
+// validateJobPushShapes rejects a parameter of the wrong kind here rather
+// than at the step itself, so a job:push at the end of a long workflow
+// fails before any of it runs. A whole-value template is skipped: its type
+// is only known once earlier steps have.
+func validateJobPushShapes(params map[string]any) error {
+	for _, key := range []string{"inputs", "context"} {
+		value, ok := params[key]
+		if !ok || isTemplate(value) {
+			continue
+		}
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("%s: must be a map of names to values, got %T", key, value)
+		}
+	}
+
+	if value, ok := params["ttlSeconds"]; ok && !isTemplate(value) {
+		switch value.(type) {
+		case int, int64, float64:
+		default:
+			return fmt.Errorf("ttlSeconds: must be a number, got %T", value)
+		}
+	}
+
+	for _, key := range []string{"sequential", "setup", "cleanup"} {
+		value, ok := params[key]
+		if !ok || isTemplate(value) {
+			continue
+		}
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s: must be true or false, got %T", key, value)
+		}
+	}
+
+	return nil
+}
+
+func isTemplate(value any) bool {
+	s, ok := value.(string)
+	return ok && strings.Contains(s, "${")
+}
+
 func validateJobPushPartials(appCtx *app.AppContext, params map[string]any) error {
 	raw, ok := params["partials"]
 	if !ok {

@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"encoding/json"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -123,5 +124,101 @@ func TestStep_EffectiveId(t *testing.T) {
 	}
 	if got := (Step{}).EffectiveId(2); got != "2" {
 		t.Errorf("EffectiveId = %q, want \"2\"", got)
+	}
+}
+
+func TestWorkflow_DescriptionIsOptional(t *testing.T) {
+	withDescription := `
+id: check-ldm
+description: moves finished packages over to the archive
+steps:
+  - action: pkg:pull
+    pkg: foo
+`
+	var wf Workflow
+	if err := yaml.Unmarshal([]byte(withDescription), &wf); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if wf.Description != "moves finished packages over to the archive" {
+		t.Errorf("Description = %q", wf.Description)
+	}
+
+	var without Workflow
+	if err := yaml.Unmarshal([]byte("id: bare\nsteps: []\n"), &without); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if without.Description != "" {
+		t.Errorf("Description = %q, want empty", without.Description)
+	}
+}
+
+// `flow get` prints a Workflow back out, so its JSON has to read like the
+// configuration file it came from - action parameters inline on the step,
+// not buried in a nested object.
+func TestWorkflow_JSONRoundTripsTheConfiguredShape(t *testing.T) {
+	raw := `
+id: check-ldm
+description: what this does
+params:
+  - name: pkg
+    required: true
+defaults:
+  retry_policy:
+    limit: 2
+    interval_sec: 5
+steps:
+  - id: pulled
+    action: pkg:pull
+    pkg: ${params.pkg}
+  - action: cmd:exec
+    retry_policy:
+      limit: 1
+      interval_sec: 0
+    cmd: echo hello
+`
+	var wf Workflow
+	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	encoded, err := json.Marshal(wf)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if got["id"] != "check-ldm" || got["description"] != "what this does" {
+		t.Errorf("id/description = %v/%v", got["id"], got["description"])
+	}
+
+	steps, _ := got["steps"].([]any)
+	if len(steps) != 2 {
+		t.Fatalf("steps = %+v, want 2", steps)
+	}
+
+	first, _ := steps[0].(map[string]any)
+	if first["id"] != "pulled" || first["action"] != "pkg:pull" {
+		t.Errorf("first step = %+v", first)
+	}
+	if first["pkg"] != "${params.pkg}" {
+		t.Errorf("first step: pkg = %v, want the action parameter inline", first["pkg"])
+	}
+	if _, nested := first["Params"]; nested {
+		t.Errorf("first step exposes a nested Params object: %+v", first)
+	}
+
+	second, _ := steps[1].(map[string]any)
+	if second["cmd"] != "echo hello" {
+		t.Errorf("second step: cmd = %v", second["cmd"])
+	}
+	if _, ok := second["id"]; ok {
+		t.Errorf("second step declares no id, so none should be printed: %+v", second)
+	}
+	if policy, ok := second["retry_policy"].(map[string]any); !ok || policy["limit"] != float64(1) {
+		t.Errorf("second step: retry_policy = %v", second["retry_policy"])
 	}
 }

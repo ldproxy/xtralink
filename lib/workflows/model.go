@@ -5,6 +5,7 @@
 package workflows
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -12,29 +13,36 @@ import (
 
 // Workflow is a named sequence of Steps, as configured under the
 // .xtrasync.yml "workflows:" key.
+//
+// The json tags here and on the types below exist for `flow get`, which
+// prints a configured Workflow back out; they deliberately repeat the yaml
+// names, so what it prints reads like the file it came from.
 type Workflow struct {
-	Id       string    `yaml:"id"`
-	Params   []Param   `yaml:"params,omitempty"`
-	Defaults *Defaults `yaml:"defaults,omitempty"`
-	Steps    []Step    `yaml:"steps"`
+	Id string `yaml:"id" json:"id"`
+	// Description says what the workflow is for, in one line, for `flow
+	// list` and `flow get`. Nothing reads it at runtime.
+	Description string    `yaml:"description,omitempty" json:"description,omitempty"`
+	Params      []Param   `yaml:"params,omitempty" json:"params,omitempty"`
+	Defaults    *Defaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	Steps       []Step    `yaml:"steps" json:"steps"`
 }
 
 // Param declares one runtime input a Workflow expects, read from Steps via
 // ${params.<name>} (s. ResolveParams in params.go). Deliberately just these
 // four fields - no enum/minimum-style value validation.
 type Param struct {
-	Name string `yaml:"name"`
+	Name string `yaml:"name" json:"name"`
 	// Type is "string" (the default if omitted) or "int"/"bool" for basic
 	// coercion of CLI-provided overrides (s. ResolveParams).
-	Type     string `yaml:"type,omitempty"`
-	Default  any    `yaml:"default,omitempty"`
-	Required bool   `yaml:"required,omitempty"`
+	Type     string `yaml:"type,omitempty" json:"type,omitempty"`
+	Default  any    `yaml:"default,omitempty" json:"default,omitempty"`
+	Required bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
 // Defaults holds workflow-wide fallbacks applied to every Step that doesn't
 // declare its own value (currently only RetryPolicy).
 type Defaults struct {
-	RetryPolicy *RetryPolicy `yaml:"retry_policy,omitempty"`
+	RetryPolicy *RetryPolicy `yaml:"retry_policy,omitempty" json:"retry_policy,omitempty"`
 }
 
 // Step is a single entry in Workflow.Steps: an Action type plus its
@@ -42,10 +50,29 @@ type Defaults struct {
 // fixed struct fields (Params would have to grow for every new Action type)
 // - they land in Params instead, and each Action interprets its own keys.
 type Step struct {
-	Id          string         `yaml:"id,omitempty"`
-	Action      string         `yaml:"action"`
-	RetryPolicy *RetryPolicy   `yaml:"retry_policy,omitempty"`
-	Params      map[string]any `yaml:",inline"`
+	Id          string         `yaml:"id,omitempty" json:"id,omitempty"`
+	Action      string         `yaml:"action" json:"action"`
+	RetryPolicy *RetryPolicy   `yaml:"retry_policy,omitempty" json:"retry_policy,omitempty"`
+	Params      map[string]any `yaml:",inline" json:"-"`
+}
+
+// MarshalJSON writes a Step with its action parameters inline, the way they
+// are written in the configuration file - the alternative, a nested
+// "Params" object, would print a shape no one could paste back into
+// .xtrasync.yml.
+func (s Step) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, len(s.Params)+3)
+	for key, value := range s.Params {
+		out[key] = value
+	}
+	if s.Id != "" {
+		out["id"] = s.Id
+	}
+	out["action"] = s.Action
+	if s.RetryPolicy != nil {
+		out["retry_policy"] = s.RetryPolicy
+	}
+	return json.Marshal(out)
 }
 
 // EffectiveId returns Step.Id, or the given zero-based index as a string if
@@ -65,14 +92,14 @@ func (s Step) EffectiveId(index int) string {
 type RetryPolicy struct {
 	// Limit is the maximum number of retries after the first failure (not
 	// the total number of attempts).
-	Limit int `yaml:"limit"`
+	Limit int `yaml:"limit" json:"limit"`
 	// IntervalSec is the base delay between attempts, in seconds.
-	IntervalSec float64 `yaml:"interval_sec"`
+	IntervalSec float64 `yaml:"interval_sec" json:"interval_sec"`
 	// Backoff multiplies IntervalSec by Backoff^attempt for each subsequent
 	// retry; 0 (the default) means a fixed interval.
-	Backoff Backoff `yaml:"backoff,omitempty"`
+	Backoff Backoff `yaml:"backoff,omitempty" json:"backoff,omitempty"`
 	// MaxIntervalSec caps the computed delay, if > 0.
-	MaxIntervalSec float64 `yaml:"max_interval_sec,omitempty"`
+	MaxIntervalSec float64 `yaml:"max_interval_sec,omitempty" json:"max_interval_sec,omitempty"`
 }
 
 // Backoff is a float64 that also accepts YAML bool literals (true == 2.0,
