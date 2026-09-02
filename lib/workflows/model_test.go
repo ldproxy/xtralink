@@ -159,7 +159,7 @@ func TestWorkflow_JSONRoundTripsTheConfiguredShape(t *testing.T) {
 	raw := `
 id: check-ldm
 description: what this does
-params:
+parameters:
   - name: pkg
     required: true
 defaults:
@@ -169,7 +169,7 @@ defaults:
 steps:
   - id: pulled
     action: pkg:pull
-    pkg: ${params.pkg}
+    pkg: ${parameters.pkg}
   - action: cmd:exec
     retry_policy:
       limit: 1
@@ -204,7 +204,7 @@ steps:
 	if first["id"] != "pulled" || first["action"] != "pkg:pull" {
 		t.Errorf("first step = %+v", first)
 	}
-	if first["pkg"] != "${params.pkg}" {
+	if first["pkg"] != "${parameters.pkg}" {
 		t.Errorf("first step: pkg = %v, want the action parameter inline", first["pkg"])
 	}
 	if _, nested := first["Params"]; nested {

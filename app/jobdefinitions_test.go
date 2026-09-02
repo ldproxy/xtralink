@@ -10,7 +10,7 @@ packages:
 
 workflows:
   - id: nba-transform
-    params:
+    parameters:
       - name: foo
         type: string
     steps:

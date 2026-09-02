@@ -7,59 +7,59 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestResolveParams_OverrideWinsOverDefault(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "pkg", Type: "string", Default: "bar"}}}
+func TestResolveParameters_OverrideWinsOverDefault(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "pkg", Type: "string", Default: "bar"}}}
 
-	got, err := ResolveParams(wf, map[string]string{"pkg": "foo"})
+	got, err := ResolveParameters(wf, map[string]string{"pkg": "foo"})
 	if err != nil {
-		t.Fatalf("ResolveParams: %v", err)
+		t.Fatalf("ResolveParameters: %v", err)
 	}
 	if got["pkg"] != "foo" {
 		t.Errorf("pkg = %v, want foo", got["pkg"])
 	}
 }
 
-func TestResolveParams_FallsBackToDefault(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "path", Type: "string", Default: "*.zip"}}}
+func TestResolveParameters_FallsBackToDefault(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "path", Type: "string", Default: "*.zip"}}}
 
-	got, err := ResolveParams(wf, map[string]string{})
+	got, err := ResolveParameters(wf, map[string]string{})
 	if err != nil {
-		t.Fatalf("ResolveParams: %v", err)
+		t.Fatalf("ResolveParameters: %v", err)
 	}
 	if got["path"] != "*.zip" {
 		t.Errorf("path = %v, want *.zip", got["path"])
 	}
 }
 
-func TestResolveParams_MissingRequiredIsError(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "pkg", Required: true}}}
+func TestResolveParameters_MissingRequiredIsError(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "pkg", Required: true}}}
 
-	if _, err := ResolveParams(wf, map[string]string{}); err == nil {
+	if _, err := ResolveParameters(wf, map[string]string{}); err == nil {
 		t.Fatal("expected an error for a missing required param")
 	}
 }
 
-func TestResolveParams_OptionalWithoutDefaultIsSimplyAbsent(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "optional"}}}
+func TestResolveParameters_OptionalWithoutDefaultIsSimplyAbsent(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "optional"}}}
 
-	got, err := ResolveParams(wf, map[string]string{})
+	got, err := ResolveParameters(wf, map[string]string{})
 	if err != nil {
-		t.Fatalf("ResolveParams: %v", err)
+		t.Fatalf("ResolveParameters: %v", err)
 	}
 	if _, ok := got["optional"]; ok {
 		t.Errorf("expected \"optional\" to be absent, got %v", got["optional"])
 	}
 }
 
-func TestResolveParams_CoercesIntAndBool(t *testing.T) {
-	wf := Workflow{Params: []Param{
+func TestResolveParameters_CoercesIntAndBool(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{
 		{Name: "count", Type: "int"},
 		{Name: "flag", Type: "bool"},
 	}}
 
-	got, err := ResolveParams(wf, map[string]string{"count": "42", "flag": "true"})
+	got, err := ResolveParameters(wf, map[string]string{"count": "42", "flag": "true"})
 	if err != nil {
-		t.Fatalf("ResolveParams: %v", err)
+		t.Fatalf("ResolveParameters: %v", err)
 	}
 	if got["count"] != 42 {
 		t.Errorf("count = %v (%T), want 42 (int)", got["count"], got["count"])
@@ -69,30 +69,30 @@ func TestResolveParams_CoercesIntAndBool(t *testing.T) {
 	}
 }
 
-func TestResolveParams_InvalidIntOverrideIsError(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "count", Type: "int"}}}
+func TestResolveParameters_InvalidIntOverrideIsError(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "count", Type: "int"}}}
 
-	if _, err := ResolveParams(wf, map[string]string{"count": "not-a-number"}); err == nil {
+	if _, err := ResolveParameters(wf, map[string]string{"count": "not-a-number"}); err == nil {
 		t.Fatal("expected an error for a non-numeric int override")
 	}
 }
 
-func TestResolveParams_UnsupportedTypeIsError(t *testing.T) {
-	wf := Workflow{Params: []Param{{Name: "x", Type: "float"}}}
+func TestResolveParameters_UnsupportedTypeIsError(t *testing.T) {
+	wf := Workflow{Parameters: []Parameter{{Name: "x", Type: "float"}}}
 
-	if _, err := ResolveParams(wf, map[string]string{"x": "1.5"}); err == nil {
+	if _, err := ResolveParameters(wf, map[string]string{"x": "1.5"}); err == nil {
 		t.Fatal("expected an error for an unsupported declared type")
 	}
 }
 
-func TestResolveParams_NoOverrideAndDefaultLeavesDeclaredTypeAlone(t *testing.T) {
+func TestResolveParameters_NoOverrideAndDefaultLeavesDeclaredTypeAlone(t *testing.T) {
 	// Defaults come straight from YAML (already a native Go value) and are
 	// used as-is, no coercion applied.
-	wf := Workflow{Params: []Param{{Name: "count", Type: "int", Default: 5}}}
+	wf := Workflow{Parameters: []Parameter{{Name: "count", Type: "int", Default: 5}}}
 
-	got, err := ResolveParams(wf, map[string]string{})
+	got, err := ResolveParameters(wf, map[string]string{})
 	if err != nil {
-		t.Fatalf("ResolveParams: %v", err)
+		t.Fatalf("ResolveParameters: %v", err)
 	}
 	if got["count"] != 5 {
 		t.Errorf("count = %v (%T), want 5 (int)", got["count"], got["count"])
@@ -102,7 +102,7 @@ func TestResolveParams_NoOverrideAndDefaultLeavesDeclaredTypeAlone(t *testing.T)
 func TestWorkflow_ParamsYAMLParsing(t *testing.T) {
 	raw := `
 id: check-ldm
-params:
+parameters:
   - name: pkg
     type: string
     required: true
@@ -117,11 +117,43 @@ steps:
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	want := []Param{
+	want := []Parameter{
 		{Name: "pkg", Type: "string", Required: true},
 		{Name: "path", Type: "string", Default: "*.zip"},
 	}
-	if !reflect.DeepEqual(wf.Params, want) {
-		t.Errorf("Params = %+v, want %+v", wf.Params, want)
+	if !reflect.DeepEqual(wf.Parameters, want) {
+		t.Errorf("Params = %+v, want %+v", wf.Parameters, want)
+	}
+}
+
+func TestWorkflow_ParametersUseTheParametersKey(t *testing.T) {
+	raw := `
+id: wf
+parameters:
+  - name: pkg
+    required: true
+steps:
+  - action: cmd:exec
+    cmd: echo ${parameters.pkg}
+`
+	var wf Workflow
+	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(wf.Parameters) != 1 || wf.Parameters[0].Name != "pkg" {
+		t.Fatalf("Parameters = %+v", wf.Parameters)
+	}
+
+	// The substitution namespace matches the declaration key.
+	resolved, err := ResolveParameters(wf, map[string]string{"pkg": "foo"})
+	if err != nil {
+		t.Fatalf("ResolveParameters: %v", err)
+	}
+	value, err := ResolveValue(wf.Steps[0].Params["cmd"], map[string]any{"parameters": resolved})
+	if err != nil {
+		t.Fatalf("ResolveValue: %v", err)
+	}
+	if value != "echo foo" {
+		t.Errorf("resolved cmd = %v, want \"echo foo\"", value)
 	}
 }

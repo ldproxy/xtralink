@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/app/workflows"
@@ -16,8 +20,9 @@ type Flow struct {
 }
 
 type FlowRunCmd struct {
-	Id     string   `arg:"" help:"Workflow id"`
-	Inputs []string `name:"input" sep:"none" help:"Parameter override as name=value (repeatable)"`
+	Id      string   `arg:"" help:"Workflow id"`
+	Inputs  []string `name:"input" sep:"none" help:"Parameter override as name=value (repeatable)"`
+	Workers bool     `help:"After the workflow, also process the jobs it pushed, until interrupted - for development, where running \"job process\" alongside is a nuisance"`
 }
 
 func (c *FlowRunCmd) Run(appCtx *app.AppContext) error {
@@ -30,7 +35,22 @@ func (c *FlowRunCmd) Run(appCtx *app.AppContext) error {
 		appCtx.Logger.Error().Err(err).Str("id", c.Id).Strs("inputs", inputNames(c.Inputs)).Msg("workflow run failed")
 		return err
 	}
-	return nil
+	if !c.Workers {
+		return nil
+	}
+
+	// job:push is fire-and-forget, so the workflow is already done here and
+	// whatever it pushed is sitting in the queue: the workers can simply
+	// take over the foreground. Nothing is lost by starting them second.
+	//
+	// A production deployment runs `job process` as its own process, sized
+	// and restarted independently; this flag exists so a single command is
+	// enough to watch a workflow through end to end while writing it.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	appCtx.Logger.Info().Str("id", c.Id).Msg("workflow pushed its jobs, processing them until interrupted")
+	return RunJobWorkers(appCtx, ctx, "*")
 }
 
 // inputNames reduces the --input flags to the parameter names they set.

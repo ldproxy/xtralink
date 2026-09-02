@@ -90,3 +90,27 @@ func TestFlowGetCmd_UnknownWorkflowIsError(t *testing.T) {
 		t.Fatal("expected an error for an unknown workflow id")
 	}
 }
+
+func TestFlowRunCmd_WorkersFlagDefaultsOff(t *testing.T) {
+	var cli struct {
+		Flow Flow `cmd:""`
+	}
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatalf("kong.New: %v", err)
+	}
+
+	if _, err := parser.Parse([]string{"flow", "run", "check-ldm"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cli.Flow.Run.Workers {
+		t.Error("Workers should default to false - production runs job process separately")
+	}
+
+	if _, err := parser.Parse([]string{"flow", "run", "check-ldm", "--workers"}); err != nil {
+		t.Fatalf("Parse --workers: %v", err)
+	}
+	if !cli.Flow.Run.Workers {
+		t.Error("Workers = false after --workers")
+	}
+}

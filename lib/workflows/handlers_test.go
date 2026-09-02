@@ -129,8 +129,8 @@ func TestHandlers_ErrorNamespaceIsEmptyOnSuccess(t *testing.T) {
 func TestHandlers_SeeParamsAndPackagesButNotOutputs(t *testing.T) {
 	rec := newHandlerRecorder()
 	vars := map[string]any{
-		"params":   map[string]any{"who": "me"},
-		"packages": map[string]any{"foo": map[string]any{"id": "foo"}},
+		"parameters": map[string]any{"who": "me"},
+		"packages":   map[string]any{"foo": map[string]any{"id": "foo"}},
 	}
 
 	wf := Workflow{
@@ -138,7 +138,7 @@ func TestHandlers_SeeParamsAndPackagesButNotOutputs(t *testing.T) {
 		Handlers: &Handlers{Success: []Step{{
 			Action: "record",
 			Id:     "on-success",
-			Params: map[string]any{"name": "on-success", "who": "${params.who}", "pkg": "${packages.foo.id}"},
+			Params: map[string]any{"name": "on-success", "who": "${parameters.who}", "pkg": "${packages.foo.id}"},
 		}}},
 	}
 	if err := Run(wf, rec.registry, vars, zerolog.Nop()); err != nil {

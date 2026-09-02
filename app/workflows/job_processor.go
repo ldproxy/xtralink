@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ldproxy/xtralink/app"
 	"github.com/ldproxy/xtralink/lib/jobs"
@@ -48,8 +49,8 @@ func WorkflowJobProcessor(appCtx *app.AppContext, kind string) (*jobs.JobProcess
 		}
 
 		vars := map[string]any{
-			"packages": packageVars(appCtx.Settings.Packages),
-			"params":   params,
+			"packages":   packageVars(appCtx.Settings.Packages),
+			"parameters": params,
 		}
 		logger := appCtx.Logger.With().Str("workflow", wf.Id).Str("job", job.Id).Logger()
 		leaves, err := workflows.RunWithResults(*wf, registry, vars, logger)
@@ -117,13 +118,13 @@ func resolveExplicitParams(appCtx *app.AppContext, def *app.JobDefinition, wf *w
 
 // applyParamDefaults fills in each declared param from provided if present,
 // else its Default, erroring if a Required param ends up with neither -
-// the same default/required rule as lib/workflows.ResolveParams, but
+// the same default/required rule as lib/workflows.ResolveParameters, but
 // without the string-to-int/bool coercion that only makes sense for
 // CLI-provided string overrides: provided here is already properly typed
 // (straight from JSON Inputs, or from template resolution).
 func applyParamDefaults(wf *workflows.Workflow, provided map[string]any) (map[string]any, error) {
-	result := make(map[string]any, len(wf.Params))
-	for _, param := range wf.Params {
+	result := make(map[string]any, len(wf.Parameters))
+	for _, param := range wf.Parameters {
 		if v, ok := provided[param.Name]; ok {
 			result[param.Name] = v
 			continue
@@ -152,13 +153,36 @@ func applyParamDefaults(wf *workflows.Workflow, provided map[string]any) (map[st
 //   - parent.outputs is the Job's Outputs, i.e. whatever an earlier
 //     PartialJob of it already wrote. Distinct from a workflow's own
 //     ${outputs.<step>}, which are the current run's step outputs.
+//   - parent.status is the Job's status as it stands, derived rather than
+//     stored (s. BaseJob.GetStatus), and parent.errors is what its parts
+//     have failed with so far. A cleanup PartialJob is where these earn
+//     their keep: it runs whether the Job succeeded or failed
+//     (s. lib/jobs.forceFail), and this is how it can tell which.
+//
+// errors is a list, and lookupPath only descends into objects, so it is
+// reachable as a whole ${parent.errors} - handing a job:push input the
+// real list - but an individual entry is not. Embedded in a longer string
+// it stringifies as "[first second]", which is why errorsString exists
+// alongside it: the same errors as one piece of text, empty when there are
+// none.
+//
+// errorsSeparator is deliberately not a comma or a newline. A single error
+// already contains both - a failing cmd:exec carries the tail of its own
+// output (s. actions.CmdExecAction) - so a separator has to be something
+// that does not otherwise occur if the joined text is to be split back
+// apart by whatever reads it.
 func parentVars(job *model.Job) map[string]any {
 	return map[string]any{
-		"id":      job.Id,
-		"inputs":  job.Inputs,
-		"outputs": outputValues(job.Outputs),
+		"id":           job.Id,
+		"inputs":       job.Inputs,
+		"outputs":      outputValues(job.Outputs),
+		"status":       string(job.GetStatus()),
+		"errors":       job.Errors,
+		"errorsString": strings.Join(job.Errors, errorsSeparator),
 	}
 }
+
+const errorsSeparator = ";;;"
 
 // writeOutputs resolves the JobDefinition's output mapping and writes the
 // result into the shared Job's Outputs.

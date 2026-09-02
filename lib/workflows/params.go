@@ -6,16 +6,16 @@ import (
 	"strings"
 )
 
-// ResolveParams merges CLI-provided overrides with each declared Param's
+// ResolveParameters merges CLI-provided overrides with each declared Param's
 // default, coercing raw CLI strings to the declared Type. A Param that ends
 // up with neither an override nor a default is simply left out of the
-// result if it isn't Required - referencing ${params.<name>} for it later
+// result if it isn't Required - referencing ${parameters.<name>} for it later
 // is then a normal "unknown path" template error, consistent with how
 // outputs/packages already behave (s. template.go).
-func ResolveParams(wf Workflow, overrides map[string]string) (map[string]any, error) {
-	result := make(map[string]any, len(wf.Params))
+func ResolveParameters(wf Workflow, overrides map[string]string) (map[string]any, error) {
+	result := make(map[string]any, len(wf.Parameters))
 
-	for _, p := range wf.Params {
+	for _, p := range wf.Parameters {
 		if raw, ok := overrides[p.Name]; ok {
 			value, err := coerce(raw, p.Type)
 			if err != nil {

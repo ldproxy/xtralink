@@ -95,7 +95,7 @@ func TestLoadSettings_RejectsDuplicateParamName(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
 workflows:
   - id: wf
-    params:
+    parameters:
       - name: pkg
       - name: pkg
     steps:
@@ -111,7 +111,7 @@ func TestLoadSettings_RejectsMissingParamName(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
 workflows:
   - id: wf
-    params:
+    parameters:
       - type: string
     steps:
       - action: job:push
@@ -217,11 +217,11 @@ func TestLoadSettings_JobsDefaultsToLocalWithMaxConcurrentOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	if settings.JobQueue.Queue != "local" {
-		t.Errorf("JobQueue.Queue = %q, want local", settings.JobQueue.Queue)
+	if settings.General.Queue != "local" {
+		t.Errorf("JobQueue.Queue = %q, want local", settings.General.Queue)
 	}
-	if settings.JobQueue.MaxConcurrent != 1 {
-		t.Errorf("JobQueue.MaxConcurrent = %d, want 1", settings.JobQueue.MaxConcurrent)
+	if settings.General.MaxConcurrent != 1 {
+		t.Errorf("JobQueue.MaxConcurrent = %d, want 1", settings.General.MaxConcurrent)
 	}
 }
 
@@ -239,14 +239,14 @@ settings:
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	if settings.JobQueue.Queue != "redis" {
-		t.Errorf("JobQueue.Queue = %q, want redis", settings.JobQueue.Queue)
+	if settings.General.Queue != "redis" {
+		t.Errorf("JobQueue.Queue = %q, want redis", settings.General.Queue)
 	}
-	if settings.JobQueue.MaxConcurrent != 4 {
-		t.Errorf("JobQueue.MaxConcurrent = %d, want 4", settings.JobQueue.MaxConcurrent)
+	if settings.General.MaxConcurrent != 4 {
+		t.Errorf("JobQueue.MaxConcurrent = %d, want 4", settings.General.MaxConcurrent)
 	}
-	if len(settings.JobQueue.Redis) != 2 || settings.JobQueue.Redis[0] != "localhost:6379" || settings.JobQueue.Redis[1] != "localhost:6380" {
-		t.Errorf("JobQueue.Redis = %v", settings.JobQueue.Redis)
+	if len(settings.General.Redis) != 2 || settings.General.Redis[0] != "localhost:6379" || settings.General.Redis[1] != "localhost:6380" {
+		t.Errorf("JobQueue.Redis = %v", settings.General.Redis)
 	}
 }
 
@@ -295,7 +295,8 @@ settings:
 func TestLoadSettings_UnknownKeyIsError(t *testing.T) {
 	cases := map[string]string{
 		"top level": `
-targetDir: /tmp/t
+settings:
+  targetDir: /tmp/t
 jobDefinitions:
   - id: transform-step
     workflow: transform
@@ -305,7 +306,8 @@ packages:
     url: /tmp/r
 `,
 		"inside a package": `
-targetDir: /tmp/t
+settings:
+  targetDir: /tmp/t
 packages:
   - id: foo
     type: FS
@@ -313,7 +315,8 @@ packages:
     localpath: typo
 `,
 		"inside a workflow": `
-targetDir: /tmp/t
+settings:
+  targetDir: /tmp/t
 packages:
   - id: foo
     type: FS
@@ -344,7 +347,8 @@ workflows:
 // which an Action interprets its own parameters.
 func TestLoadSettings_StepActionParametersStayFree(t *testing.T) {
 	path := writeConfig(t, `
-targetDir: /tmp/t
+settings:
+  targetDir: /tmp/t
 packages:
   - id: foo
     type: FS
@@ -388,5 +392,45 @@ func TestLoadSettings_EmptyFileStillReportsTheMissingSetting(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "at least one package is required") {
 		t.Errorf("error %q should name the missing setting, not the empty document", err.Error())
+	}
+}
+
+func TestLoadSettings_TargetDirLivesInTheSettingsBlock(t *testing.T) {
+	path := writeConfig(t, `
+settings:
+  targetDir: /tmp/mirrors
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/remote
+`)
+
+	settings, err := LoadSettings(path)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if settings.General.TargetDir != "/tmp/mirrors" {
+		t.Errorf("TargetDir = %q", settings.General.TargetDir)
+	}
+	if got := settings.Packages[0].ResolvedLocalPath; got != "/tmp/mirrors/foo" {
+		t.Errorf("ResolvedLocalPath = %q, want it resolved under the settings targetDir", got)
+	}
+}
+
+func TestLoadSettings_TopLevelTargetDirIsRejected(t *testing.T) {
+	path := writeConfig(t, `
+targetDir: /tmp/mirrors
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/remote
+`)
+
+	_, err := LoadSettings(path)
+	if err == nil {
+		t.Fatal("expected a top-level targetDir to be rejected now that it lives under settings")
+	}
+	if !strings.Contains(err.Error(), "targetDir") {
+		t.Errorf("error %q should name the key that moved", err.Error())
 	}
 }

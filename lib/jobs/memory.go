@@ -12,7 +12,7 @@ import (
 )
 
 // MemoryBackend implements Backend entirely in memory, guarded by a single
-// mutex - the "local" queue from app.JobQueueConfig, recommended only for
+// mutex - the "local" queue from app.GeneralConfig, recommended only for
 // single-node setups (state is lost on restart, and separate processes
 // never see each other's jobs). It shares no code with RedisBackend (s. its
 // doc comment): the two have nothing in common beyond the Backend interface

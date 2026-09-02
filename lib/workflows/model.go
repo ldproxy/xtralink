@@ -21,11 +21,11 @@ type Workflow struct {
 	Id string `yaml:"id" json:"id"`
 	// Description says what the workflow is for, in one line, for `flow
 	// list` and `flow get`. Nothing reads it at runtime.
-	Description string    `yaml:"description,omitempty" json:"description,omitempty"`
-	Params      []Param   `yaml:"params,omitempty" json:"params,omitempty"`
-	Defaults    *Defaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
-	Steps       []Step    `yaml:"steps" json:"steps"`
-	Handlers    *Handlers `yaml:"handlers,omitempty" json:"handlers,omitempty"`
+	Description string      `yaml:"description,omitempty" json:"description,omitempty"`
+	Parameters  []Parameter `yaml:"parameters,omitempty" json:"parameters,omitempty"`
+	Defaults    *Defaults   `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	Steps       []Step      `yaml:"steps" json:"steps"`
+	Handlers    *Handlers   `yaml:"handlers,omitempty" json:"handlers,omitempty"`
 }
 
 // Handlers are steps run once the Workflow's own Steps are done, chosen by
@@ -44,12 +44,12 @@ type Handlers struct {
 }
 
 // Param declares one runtime input a Workflow expects, read from Steps via
-// ${params.<name>} (s. ResolveParams in params.go). Deliberately just these
+// ${parameters.<name>} (s. ResolveParameters in params.go). Deliberately just these
 // four fields - no enum/minimum-style value validation.
-type Param struct {
+type Parameter struct {
 	Name string `yaml:"name" json:"name"`
 	// Type is "string" (the default if omitted) or "int"/"bool" for basic
-	// coercion of CLI-provided overrides (s. ResolveParams).
+	// coercion of CLI-provided overrides (s. ResolveParameters).
 	Type     string `yaml:"type,omitempty" json:"type,omitempty"`
 	Default  any    `yaml:"default,omitempty" json:"default,omitempty"`
 	Required bool   `yaml:"required,omitempty" json:"required,omitempty"`

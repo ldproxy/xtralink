@@ -28,13 +28,21 @@ func (c *JobProcessCmd) Run(appCtx *app.AppContext) error {
 // directly instead of having to send a real signal to the whole test
 // process.
 func (c *JobProcessCmd) run(appCtx *app.AppContext, ctx context.Context) error {
-	kinds, err := kindsToProcess(appCtx, c.Kind)
+	return RunJobWorkers(appCtx, ctx, c.Kind)
+}
+
+// RunJobWorkers registers a WorkflowJobProcessor for kind ("*" for every
+// kind configured under jobs:) and processes queued PartialJobs until ctx
+// is cancelled. Shared by `job process` and by `flow run --workers`, which
+// is the same thing in the same process (s. FlowRunCmd).
+func RunJobWorkers(appCtx *app.AppContext, ctx context.Context, kind string) error {
+	kinds, err := kindsToProcess(appCtx, kind)
 	if err != nil {
 		return err
 	}
 
 	runner := libjobs.NewRunner(appCtx.Jobs, executorId())
-	runner.Concurrency = appCtx.Settings.JobQueue.MaxConcurrent
+	runner.Concurrency = appCtx.Settings.General.MaxConcurrent
 	runner.OnError = func(err error) {
 		appCtx.Logger.Error().Err(err).Msg("job runner error")
 	}

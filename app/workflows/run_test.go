@@ -107,7 +107,8 @@ func TestRun_CheckLdmExample(t *testing.T) {
 	writeFile(t, filepath.Join(fooRemote, "c.txt"), "not a zip")
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -199,7 +200,7 @@ workflows:
 }
 
 // TestRun_ParamsOverrideAndDefault runs check-ldm again, but this time the
-// package id is a workflow param (${params.pkg}) supplied via --input at
+// package id is a workflow param (${parameters.pkg}) supplied via --input at
 // invocation, and the glob pattern is a param with a default that's left
 // unset. Verifies both the override path and the default-fallback path in
 // one real Run() call, through the same fan-out/mv_file/job:push pipeline
@@ -212,7 +213,8 @@ func TestRun_ParamsOverrideAndDefault(t *testing.T) {
 	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -223,7 +225,7 @@ packages:
 
 workflows:
   - id: check-ldm
-    params:
+    parameters:
       - name: pkg
         type: string
         required: true
@@ -232,19 +234,19 @@ workflows:
         default: "*.zip"
     steps:
       - action: pkg:pull
-        pkg: ${params.pkg}
+        pkg: ${parameters.pkg}
       - action: pkg:pull
         pkg: bar
       - id: input
         action: pkg:find_each
-        pkg: ${params.pkg}
-        path: ${params.path}
+        pkg: ${parameters.pkg}
+        path: ${parameters.path}
       - action: pkg:mv_file
-        from: ${params.pkg}
+        from: ${parameters.pkg}
         to: bar
         path: ${outputs.input.path}
       - action: pkg:push
-        pkg: ${params.pkg}
+        pkg: ${parameters.pkg}
       - action: pkg:push
         pkg: bar
       - action: job:push
@@ -293,7 +295,8 @@ func TestRun_MissingRequiredParamAbortsBeforeAnythingRuns(t *testing.T) {
 	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -301,13 +304,13 @@ packages:
 
 workflows:
   - id: needs-pkg
-    params:
+    parameters:
       - name: pkg
         type: string
         required: true
     steps:
       - action: pkg:find_any
-        pkg: ${params.pkg}
+        pkg: ${parameters.pkg}
         path: "*.zip"
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
@@ -372,7 +375,7 @@ func TestParseOverrides_EmptyInputIsEmptyMap(t *testing.T) {
 }
 
 func TestRun_UnknownWorkflowIdIsError(t *testing.T) {
-	settings := &app.Settings{TargetDir: t.TempDir()}
+	settings := &app.Settings{General: app.GeneralConfig{TargetDir: t.TempDir()}}
 	appCtx := &app.AppContext{Logger: zerolog.Nop(), Settings: settings, Drivers: drivers.NewFactory(), Jobs: &fakeBackend{}, Locks: lock.NoopLocker{}}
 
 	if err := Run(appCtx, "does-not-exist", nil); err == nil {
@@ -537,7 +540,8 @@ func TestRun_NbaTransformExample(t *testing.T) {
 	writeFile(t, filepath.Join(fooRemote, "a.zip"), "a")
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -629,8 +633,8 @@ func TestValidate_JobPushAcceptsTemplatedParameters(t *testing.T) {
 	appCtx := jobPushValidationAppCtx(t, `
       - action: job:push
         kind: demo
-        inputs: ${params.blob}
-        ttlSeconds: ${params.ttl}`)
+        inputs: ${parameters.blob}
+        ttlSeconds: ${parameters.ttl}`)
 
 	if err := Validate(appCtx, appCtx.Settings.Workflows[0], NewRegistry(appCtx)); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -641,7 +645,8 @@ func jobPushValidationAppCtx(t *testing.T, steps string) *app.AppContext {
 	t.Helper()
 
 	config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: foo
     type: FS
@@ -675,7 +680,8 @@ workflows:
 func TestRun_UUIDGenOutputReachesALaterStep(t *testing.T) {
 	targetDir := t.TempDir()
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -727,7 +733,8 @@ workflows:
 // pushed is a file nobody sees.
 func TestValidate_WriteFileRequiresASyncBackPackage(t *testing.T) {
 	config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: foo
     type: FS
@@ -801,7 +808,8 @@ func TestValidate_HandlerStepsAreCheckedByName(t *testing.T) {
 	for name, handlers := range cases {
 		t.Run(name, func(t *testing.T) {
 			config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: foo
     type: FS
@@ -849,7 +857,8 @@ func TestRun_FailureHandlerWritesWhatWentWrong(t *testing.T) {
 	targetDir := t.TempDir()
 	remote := t.TempDir()
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS

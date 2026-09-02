@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,8 @@ func TestWorkflowJobProcessor_TwoStepPipelineWithImplicitAndExplicitInputs(t *te
 	}
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -52,7 +54,7 @@ workflows:
         pkg: foo
         path: "*.zip"
   - id: nba-transaction
-    params:
+    parameters:
       - name: foo
         type: string
         required: true
@@ -68,7 +70,7 @@ jobs:
     parameters:
       foo: ${parent.outputs.foo}
     outputs:
-      bar: ${params.foo}
+      bar: ${parameters.foo}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -184,7 +186,8 @@ jobs:
 func TestWorkflowJobProcessor_MissingRequiredParamIsError(t *testing.T) {
 	targetDir := t.TempDir()
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -192,7 +195,7 @@ packages:
 
 workflows:
   - id: needs-param
-    params:
+    parameters:
       - name: required-thing
         type: string
         required: true
@@ -279,7 +282,8 @@ func TestWorkflowJobProcessor_NilJobFailsCleanly(t *testing.T) {
 // an explicit parameter mapping can name it as ${parent.id}.
 func TestWorkflowJobProcessor_ExplicitParamsCanReferenceTheJobId(t *testing.T) {
 	config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: foo
     type: FS
@@ -287,7 +291,7 @@ packages:
 
 workflows:
   - id: echoes-the-job
-    params:
+    parameters:
       - name: job
         type: string
         required: true
@@ -302,7 +306,7 @@ jobs:
     parameters:
       job: ${parent.id}
     outputs:
-      seen: ${params.job}
+      seen: ${parameters.job}
 `
 	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
@@ -366,7 +370,7 @@ func TestWorkflowJobProcessor_ExplicitParamsCanPickOutJobInputs(t *testing.T) {
       job: ${parent.id}
       wanted: ${parent.inputs.wanted}
     outputs:
-      seen: ${params.wanted}
+      seen: ${parameters.wanted}
 `)
 
 	job := jobs.NewJob("job-7", "pipeline", 1000, "", map[string]any{
@@ -423,7 +427,8 @@ func parentVarsAppCtx(t *testing.T, mappings string) (*app.AppContext, *jobs.Mem
 	t.Helper()
 
 	config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: foo
     type: FS
@@ -431,7 +436,7 @@ packages:
 
 workflows:
   - id: echoes-the-job
-    params:
+    parameters:
       - name: job
         type: string
         required: true
@@ -492,5 +497,93 @@ func runOnePartialJob(t *testing.T, appCtx *app.AppContext, backend *jobs.Memory
 	}
 	if result := processor.Process(taken, job, backend); !result.IsSuccess() {
 		t.Fatalf("Process: %+v", result)
+	}
+}
+
+// A cleanup PartialJob runs whether the Job succeeded or failed, so
+// ${parent.status} and ${parent.errors} are how its mapping can tell which.
+func TestWorkflowJobProcessor_ExplicitParamsSeeTheJobStatusAndErrors(t *testing.T) {
+	appCtx, backend := parentVarsAppCtx(t, `
+    parameters:
+      job: ${parent.id}
+      wanted: ${parent.status}
+    outputs:
+      status: ${parameters.wanted}
+      errors: ${parent.errors}
+      errorsText: ${parent.errorsString}
+`)
+
+	// The realistic shape for these two: a fan-out where an earlier part
+	// already failed while this one still runs (s. lib/jobs.pushFollowUps
+	// on why a fan-out carries on).
+	job := jobs.NewJob("job-11", "pipeline", 1000, "", nil)
+	job.StartedAt = 1
+	job.Errors = []string{"an earlier part blew up"}
+	runOnePartialJob(t, appCtx, backend, job)
+
+	stored, err := backend.GetJob(job.Id)
+	if err != nil || stored == nil {
+		t.Fatalf("GetJob: %v, %+v", err, stored)
+	}
+	outs := outputValues(stored.Outputs)
+
+	if outs["errorsText"] != "an earlier part blew up" {
+		t.Errorf("Outputs[errorsText] = %+v, want the joined errors", outs["errorsText"])
+	}
+
+	// Started and carrying an error, but not finished - so RUNNING.
+	if outs["status"] != string(model.StatusRUNNING) {
+		t.Errorf("Outputs[status] = %+v, want %v", outs["status"], model.StatusRUNNING)
+	}
+	// A whole placeholder keeps the list rather than stringifying it.
+	list, ok := outs["errors"].([]any)
+	if !ok || len(list) != 1 || list[0] != "an earlier part blew up" {
+		t.Errorf("Outputs[errors] = %#v, want the error list as-is", outs["errors"])
+	}
+}
+
+func TestParentVars_ReportsStatusAndErrors(t *testing.T) {
+	job := jobs.NewJob("job-12", "pipeline", 1000, "", nil)
+
+	fresh := parentVars(job)
+	if fresh["status"] != string(model.StatusACCEPTED) {
+		t.Errorf("status = %v, want ACCEPTED for a job that never started", fresh["status"])
+	}
+	if errs, ok := fresh["errors"].([]string); !ok || len(errs) != 0 {
+		t.Errorf("errors = %#v, want an empty list", fresh["errors"])
+	}
+	if fresh["errorsString"] != "" {
+		t.Errorf("errorsString = %q, want empty when there are no errors", fresh["errorsString"])
+	}
+
+	job.StartedAt = 1
+	job.FinishedAt = 2
+	job.Errors = []string{"first", "second"}
+	failed := parentVars(job)
+	if failed["status"] != string(model.StatusFAILED) {
+		t.Errorf("status = %v, want FAILED", failed["status"])
+	}
+	if errs, _ := failed["errors"].([]string); len(errs) != 2 {
+		t.Errorf("errors = %#v, want both", failed["errors"])
+	}
+	if failed["errorsString"] != "first;;;second" {
+		t.Errorf("errorsString = %q, want the errors joined with the separator", failed["errorsString"])
+	}
+}
+
+// A single error can itself contain commas and newlines - a failing
+// cmd:exec carries its output tail - so the joined form has to stay
+// splittable on the separator alone.
+func TestParentVars_ErrorsStringSurvivesMultilineErrors(t *testing.T) {
+	job := jobs.NewJob("job-13", "pipeline", 1000, "", nil)
+	job.Errors = []string{"first failed\nlast output:\na, b, c", "second failed"}
+
+	joined, _ := parentVars(job)["errorsString"].(string)
+	parts := strings.Split(joined, errorsSeparator)
+	if len(parts) != 2 {
+		t.Fatalf("split %q into %d parts, want 2", joined, len(parts))
+	}
+	if !strings.Contains(parts[0], "a, b, c") || parts[1] != "second failed" {
+		t.Errorf("parts = %#v, want each error back whole", parts)
 	}
 }

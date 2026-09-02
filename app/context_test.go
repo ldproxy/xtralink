@@ -17,14 +17,14 @@ func TestNewJobsBackend_DefaultsToMemory(t *testing.T) {
 }
 
 func TestNewJobsBackend_LocalQueueUsesMemory(t *testing.T) {
-	settings := &Settings{JobQueue: JobQueueConfig{Queue: "local"}}
+	settings := &Settings{General: GeneralConfig{Queue: "local"}}
 	if _, ok := newJobsBackend(settings).(*jobs.MemoryBackend); !ok {
 		t.Errorf("expected a *jobs.MemoryBackend for queue=local")
 	}
 }
 
 func TestNewJobsBackend_RedisQueueUsesRedisBackend(t *testing.T) {
-	settings := &Settings{JobQueue: JobQueueConfig{Queue: "REDIS", Redis: []string{"localhost:6379"}}}
+	settings := &Settings{General: GeneralConfig{Queue: "REDIS", Redis: []string{"localhost:6379"}}}
 	if _, ok := newJobsBackend(settings).(*jobs.RedisBackend); !ok {
 		t.Errorf("expected a *jobs.RedisBackend for queue=REDIS (case-insensitive)")
 	}
@@ -40,7 +40,7 @@ func TestNewLocker_NoRedisNodesUsesNoop(t *testing.T) {
 }
 
 func TestNewLocker_RedisNodesUsesRedisLocker(t *testing.T) {
-	settings := &Settings{JobQueue: JobQueueConfig{Redis: []string{"localhost:6379"}}}
+	settings := &Settings{General: GeneralConfig{Redis: []string{"localhost:6379"}}}
 	if _, ok := newLocker(settings).(*lock.RedisLocker); !ok {
 		t.Errorf("expected a *lock.RedisLocker when settings.redis is configured")
 	}

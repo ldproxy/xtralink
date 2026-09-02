@@ -70,7 +70,7 @@ func newTestAppContext(t *testing.T, targetDir string, pkgs ...app.Package) (*ap
 	backend := &fakeBackend{}
 	return &app.AppContext{
 		Logger:   zerolog.Nop(),
-		Settings: &app.Settings{TargetDir: targetDir, Packages: pkgs},
+		Settings: &app.Settings{General: app.GeneralConfig{TargetDir: targetDir}, Packages: pkgs},
 		Drivers:  drivers.NewFactory(),
 		Jobs:     backend,
 	}, backend

@@ -60,7 +60,8 @@ func echoWorkflowConfig(t *testing.T) string {
 	t.Helper()
 
 	return `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: unused
     type: FS
@@ -104,7 +105,8 @@ func TestRun_LogsOneInfoLineOnSuccess(t *testing.T) {
 
 func TestRun_LogsNoSuccessLineWhenAStepFails(t *testing.T) {
 	config := `
-targetDir: ` + t.TempDir() + `
+settings:
+  targetDir: ` + t.TempDir() + `
 packages:
   - id: unused
     type: FS

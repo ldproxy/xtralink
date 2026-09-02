@@ -44,7 +44,7 @@ func Run(appCtx *app.AppContext, workflowId string, overrides map[string]string)
 		return err
 	}
 
-	params, err := workflows.ResolveParams(*wf, overrides)
+	params, err := workflows.ResolveParameters(*wf, overrides)
 	if err != nil {
 		return fmt.Errorf("workflow %q: %w", workflowId, err)
 	}
@@ -64,8 +64,8 @@ func Run(appCtx *app.AppContext, workflowId string, overrides map[string]string)
 	defer release()
 
 	vars := map[string]any{
-		"packages": packageVars(appCtx.Settings.Packages),
-		"params":   params,
+		"packages":   packageVars(appCtx.Settings.Packages),
+		"parameters": params,
 	}
 
 	logger := appCtx.Logger.With().Str("workflow", workflowId).Logger()
@@ -79,7 +79,7 @@ func Run(appCtx *app.AppContext, workflowId string, overrides map[string]string)
 }
 
 // ParseOverrides turns "name=value" strings, as collected from repeated
-// --input flags (s. cli/flow.go), into a map for ResolveParams.
+// --input flags (s. cli/flow.go), into a map for ResolveParameters.
 func ParseOverrides(raw []string) (map[string]string, error) {
 	overrides := make(map[string]string, len(raw))
 	for _, entry := range raw {

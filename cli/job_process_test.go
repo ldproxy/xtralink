@@ -98,7 +98,8 @@ func TestJobProcessCmd_ProcessesOnePartialJobThenStopsOnCancel(t *testing.T) {
 	}
 
 	config := `
-targetDir: ` + targetDir + `
+settings:
+  targetDir: ` + targetDir + `
 packages:
   - id: foo
     type: FS
@@ -180,5 +181,21 @@ jobs:
 	out, ok := final.Outputs["foo"].(map[string]any)
 	if !ok || out["value"] != "a.zip" {
 		t.Errorf("Outputs[foo] = %+v, want value a.zip", final.Outputs["foo"])
+	}
+}
+
+// RunJobWorkers is what `flow run --workers` shares with `job process`, so
+// it has to refuse the same way when there is nothing configured to run.
+func TestRunJobWorkers_WithNoJobsConfiguredIsError(t *testing.T) {
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: &app.Settings{},
+	}
+
+	if err := RunJobWorkers(appCtx, context.Background(), "*"); err == nil {
+		t.Fatal("expected an error when no jobs are configured")
+	}
+	if err := RunJobWorkers(appCtx, context.Background(), "no-such-kind"); err == nil {
+		t.Fatal("expected an error for an unknown kind")
 	}
 }

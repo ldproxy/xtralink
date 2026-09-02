@@ -18,18 +18,20 @@ import (
 var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 
 type Settings struct {
-	TargetDir      string               `yaml:"targetDir,omitempty"`
 	Packages       []Package            `yaml:"packages"`
 	Workflows      []workflows.Workflow `yaml:"workflows,omitempty"`
-	JobQueue       JobQueueConfig       `yaml:"settings,omitempty"`
+	General        GeneralConfig        `yaml:"settings,omitempty"`
 	JobDefinitions []JobDefinition      `yaml:"jobs,omitempty"`
 }
 
-// JobQueueConfig selects and sizes the job queue backend and configures the
-// shared Redis/Valkey connection it (and the per-workflow-id lock) uses -
-// merged into one `settings:` block, mirroring xtraplatform's
-// JobsConfiguration/RedisConfiguration.
-type JobQueueConfig struct {
+// GeneralConfig is the `settings:` block: where the local mirrors live,
+// plus the job queue backend and the shared Redis/Valkey connection it (and
+// the per-workflow-id lock) uses - one block rather than several, mirroring
+// xtraplatform's JobsConfiguration/RedisConfiguration.
+type GeneralConfig struct {
+	// TargetDir is the directory every package's local mirror is created
+	// under (s. Package.LocalPath).
+	TargetDir string `yaml:"targetDir,omitempty"`
 	// Queue is "local" (in-memory, single-node only) or "redis". Default:
 	// "local".
 	Queue string `yaml:"queue,omitempty"`
@@ -138,9 +140,9 @@ func validateAndNormalize(settings *Settings) error {
 		return errors.New("at least one package is required")
 	}
 
-	settings.TargetDir = strings.TrimSpace(settings.TargetDir)
-	if settings.TargetDir == "" {
-		settings.TargetDir = "."
+	settings.General.TargetDir = strings.TrimSpace(settings.General.TargetDir)
+	if settings.General.TargetDir == "" {
+		settings.General.TargetDir = "."
 	}
 
 	for i := range settings.Packages {
@@ -185,14 +187,14 @@ func validateAndNormalize(settings *Settings) error {
 			r.Password = envByRemoteID(r.Id, "password")
 		}
 
-		r.ResolvedLocalPath = filepath.Join(settings.TargetDir, r.LocalPath)
+		r.ResolvedLocalPath = filepath.Join(settings.General.TargetDir, r.LocalPath)
 	}
 
 	if err := validateWorkflows(settings.Workflows); err != nil {
 		return err
 	}
 
-	if err := validateAndNormalizeJobQueue(&settings.JobQueue); err != nil {
+	if err := validateAndNormalizeJobQueue(&settings.General); err != nil {
 		return err
 	}
 
@@ -203,7 +205,7 @@ func validateAndNormalize(settings *Settings) error {
 	return nil
 }
 
-func validateAndNormalizeJobQueue(cfg *JobQueueConfig) error {
+func validateAndNormalizeJobQueue(cfg *GeneralConfig) error {
 	cfg.Queue = strings.ToLower(strings.TrimSpace(cfg.Queue))
 	if cfg.Queue == "" {
 		cfg.Queue = "local"
@@ -256,7 +258,7 @@ func validateWorkflows(wfs []workflows.Workflow) error {
 		seenWorkflowIds[wf.Id] = true
 
 		seenParamNames := map[string]bool{}
-		for pi, p := range wf.Params {
+		for pi, p := range wf.Parameters {
 			if p.Name == "" {
 				return fmt.Errorf("workflows[%d] (%s): params[%d].name is required", wi, wf.Id, pi)
 			}

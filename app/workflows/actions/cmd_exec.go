@@ -11,7 +11,7 @@ import (
 )
 
 // CmdExecAction implements "cmd:exec": runs an arbitrary command. The
-// resolved "cmd" string (template placeholders like ${params...}/
+// resolved "cmd" string (template placeholders like ${parameters...}/
 // ${outputs...} are already substituted by the engine before Run is called)
 // is tokenized by tokenizeCmd and executed directly via exec.Command -
 // deliberately NOT via a shell (e.g. "sh -c"). A workflow author's cmd:
