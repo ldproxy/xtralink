@@ -13,6 +13,7 @@ type JobConfiguration struct {
   Setup bool `json:"setup"`
   Cleanup bool `json:"cleanup"`
   FollowUps []JobConfiguration `json:"followUps"`
+  TtlSeconds *int `json:"ttlSeconds"`
 }
 
 func NewJobConfiguration(
@@ -26,6 +27,7 @@ func NewJobConfiguration(
   setup bool,
   cleanup bool,
   followUps []JobConfiguration,
+  ttlSeconds *int,
 ) *JobConfiguration {
 
   return &JobConfiguration{
@@ -39,6 +41,7 @@ func NewJobConfiguration(
     Setup: setup,
     Cleanup: cleanup,
     FollowUps: followUps,
+    TtlSeconds: ttlSeconds,
   }
 }
   

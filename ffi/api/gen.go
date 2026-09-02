@@ -31,6 +31,7 @@ type JobQueue interface {
   UpdatePartial(id string, delta int32) 
   Outputs(id string, outputs model.SetOutputs) 
   Cancel(id string) bool
+  Delete(id string) bool
   Get(id string) (model.Job, bool)
   GetPartial(id string) (model.PartialJob, bool)
   Register(jobType string, priority int32, processor JobProcessor) error

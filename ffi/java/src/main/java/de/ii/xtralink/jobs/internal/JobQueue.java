@@ -184,6 +184,16 @@ public final class JobQueue {
     }
   }
 
+  public static boolean delete(String id) {
+    try (Arena arena = Arena.ofConfined()) {
+      short ret$ = (short) Ffi.JobQueue_Delete$MH.invokeExact(Ffi.str(arena, id));
+
+      return ret$ == 1;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
   public static java.util.Optional<de.ii.xtralink.jobs.Job> get(String id) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);

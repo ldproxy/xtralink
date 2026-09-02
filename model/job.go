@@ -12,6 +12,7 @@ type Job struct {
   Cleanup *PartialJob `json:"cleanup"`
   FollowUps []Job `json:"followUps"`
   Sequence *JobSequence `json:"sequence"`
+  TtlSeconds *int `json:"ttlSeconds"`
 }
 
 func NewJob(
@@ -34,6 +35,7 @@ func NewJob(
   cleanup *PartialJob,
   followUps []Job,
   sequence *JobSequence,
+  ttlSeconds *int,
 ) *Job {
 
   return &Job{
@@ -58,6 +60,7 @@ func NewJob(
     Cleanup: cleanup,
     FollowUps: followUps,
     Sequence: sequence,
+    TtlSeconds: ttlSeconds,
   }
 }
   

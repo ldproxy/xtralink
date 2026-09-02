@@ -12,7 +12,8 @@ public record JobConfiguration(
     JobProgress progress,
     Boolean setup,
     Boolean cleanup,
-    java.util.List<JobConfiguration> followUps
+    java.util.List<JobConfiguration> followUps,
+    java.util.Optional<Integer> ttlSeconds
   ) {
 
 public JobConfiguration(
@@ -25,7 +26,8 @@ public JobConfiguration(
   JobProgress progress,
   Boolean setup,
   Boolean cleanup,
-  java.util.List<JobConfiguration> followUps
+  java.util.List<JobConfiguration> followUps,
+  java.util.Optional<Integer> ttlSeconds
 ) {
   this.kind = kind;
   this.priority = priority;
@@ -37,6 +39,7 @@ public JobConfiguration(
   this.setup = setup;
   this.cleanup = cleanup;
   this.followUps = followUps;
+  this.ttlSeconds = ttlSeconds;
 }
   
 }

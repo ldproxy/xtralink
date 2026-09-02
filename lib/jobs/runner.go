@@ -58,8 +58,8 @@ type Runner struct {
 	// both.
 	HousekeepingInterval time.Duration
 	// JobRetention is how long a finished Job is kept before being removed
-	// (Java: one hour). Zero or less disables the cleanup sweep, leaving
-	// finished Jobs readable indefinitely.
+	// (Java: one hour). Zero removes it at the first sweep after it
+	// finishes; a negative value keeps finished Jobs indefinitely.
 	JobRetention time.Duration
 	// OnError receives errors from background job processing that would
 	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
@@ -303,27 +303,40 @@ func (r *Runner) reapOrphans() {
 	}
 }
 
-// cleanupFinishedJobs removes Jobs that finished longer than JobRetention
-// ago (mirrors cleanupOldJobSets in JobRunner.java). The gate is FinishedAt
-// rather than Java's isDone(): a Job force-failed by a failing setup step
-// never reaches current == total, so Java's gate would leak it forever.
+// cleanupFinishedJobs removes Jobs that have been finished and idle for
+// longer than their retention (mirrors cleanupOldJobSets in
+// JobRunner.java). The gate is FinishedAt rather than Java's isDone(): a Job
+// force-failed by a failing setup step never reaches current == total, so
+// Java's gate would leak it forever.
 func (r *Runner) cleanupFinishedJobs() {
-	if r.JobRetention <= 0 {
-		return
-	}
-
 	jobs, err := r.Backend.GetJobs()
 	if err != nil {
 		r.reportError(err)
 		return
 	}
 
-	cutoff := nowMillis() - r.JobRetention.Milliseconds()
+	now := nowMillis()
 	for _, job := range jobs {
-		if job.FinishedAt > 0 && job.UpdatedAt < cutoff {
+		retention := r.retentionFor(job)
+		if retention < 0 {
+			continue
+		}
+		if job.FinishedAt > 0 && now-job.UpdatedAt >= retention.Milliseconds() {
 			r.reportError(r.Backend.DoneJob(job.Id))
 		}
 	}
+}
+
+// retentionFor resolves how long job is kept after it finished: its own
+// TtlSeconds if it carries one, otherwise the Runner-wide JobRetention. An
+// explicit TTL wins in both directions, so it also applies when the default
+// keeps Jobs indefinitely - and, like JobRetention, zero means "remove as
+// soon as it has finished" while a negative value means "keep forever".
+func (r *Runner) retentionFor(job *model.Job) time.Duration {
+	if job.TtlSeconds != nil {
+		return time.Duration(*job.TtlSeconds) * time.Second
+	}
+	return r.JobRetention
 }
 
 func (r *Runner) markInFlight(partialJobID string) {

@@ -193,6 +193,17 @@ func (s *JobQueue) Cancel(id string) bool {
 	return false
 }
 
+// Delete retires a finished Job ahead of its TTL. An unfinished Job is left
+// alone: its PartialJobs may still be queued or running, and pulling the Job
+// out from under them is what Cancel is for.
+func (s *JobQueue) Delete(id string) bool {
+	job, err := s.backend.GetJob(id)
+	if err != nil || job == nil || job.FinishedAt <= 0 {
+		return false
+	}
+	return s.backend.DoneJob(id) == nil
+}
+
 func (s *JobQueue) Get(id string) (model.Job, bool) {
 	job, err := s.backend.GetJob(id)
 	if err != nil || job == nil {
@@ -221,6 +232,7 @@ func Create(cfg model.JobConfiguration) model.Job {
 	job.Inputs = cfg.Inputs
 	job.Context = cfg.Context
 	job.Progress = cfg.Progress
+	job.TtlSeconds = cfg.TtlSeconds
 
 	//TODO: could be booleans, create and push in runner
 	if cfg.Setup {

@@ -331,7 +331,7 @@ func TestRunner_DoesNotReclaimItsOwnInFlightPartialJob(t *testing.T) {
 
 func TestRunner_RemovesLongFinishedJob(t *testing.T) {
 	b := NewMemoryBackend()
-	job, r := finishingJobRunner(t, b)
+	job, r := finishingJobRunner(t, b, nil)
 	r.JobRetention = time.Millisecond
 
 	runRunnerUntil(t, r, 2*time.Second, func() bool {
@@ -344,37 +344,24 @@ func TestRunner_RemovesLongFinishedJob(t *testing.T) {
 	}
 }
 
-func TestRunner_KeepsFinishedJobWhenRetentionDisabled(t *testing.T) {
+func TestRunner_KeepsFinishedJobWhenRetentionIsNegative(t *testing.T) {
 	b := NewMemoryBackend()
-	job, r := finishingJobRunner(t, b)
-	r.JobRetention = 0
+	job, r := finishingJobRunner(t, b, nil)
+	r.JobRetention = -1
 
-	// Keep running well past the point where the Job is finished, so plenty
-	// of housekeeping sweeps see it and leave it alone.
-	deadline := time.Now().Add(150 * time.Millisecond)
-	runRunnerUntil(t, r, 2*time.Second, func() bool {
-		got, _ := b.GetJob(job.Id)
-		return got == nil || (got.FinishedAt > 0 && time.Now().After(deadline))
-	})
-
-	got, _ := b.GetJob(job.Id)
-	if got == nil {
-		t.Fatal("expected the finished Job to be kept when JobRetention is disabled")
-	}
-	if got.FinishedAt <= 0 {
-		t.Errorf("expected the Job to have finished, got %+v", got)
-	}
+	assertJobSurvivesSweeps(t, b, r, job.Id)
 }
 
 // finishingJobRunner pushes a Job with a single worker PartialJob and
 // returns a Runner whose processor completes it, so the cleanup sweep has a
 // finished Job to act on. Housekeeping runs fast; the caller sets
-// JobRetention.
-func finishingJobRunner(t *testing.T, b *MemoryBackend) (*model.Job, *Runner) {
+// JobRetention. ttlSeconds, when non-nil, is the Job's own TTL override.
+func finishingJobRunner(t *testing.T, b *MemoryBackend, ttlSeconds *int) (*model.Job, *Runner) {
 	t.Helper()
 
 	jobType := uniqueType("retention")
 	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	job.TtlSeconds = ttlSeconds
 	if err := b.PushJob(job); err != nil {
 		t.Fatalf("PushJob: %v", err)
 	}
@@ -397,4 +384,91 @@ func finishingJobRunner(t *testing.T, b *MemoryBackend) (*model.Job, *Runner) {
 		}})
 
 	return job, r
+}
+
+func TestRunner_JobTtlShortensTheDefaultRetention(t *testing.T) {
+	b := NewMemoryBackend()
+	ttl := 1
+	job, r := finishingJobRunner(t, b, &ttl)
+	r.JobRetention = time.Hour
+
+	runRunnerUntil(t, r, 3*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected the Job's own TTL to retire it well before the 1h default, got %+v", got)
+	}
+}
+
+func TestRunner_JobTtlExtendsPastTheDefaultRetention(t *testing.T) {
+	b := NewMemoryBackend()
+	ttl := 3600
+	job, r := finishingJobRunner(t, b, &ttl)
+	r.JobRetention = time.Millisecond
+
+	assertJobSurvivesSweeps(t, b, r, job.Id)
+}
+
+func TestRunner_JobTtlAppliesWhenDefaultKeepsIndefinitely(t *testing.T) {
+	b := NewMemoryBackend()
+	ttl := 1
+	job, r := finishingJobRunner(t, b, &ttl)
+	r.JobRetention = -1
+
+	runRunnerUntil(t, r, 3*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected an explicit TTL to apply even when the default keeps Jobs forever, got %+v", got)
+	}
+}
+
+func TestRunner_ZeroJobTtlRemovesTheJobAtOnce(t *testing.T) {
+	b := NewMemoryBackend()
+	ttl := 0
+	job, r := finishingJobRunner(t, b, &ttl)
+	r.JobRetention = time.Hour
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected a zero TTL to retire the Job on the first sweep after it finished, got %+v", got)
+	}
+}
+
+func TestRunner_NegativeJobTtlKeepsTheJob(t *testing.T) {
+	b := NewMemoryBackend()
+	ttl := -1
+	job, r := finishingJobRunner(t, b, &ttl)
+	r.JobRetention = time.Millisecond
+
+	assertJobSurvivesSweeps(t, b, r, job.Id)
+}
+
+// assertJobSurvivesSweeps runs r well past the point where jobID finished,
+// so plenty of housekeeping sweeps see the Job, and asserts it is still
+// there afterwards.
+func assertJobSurvivesSweeps(t *testing.T, b *MemoryBackend, r *Runner, jobID string) {
+	t.Helper()
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(jobID)
+		return got == nil || (got.FinishedAt > 0 && time.Now().After(deadline))
+	})
+
+	got, _ := b.GetJob(jobID)
+	if got == nil {
+		t.Fatal("expected the finished Job to be kept, but it was removed")
+	}
+	if got.FinishedAt <= 0 {
+		t.Errorf("expected the Job to have finished, got %+v", got)
+	}
 }

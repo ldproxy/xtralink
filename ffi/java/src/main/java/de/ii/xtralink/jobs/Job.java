@@ -21,7 +21,8 @@ public record Job(
     java.util.Optional<PartialJob> setup,
     java.util.Optional<PartialJob> cleanup,
     java.util.List<Job> followUps,
-    java.util.Optional<JobSequence> sequence
+    java.util.Optional<JobSequence> sequence,
+    java.util.Optional<Integer> ttlSeconds
   ) implements BaseJob {
 
 public Job(
@@ -43,7 +44,8 @@ public Job(
   java.util.Optional<PartialJob> setup,
   java.util.Optional<PartialJob> cleanup,
   java.util.List<Job> followUps,
-  java.util.Optional<JobSequence> sequence
+  java.util.Optional<JobSequence> sequence,
+  java.util.Optional<Integer> ttlSeconds
 ) {
   this.id = id;
   this.kind = kind;
@@ -64,6 +66,7 @@ public Job(
   this.cleanup = cleanup;
   this.followUps = followUps;
   this.sequence = sequence;
+  this.ttlSeconds = ttlSeconds;
 }
   
 }

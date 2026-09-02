@@ -703,6 +703,11 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
 		return CBool(jobQueue.Cancel(C.GoString(id)))
 	}
 
+//export JobQueue_Delete
+	func JobQueue_Delete(id *C.char) C.short {
+		return CBool(jobQueue.Delete(C.GoString(id)))
+	}
+
 //export JobQueue_Get
 	func JobQueue_Get(id *C.char, clen *C.size_t, cok *C.short) *C.char {
 		result, ok := jobQueue.Get(C.GoString(id))

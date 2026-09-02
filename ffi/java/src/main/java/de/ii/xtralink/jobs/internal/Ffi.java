@@ -624,6 +624,9 @@ final class Ffi {
   static final MethodHandle JobQueue_Cancel$MH =
       downcall("JobQueue_Cancel", FunctionDescriptor.of(C_SHORT, C_POINTER));
 
+  static final MethodHandle JobQueue_Delete$MH =
+      downcall("JobQueue_Delete", FunctionDescriptor.of(C_SHORT, C_POINTER));
+
   static final MethodHandle JobQueue_Get$MH =
       downcall("JobQueue_Get", FunctionDescriptor.of(C_POINTER, C_POINTER, C_POINTER, C_POINTER));
 

@@ -143,6 +143,11 @@ export namespace GenModel {
       followUps: Job[];
       /** @optional */
       sequence: JobSequence;
+      /**
+       * @TJS-type integer
+       * @optional
+       */
+      ttlSeconds: number;
     };
 
     export type JobConfiguration = {
@@ -157,6 +162,11 @@ export namespace GenModel {
       setup: boolean;
       cleanup: boolean;
       followUps: JobConfiguration[];
+      /**
+       * @TJS-type integer
+       * @optional
+       */
+      ttlSeconds: number;
     };
 
     export type PartialJobConfiguration = {
@@ -240,6 +250,8 @@ export namespace GenApi {
     outputs(id: string, outputs: GenModel.Config.SetOutputs): void;
 
     cancel(id: string): boolean;
+
+    delete(id: string): boolean;
 
     /**
      * @optional
