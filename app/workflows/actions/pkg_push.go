@@ -9,11 +9,16 @@ import (
 )
 
 // PushAction implements "pkg:push": mirrors a package's local changes back
-// to its own remote in place (SyncBack), the same mechanism pkg:mv_file
-// already uses on its from/to packages - only FS/S3 support it. This is a
-// deliberately different meaning from the CLI's "xtrasync pkg push" command,
-// which builds and publishes a new OCI artifact rather than syncing a
-// package back to its own remote.
+// to its own remote in place (SyncBack) - only FS/S3 support it.
+//
+// The package must already have been pulled. SyncBack mirrors rather than
+// merges, so pushing a local directory that was never filled from the
+// remote would delete everything the remote holds and the local copy does
+// not.
+//
+// This is a deliberately different meaning from the CLI's "xtrasync pkg
+// push" command, which builds and publishes a new OCI artifact rather than
+// syncing a package back to its own remote.
 type PushAction struct {
 	AppCtx *app.AppContext
 }
@@ -32,6 +37,9 @@ func (a *PushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, erro
 	}
 	if !SupportsSyncBack(p.Type) {
 		return workflows.StepResult{}, fmt.Errorf("pkg:push only supports FS/S3 packages, got %s(%s)", pkgId, p.Type)
+	}
+	if err := requireLocalMirror(p); err != nil {
+		return workflows.StepResult{}, fmt.Errorf("pkg:push: %w", err)
 	}
 
 	driver, err := a.AppCtx.Drivers.SyncBackFor(p.Type)

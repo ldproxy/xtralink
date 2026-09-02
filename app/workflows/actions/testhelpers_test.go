@@ -90,6 +90,20 @@ func fsPackage(t *testing.T, id, targetDir string) app.Package {
 	}
 }
 
+// seedMirror creates p's local mirror and fills it with files, standing in
+// for the pkg:pull step a real workflow would have run first - the actions
+// under test require a pulled package and deliberately never pull
+// themselves (s. requireLocalMirror).
+func seedMirror(t *testing.T, p app.Package, files map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(p.ResolvedLocalPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", p.ResolvedLocalPath, err)
+	}
+	for rel, content := range files {
+		writeFile(t, filepath.Join(p.ResolvedLocalPath, filepath.FromSlash(rel)), content)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

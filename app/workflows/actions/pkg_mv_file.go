@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/ldproxy/xtralink/app"
-	"github.com/ldproxy/xtralink/app/pkg"
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
@@ -29,8 +28,10 @@ func SupportsSyncBack(pkgType string) bool {
 }
 
 // MvFileAction implements "pkg:mv_file": moves a single file from one
-// package's local mirror to another's, deleting the source, then syncs both
-// packages back to their own remote independently.
+// package's local mirror to another's, deleting the source. Both mirrors
+// must already have been pulled, and neither is synced back - a workflow
+// adds pkg:push steps for that, which is what lets several moves land on
+// the remote as one sync instead of one per move.
 type MvFileAction struct {
 	AppCtx *app.AppContext
 }
@@ -63,34 +64,17 @@ func (a *MvFileAction) Run(ctx *workflows.StepContext) (workflows.StepResult, er
 		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file only supports FS/S3 packages, got from=%s(%s) to=%s(%s)",
 			fromId, fromPkg.Type, toId, toPkg.Type)
 	}
-
-	if err := pkg.Pull(a.AppCtx, fromId); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("could not pull %q: %w", fromId, err)
+	if err := requireLocalMirror(fromPkg); err != nil {
+		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: from: %w", err)
 	}
-	if err := pkg.Pull(a.AppCtx, toId); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("could not pull %q: %w", toId, err)
+	if err := requireLocalMirror(toPkg); err != nil {
+		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: to: %w", err)
 	}
 
 	srcPath := filepath.Join(fromPkg.ResolvedLocalPath, filepath.FromSlash(relPath))
 	dstPath := filepath.Join(toPkg.ResolvedLocalPath, filepath.FromSlash(relPath))
 	if err := moveFile(srcPath, dstPath); err != nil {
 		return workflows.StepResult{}, fmt.Errorf("could not move %q from %q to %q: %w", relPath, fromId, toId, err)
-	}
-
-	fromDriver, err := a.AppCtx.Drivers.SyncBackFor(fromPkg.Type)
-	if err != nil {
-		return workflows.StepResult{}, err
-	}
-	if err := fromDriver.SyncBack(pkg.RemoteFor(*fromPkg)); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("could not sync %q back after removing %q: %w", fromId, relPath, err)
-	}
-
-	toDriver, err := a.AppCtx.Drivers.SyncBackFor(toPkg.Type)
-	if err != nil {
-		return workflows.StepResult{}, err
-	}
-	if err := toDriver.SyncBack(pkg.RemoteFor(*toPkg)); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("could not sync %q back after adding %q: %w", toId, relPath, err)
 	}
 
 	return workflows.Success(), nil

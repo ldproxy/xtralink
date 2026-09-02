@@ -2,6 +2,7 @@ package actions
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ldproxy/xtralink/app"
@@ -11,7 +12,7 @@ import (
 func TestPushAction_SyncsLocalChangesToRemote(t *testing.T) {
 	targetDir := t.TempDir()
 	foo := fsPackage(t, "foo", targetDir)
-	writeFile(t, filepath.Join(foo.ResolvedLocalPath, "a.zip"), "a")
+	seedMirror(t, foo, map[string]string{"a.zip": "a"})
 	appCtx, _ := newTestAppContext(t, targetDir, foo)
 
 	action := &PushAction{AppCtx: appCtx}
@@ -49,10 +50,35 @@ func TestPushAction_UnknownPackageIsError(t *testing.T) {
 func TestPushAction_RejectsUnsupportedPackageType(t *testing.T) {
 	targetDir := t.TempDir()
 	gitPkg := app.Package{Id: "gitpkg", Type: "GIT", URL: "https://example.com/repo.git", ResolvedLocalPath: filepath.Join(targetDir, "gitpkg")}
+	seedMirror(t, gitPkg, nil)
 	appCtx, _ := newTestAppContext(t, targetDir, gitPkg)
 
 	action := &PushAction{AppCtx: appCtx}
-	if _, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "gitpkg"}}); err == nil {
+	_, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "gitpkg"}})
+	if err == nil {
 		t.Fatal("expected an error for a GIT package")
 	}
+	if !strings.Contains(err.Error(), "FS/S3") {
+		t.Errorf("error %q should be about the unsupported package type", err.Error())
+	}
+}
+
+// SyncBack mirrors, so pushing a package that was never pulled would
+// delete everything on the remote that the empty local copy lacks.
+func TestPushAction_UnpulledPackageIsError(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	writeFile(t, filepath.Join(foo.URL, "keep-me.zip"), "precious")
+	appCtx, _ := newTestAppContext(t, targetDir, foo)
+
+	action := &PushAction{AppCtx: appCtx}
+	_, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "foo"}})
+	if err == nil {
+		t.Fatal("expected an error for a package with no local mirror")
+	}
+	if !strings.Contains(err.Error(), "pkg:pull") {
+		t.Errorf("error %q should point at the missing pkg:pull step", err.Error())
+	}
+
+	assertFileContent(t, filepath.Join(foo.URL, "keep-me.zip"), "precious")
 }

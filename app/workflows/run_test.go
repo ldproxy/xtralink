@@ -117,6 +117,10 @@ packages:
 workflows:
   - id: check-ldm
     steps:
+      - action: pkg:pull
+        pkg: foo
+      - action: pkg:pull
+        pkg: bar
       - id: input
         action: pkg:find_each
         pkg: foo
@@ -125,6 +129,10 @@ workflows:
         from: foo
         to: bar
         path: ${outputs.input.path}
+      - action: pkg:push
+        pkg: foo
+      - action: pkg:push
+        pkg: bar
       - action: job:push
         type: nba-apply
         inputs:
@@ -223,6 +231,10 @@ workflows:
         type: string
         default: "*.zip"
     steps:
+      - action: pkg:pull
+        pkg: ${params.pkg}
+      - action: pkg:pull
+        pkg: bar
       - id: input
         action: pkg:find_each
         pkg: ${params.pkg}
@@ -231,6 +243,10 @@ workflows:
         from: ${params.pkg}
         to: bar
         path: ${outputs.input.path}
+      - action: pkg:push
+        pkg: ${params.pkg}
+      - action: pkg:push
+        pkg: bar
       - action: job:push
         type: nba-apply
         inputs:

@@ -107,6 +107,8 @@ packages:
 workflows:
   - id: nba-transform
     steps:
+      - action: pkg:pull
+        pkg: foo
       - id: found
         action: pkg:find_any
         pkg: foo

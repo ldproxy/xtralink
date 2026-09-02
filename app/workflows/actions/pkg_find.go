@@ -7,20 +7,21 @@ import (
 	"sort"
 
 	"github.com/ldproxy/xtralink/app"
-	"github.com/ldproxy/xtralink/app/pkg"
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
-// findMatches pulls pkgId fresh, then glob-matches pattern against its
-// local mirror, returning matches as package-root-relative, slash-form
+// findMatches glob-matches pattern against pkgId's local mirror as it
+// currently stands, returning matches as package-root-relative, slash-form
 // paths, sorted alphabetically for a reproducible order.
+//
+// It does not pull: how fresh the mirror is, is decided by where the
+// workflow puts its pkg:pull step (s. requireLocalMirror).
 func findMatches(appCtx *app.AppContext, pkgId, pattern string) ([]string, error) {
-	if err := pkg.Pull(appCtx, pkgId); err != nil {
-		return nil, fmt.Errorf("could not pull package %q: %w", pkgId, err)
-	}
-
 	p, err := appCtx.Settings.GetPackage(pkgId)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireLocalMirror(p); err != nil {
 		return nil, err
 	}
 
@@ -63,7 +64,8 @@ func findParams(params map[string]any) (pkgId, pattern string, err error) {
 
 // FindAnyAction implements "pkg:find_any": exactly one output set if
 // anything matches (the alphabetically first match; further matches are
-// silently ignored - never a fan-out), zero if nothing does.
+// silently ignored - never a fan-out), zero if nothing does. The package
+// must already have been pulled.
 type FindAnyAction struct {
 	AppCtx *app.AppContext
 }
@@ -87,7 +89,8 @@ func (a *FindAnyAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 }
 
 // FindEachAction implements "pkg:find_each": one output set per match,
-// fanning the remaining Steps out once per match.
+// fanning the remaining Steps out once per match. The package must already
+// have been pulled.
 type FindEachAction struct {
 	AppCtx *app.AppContext
 }

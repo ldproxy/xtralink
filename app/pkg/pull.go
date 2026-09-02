@@ -49,7 +49,7 @@ func Pull(appCtx *app.AppContext, pkgId string) error {
 }
 
 // RemoteFor builds the lib/drivers.Remote for a configured Package - shared
-// by Pull and by pkg:mv_file's implicit SyncBack.
+// by Pull and by the pkg:push workflow action's SyncBack.
 func RemoteFor(p app.Package) drivers.Remote {
 	return drivers.Remote{
 		Type:              p.Type,
