@@ -25,6 +25,22 @@ type Workflow struct {
 	Params      []Param   `yaml:"params,omitempty" json:"params,omitempty"`
 	Defaults    *Defaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
 	Steps       []Step    `yaml:"steps" json:"steps"`
+	Handlers    *Handlers `yaml:"handlers,omitempty" json:"handlers,omitempty"`
+}
+
+// Handlers are steps run once the Workflow's own Steps are done, chosen by
+// how that went: Failure if any step failed, Success if none did, and
+// Always either way, after whichever of the two applied.
+//
+// They are ordinary Steps - same actions, same retry_policy, the same
+// workflow Defaults - resolved against params and packages plus an ${error}
+// namespace (s. ErrorVars). What they deliberately do not see is
+// ${outputs}: after a forking step there is no single outputs tree to show
+// them, and inventing one would be worse than not offering it.
+type Handlers struct {
+	Failure []Step `yaml:"failure,omitempty" json:"failure,omitempty"`
+	Success []Step `yaml:"success,omitempty" json:"success,omitempty"`
+	Always  []Step `yaml:"always,omitempty" json:"always,omitempty"`
 }
 
 // Param declares one runtime input a Workflow expects, read from Steps via

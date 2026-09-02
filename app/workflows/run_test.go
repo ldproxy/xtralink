@@ -3,6 +3,7 @@ package workflows
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -771,5 +772,131 @@ workflows:
 				t.Fatal("expected the workflow to be rejected before it ran")
 			}
 		})
+	}
+}
+
+// Handler steps are validated the same way as ordinary ones, and by name,
+// so a mistake in one is caught before the run rather than only when
+// something fails and the handler is finally reached.
+func TestValidate_HandlerStepsAreCheckedByName(t *testing.T) {
+	cases := map[string]string{
+		"unknown action in failure": `
+    handlers:
+      failure:
+        - action: no:such_action`,
+		"unknown package in always": `
+    handlers:
+      always:
+        - action: pkg:pull
+          pkg: no-such-package`,
+		"git package in success": `
+    handlers:
+      success:
+        - action: pkg:write_file
+          pkg: gitpkg
+          path: a.txt
+          content: x`,
+	}
+
+	for name, handlers := range cases {
+		t.Run(name, func(t *testing.T) {
+			config := `
+targetDir: ` + t.TempDir() + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + t.TempDir() + `
+  - id: gitpkg
+    type: GIT
+    url: https://example.com/repo.git
+
+workflows:
+  - id: with-handlers
+    steps:
+      - action: pkg:pull
+        pkg: foo` + handlers + `
+`
+			configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+			if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+				t.Fatalf("WriteFile config: %v", err)
+			}
+			settings, err := app.LoadSettings(configPath)
+			if err != nil {
+				t.Fatalf("LoadSettings: %v", err)
+			}
+			appCtx := &app.AppContext{
+				Logger:   zerolog.Nop(),
+				Settings: settings,
+				Drivers:  drivers.NewFactory(),
+				Jobs:     &fakeBackend{},
+				Locks:    lock.NoopLocker{},
+			}
+
+			err = Run(appCtx, "with-handlers", nil)
+			if err == nil {
+				t.Fatal("expected the workflow to be rejected before it ran")
+			}
+			if !strings.Contains(err.Error(), "handlers.") {
+				t.Errorf("error %q should name the handler the problem is in", err.Error())
+			}
+		})
+	}
+}
+
+// A failure handler runs against the same packages the workflow does, so it
+// can record what went wrong where the next run will find it.
+func TestRun_FailureHandlerWritesWhatWentWrong(t *testing.T) {
+	targetDir := t.TempDir()
+	remote := t.TempDir()
+	config := `
+targetDir: ` + targetDir + `
+packages:
+  - id: foo
+    type: FS
+    url: ` + remote + `
+
+workflows:
+  - id: doomed
+    steps:
+      - action: pkg:pull
+        pkg: foo
+      - id: breaks
+        action: cmd:exec
+        cmd: false
+    handlers:
+      failure:
+        - action: pkg:write_file
+          pkg: foo
+          path: failed/${error.step}.txt
+          content: ${error.message}
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	runErr := Run(appCtx, "doomed", nil)
+	if runErr == nil {
+		t.Fatal("expected the run to fail")
+	}
+
+	written := filepath.Join(targetDir, "foo", "failed", "breaks.txt")
+	content, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatalf("expected the failure handler to have written %s: %v", written, err)
+	}
+	if !strings.Contains(string(content), "cmd:exec") {
+		t.Errorf("handler wrote %q, want the failure it was told about", content)
 	}
 }

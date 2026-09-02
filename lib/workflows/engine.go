@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -34,7 +35,91 @@ func RunWithResults(workflow Workflow, registry *Registry, vars map[string]any, 
 		seeded["outputs"] = map[string]any{}
 	}
 	r := &runner{defaults: workflow.Defaults, registry: registry, logger: logger}
-	return r.from(workflow.Steps, 0, seeded)
+
+	leaves, runErr := r.from(workflow.Steps, 0, seeded)
+
+	// The run's own error outranks anything the handlers report: it is what
+	// actually went wrong, and a handler failing on top of it must not
+	// replace it (s. runHandlers). errors.Join keeps both, the run's first.
+	handlerErr := r.runHandlers(workflow.Handlers, vars, runErr)
+	if runErr != nil {
+		return nil, errors.Join(runErr, handlerErr)
+	}
+	if handlerErr != nil {
+		return leaves, handlerErr
+	}
+	return leaves, nil
+}
+
+// runHandlers runs the Workflow's handler steps for the outcome runErr
+// describes: Failure or Success, then Always. It returns what the handlers
+// themselves failed with, if anything - never runErr, which the caller
+// already has.
+func (r *runner) runHandlers(handlers *Handlers, vars map[string]any, runErr error) error {
+	if handlers == nil {
+		return nil
+	}
+
+	outcome := "success"
+	steps := handlers.Success
+	if runErr != nil {
+		outcome = "failure"
+		steps = handlers.Failure
+	}
+
+	handlerVars := cloneTopLevel(vars)
+	handlerVars["error"] = ErrorVars(runErr)
+
+	var errs []error
+	if err := r.runHandler(outcome, steps, handlerVars); err != nil {
+		errs = append(errs, err)
+	}
+	if err := r.runHandler("always", handlers.Always, handlerVars); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func (r *runner) runHandler(outcome string, steps []Step, vars map[string]any) error {
+	if len(steps) == 0 {
+		return nil
+	}
+
+	handler := &runner{
+		defaults: r.defaults,
+		registry: r.registry,
+		logger:   r.logger.With().Str("handler", outcome).Logger(),
+	}
+	handler.logger.Debug().Int("steps", len(steps)).Msg("handler starting")
+
+	if _, err := handler.from(steps, 0, vars); err != nil {
+		handler.logger.Error().Err(err).Msg("handler failed")
+		return fmt.Errorf("handlers.%s: %w", outcome, err)
+	}
+
+	handler.logger.Debug().Msg("handler finished")
+	return nil
+}
+
+// ErrorVars builds the ${error} namespace handler steps resolve against:
+// the message, and the id and action of the step that failed. Every field
+// is empty when nothing failed, so an Always handler can name ${error...}
+// without having to know which way the run went - an empty message is how
+// it reads "no failure".
+func ErrorVars(runErr error) map[string]any {
+	vars := map[string]any{"message": "", "step": "", "action": ""}
+	if runErr == nil {
+		return vars
+	}
+
+	vars["message"] = runErr.Error()
+
+	var stepErr *StepError
+	if errors.As(runErr, &stepErr) {
+		vars["step"] = stepErr.StepId
+		vars["action"] = stepErr.Action
+	}
+	return vars
 }
 
 // runner holds what stays the same for the whole run, so the recursive
@@ -65,7 +150,7 @@ func (r *runner) from(steps []Step, index int, vars map[string]any) ([]map[strin
 
 	result, err := r.step(step, stepLogger, vars)
 	if err != nil {
-		return nil, fmt.Errorf("step %d (id=%s, action=%s): %w", index, stepId, step.Action, err)
+		return nil, &StepError{Index: index, StepId: stepId, Action: step.Action, Err: err}
 	}
 	stepLogger.Debug().Dur("duration", time.Since(started)).Int("outputs", len(result.Outputs)).Msg("step finished")
 
@@ -183,3 +268,21 @@ func withOutput(vars map[string]any, stepId string, output map[string]any) map[s
 
 	return newVars
 }
+
+// StepError identifies the Step a run failed on, so a failure handler can
+// name it as ${error.step}/${error.action} (s. ErrorVars) rather than
+// having to parse it back out of a message. Its own message is what the
+// engine has always reported, so nothing reading the error as text sees a
+// change.
+type StepError struct {
+	Index  int
+	StepId string
+	Action string
+	Err    error
+}
+
+func (e *StepError) Error() string {
+	return fmt.Sprintf("step %d (id=%s, action=%s): %v", e.Index, e.StepId, e.Action, e.Err)
+}
+
+func (e *StepError) Unwrap() error { return e.Err }

@@ -100,30 +100,58 @@ func ParseOverrides(raw []string) (map[string]string, error) {
 // must be FS/S3. Template-valued params (containing "${") are skipped -
 // their actual value is only known once earlier Steps have run.
 func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows.Registry) error {
-	for i, step := range wf.Steps {
+	if err := validateSteps(appCtx, wf.Steps, registry, "step"); err != nil {
+		return err
+	}
+	if wf.Handlers == nil {
+		return nil
+	}
+
+	// Handler steps are checked the same way and by name, so a typo in one
+	// is caught before the run rather than only when something fails and
+	// the handler is finally reached (s. workflows.Handlers).
+	for _, handler := range []struct {
+		label string
+		steps []workflows.Step
+	}{
+		{"handlers.failure", wf.Handlers.Failure},
+		{"handlers.success", wf.Handlers.Success},
+		{"handlers.always", wf.Handlers.Always},
+	} {
+		if err := validateSteps(appCtx, handler.steps, registry, handler.label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSteps(appCtx *app.AppContext, steps []workflows.Step, registry *workflows.Registry, label string) error {
+	for i, step := range steps {
+		where := fmt.Sprintf("%s %d (%s)", label, i, step.EffectiveId(i))
+
 		if _, err := registry.Lookup(step.Action); err != nil {
-			return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+			return fmt.Errorf("%s: %w", where, err)
 		}
 
 		switch step.Action {
 		case "pkg:find_any", "pkg:find_each", "pkg:pull":
 			if err := validatePackageRef(appCtx, step.Params, "pkg"); err != nil {
-				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+				return fmt.Errorf("%s: %w", where, err)
 			}
 		case "pkg:mv_file":
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "from"); err != nil {
-				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+				return fmt.Errorf("%s: %w", where, err)
 			}
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "to"); err != nil {
-				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+				return fmt.Errorf("%s: %w", where, err)
 			}
 		case "pkg:push", "pkg:write_file":
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "pkg"); err != nil {
-				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+				return fmt.Errorf("%s: %w", where, err)
 			}
 		case "job:push":
 			if err := validateJobPush(appCtx, step.Params); err != nil {
-				return fmt.Errorf("step %d (%s): %w", i, step.EffectiveId(i), err)
+				return fmt.Errorf("%s: %w", where, err)
 			}
 		}
 	}

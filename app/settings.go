@@ -266,20 +266,46 @@ func validateWorkflows(wfs []workflows.Workflow) error {
 			seenParamNames[p.Name] = true
 		}
 
-		seenStepIds := map[string]bool{}
-		for si, step := range wf.Steps {
-			id := step.EffectiveId(si)
-			if seenStepIds[id] {
-				return fmt.Errorf("workflows[%d] (%s): duplicate step id %q", wi, wf.Id, id)
-			}
-			seenStepIds[id] = true
-
-			if step.Action == "" {
-				return fmt.Errorf("workflows[%d].steps[%d].action is required", wi, si)
+		if err := validateStepIds(wf, wi, "steps", wf.Steps); err != nil {
+			return err
+		}
+		if wf.Handlers == nil {
+			continue
+		}
+		// Each handler is its own run with its own outputs tree, so its step
+		// ids only have to be unique within it - reusing one from steps: is
+		// no conflict.
+		for _, handler := range []struct {
+			label string
+			steps []workflows.Step
+		}{
+			{"handlers.failure", wf.Handlers.Failure},
+			{"handlers.success", wf.Handlers.Success},
+			{"handlers.always", wf.Handlers.Always},
+		} {
+			if err := validateStepIds(wf, wi, handler.label, handler.steps); err != nil {
+				return err
 			}
 		}
 	}
 
+	return nil
+}
+
+func validateStepIds(wf workflows.Workflow, wi int, label string, steps []workflows.Step) error {
+	seenStepIds := map[string]bool{}
+
+	for si, step := range steps {
+		id := step.EffectiveId(si)
+		if seenStepIds[id] {
+			return fmt.Errorf("workflows[%d] (%s): duplicate %s id %q", wi, wf.Id, label, id)
+		}
+		seenStepIds[id] = true
+
+		if step.Action == "" {
+			return fmt.Errorf("workflows[%d].%s[%d].action is required", wi, label, si)
+		}
+	}
 	return nil
 }
 
