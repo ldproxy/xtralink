@@ -288,8 +288,7 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 	}
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
 		b.syncEmbeddedPartialJobLocked(job, "setup", partialJob)
-		b.forceFailLocked(job, partialJob.Errors)
-		return nil
+		return b.forceFailLocked(job, partialJob.Errors)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.syncEmbeddedPartialJobLocked(job, "cleanup", partialJob)
@@ -303,12 +302,24 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 		return nil
 	}
 
+	// A sequenced Job is a pipeline: every later part was written assuming
+	// the earlier ones ran, so a permanent failure stops it rather than
+	// opening the next slot. -1 is the same "no slot is open" value
+	// advanceSequence uses once a sequence runs out, so every PartialJob
+	// still queued stays gated forever and none of them can be taken. The
+	// Job itself ends failed here and now, with its progress short of total
+	// - which is the truth about work that never happened.
+	//
+	// An unsequenced Job is a fan-out instead, where the parts are
+	// independent, so there one failure does not stop the others.
+	if job.Sequence != nil {
+		job.Sequence.Current = -1
+		return b.forceFailLocked(job, partialJob.Errors)
+	}
+
 	job.Update(partialJob.Progress.Total - partialJob.Progress.Current)
 	job.Errors = append(job.Errors, partialJob.Errors...)
 	job.BaseJob.Status = job.GetStatus()
-	if job.Sequence != nil {
-		b.advanceSequenceLocked(job)
-	}
 
 	listener := b.listeners[partialJob.PartOf]
 	if listener != nil {
@@ -360,8 +371,17 @@ func (b *MemoryBackend) finalizeIfDoneLocked(job *model.Job) error {
 	return b.pushFollowUpsLocked(job)
 }
 
-// forceFailLocked mirrors RedisBackend.forceFail.
-func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) {
+// forceFailLocked mirrors RedisBackend.forceFail: it ends a Job as failed
+// regardless of isDone(), for a permanently failed setup PartialJob (no
+// others were ever created) and for a sequenced Job stopping at a failed
+// part (the rest never will be).
+//
+// A failed Job still runs its cleanup, exactly as a successful one does:
+// undoing what a half-finished Job left behind is the case cleanup exists
+// for, and the one where skipping it leaves the mess. Follow-ups are the
+// opposite - further work predicated on this Job having produced something
+// - so pushFollowUpsLocked declines them.
+func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) error {
 	job.Errors = append(job.Errors, errors...)
 	if job.FinishedAt <= 0 {
 		job.FinishedAt = nowMillis()
@@ -372,12 +392,21 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) {
 	if listener != nil {
 		listener.OnProgress(*job)
 	}
+
+	if job.Cleanup != nil {
+		return b.pushPartialJobLocked(job.Cleanup, false)
+	}
+	return nil
 }
 
 // pushFollowUpsLocked mirrors RedisBackend.pushFollowUps, including its
-// refusal to spawn follow-up work for a dismissed Job.
+// refusal to spawn follow-up work for a cancelled Job or a failed pipeline,
+// and the known gap it documents for an unsequenced one.
 func (b *MemoryBackend) pushFollowUpsLocked(job *model.Job) error {
 	if job.Status == model.StatusDISMISSED {
+		return nil
+	}
+	if job.Sequence != nil && job.HasErrors() {
 		return nil
 	}
 

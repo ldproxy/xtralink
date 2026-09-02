@@ -3,6 +3,7 @@ package actions
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 
@@ -50,6 +51,21 @@ func findMatches(appCtx *app.AppContext, pkgId, pattern string) ([]string, error
 	return rels, nil
 }
 
+// findOutput describes one match: its package-root-relative path, and the
+// directory that path sits in.
+//
+// dir is empty for a file at the package root rather than path.Dir's ".",
+// which a template would only have to special-case away - and empty is
+// also what a workflow wants there, since joining it back on gives the
+// root itself.
+func findOutput(relPath string) map[string]any {
+	dir := path.Dir(relPath)
+	if dir == "." || dir == "/" {
+		dir = ""
+	}
+	return map[string]any{"path": relPath, "dir": dir}
+}
+
 func findParams(params map[string]any) (pkgId, pattern string, err error) {
 	pkgId, ok := params["pkg"].(string)
 	if !ok || pkgId == "" {
@@ -66,6 +82,9 @@ func findParams(params map[string]any) (pkgId, pattern string, err error) {
 // anything matches (the alphabetically first match; further matches are
 // silently ignored - never a fan-out), zero if nothing does. The package
 // must already have been pulled.
+//
+// Outputs are ${outputs.<step>.path}, the match relative to the package
+// root, and ${outputs.<step>.dir}, the directory it sits in.
 type FindAnyAction struct {
 	AppCtx *app.AppContext
 }
@@ -85,12 +104,16 @@ func (a *FindAnyAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 	if len(matches) == 0 {
 		return workflows.Halt(), nil
 	}
-	return workflows.One(map[string]any{"path": matches[0]}), nil
+	return workflows.One(findOutput(matches[0])), nil
 }
 
 // FindEachAction implements "pkg:find_each": one output set per match,
 // fanning the remaining Steps out once per match. The package must already
 // have been pulled.
+//
+// Each branch gets ${outputs.<step>.path}, its own match relative to the
+// package root, and ${outputs.<step>.dir}, the directory that match sits
+// in.
 type FindEachAction struct {
 	AppCtx *app.AppContext
 }
@@ -110,7 +133,7 @@ func (a *FindEachAction) Run(ctx *workflows.StepContext) (workflows.StepResult, 
 
 	outputs := make([]map[string]any, len(matches))
 	for i, m := range matches {
-		outputs[i] = map[string]any{"path": m}
+		outputs[i] = findOutput(m)
 	}
 	return workflows.Many(outputs), nil
 }

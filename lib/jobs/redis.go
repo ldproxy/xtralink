@@ -497,6 +497,24 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 		return b.setStatus(ctx, job.Id, job.GetStatus())
 	}
 
+	// A sequenced Job is a pipeline: every later part was written assuming
+	// the earlier ones ran, so a permanent failure stops it rather than
+	// opening the next slot. -1 is the same "no slot is open" value
+	// advanceSequence uses once a sequence runs out, so every PartialJob
+	// still queued stays gated forever and none of them can be taken. The
+	// Job itself ends failed here and now (forceFail merges the errors), with
+	// its progress short of total - which is the truth about work that never
+	// happened.
+	//
+	// An unsequenced Job is a fan-out instead, where the parts are
+	// independent, so there one failure does not stop the others.
+	if job.Sequence != nil {
+		if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.sequence.current", -1); err != nil {
+			return err
+		}
+		return b.forceFail(ctx, job, partialJob.Errors)
+	}
+
 	// The errors are merged BEFORE the progress bump that may complete the
 	// Job, and that order is what keeps the stored status correct without
 	// locking: whichever concurrent permanent failure ends up being the one
@@ -517,11 +535,6 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 	}
 	if err := b.refreshJobPercent(ctx, job.Id); err != nil {
 		return err
-	}
-	if job.Sequence != nil {
-		if err := b.advanceSequence(ctx, job.Id); err != nil {
-			return err
-		}
 	}
 
 	if job.Status == model.StatusDISMISSED {
@@ -593,14 +606,23 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *model.Job) error
 	if job.Cleanup != nil {
 		return b.PushPartialJob(job.Cleanup, false)
 	}
-	return b.pushFollowUps(job)
+	// fresh, not job: the follow-up decision turns on whether anything
+	// failed, and only the reread carries every PartialJob's errors.
+	return b.pushFollowUps(fresh)
 }
 
 // forceFail marks a Job as finished-with-errors regardless of isDone() -
-// for the case where current can never reach total because a permanently
-// failed setup PartialJob means no PartialJobs were ever created. Uses the
-// same keyFinalized SETNX claim as finalizeIfDone, both to stay consistent
-// and so this can never race with (or duplicate) a normal finalization.
+// for a permanently failed setup PartialJob, which means no others were
+// ever created, and for a sequenced Job stopping at a failed part, which
+// means the rest never will be. Uses the same keyFinalized SETNX claim as
+// finalizeIfDone, both to stay consistent and so this can never race with
+// (or duplicate) a normal finalization.
+//
+// A failed Job still runs its cleanup, exactly as a successful one does:
+// undoing what a half-finished Job left behind is the case cleanup exists
+// for, and the one where skipping it leaves the mess. Follow-ups are the
+// opposite - they are further work predicated on this Job having produced
+// something, so pushFollowUps declines them (s. its guard).
 func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []string) error {
 	if err := b.mergeErrors(ctx, job.Id, errors); err != nil {
 		return err
@@ -619,13 +641,34 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", job.FinishedAt); err != nil {
 		return err
 	}
-	return b.setStatus(ctx, job.Id, job.GetStatus())
+	if err := b.setStatus(ctx, job.Id, job.GetStatus()); err != nil {
+		return err
+	}
+
+	if job.Cleanup != nil {
+		return b.PushPartialJob(job.Cleanup, false)
+	}
+	return nil
 }
 
-// pushFollowUps spawns the Job's follow-up Jobs - never for a dismissed
-// one, since spawning more work is the opposite of cancelling.
+// pushFollowUps spawns the Job's follow-up Jobs. It declines for a
+// cancelled Job, since spawning more work is the opposite of cancelling,
+// and for a *sequenced* Job that failed: a pipeline that stopped at a
+// failed part never produced the thing its follow-ups were written
+// against. Cleanup is the opposite case and runs either way
+// (s. forceFail).
+//
+// Known gap: an unsequenced Job spawns its follow-ups even when one of its
+// parts failed. Its parts are independent, so most of the work did happen
+// and a follow-up over what succeeded can be exactly what was wanted - but
+// nothing here distinguishes that from a follow-up that needed all of it.
+// A follow-up of a fan-out has to tolerate incomplete input, or the Job
+// should be sequenced.
 func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 	if job.Status == model.StatusDISMISSED {
+		return nil
+	}
+	if job.Sequence != nil && job.HasErrors() {
 		return nil
 	}
 

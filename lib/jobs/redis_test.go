@@ -979,3 +979,121 @@ func TestRedisBackend_PercentIsStoredAndKeptUpToDate(t *testing.T) {
 	}
 	assertStoredPercentWithoutPartialJobs(t, b, standalone.Id)
 }
+
+// TestRedisBackend_SequencedJobStopsOnAPermanentlyFailedPart mirrors the
+// MemoryBackend test of the same behaviour: a sequenced Job is a pipeline,
+// so a permanent failure closes the gate instead of opening the next slot.
+func TestRedisBackend_SequencedJobStopsOnAPermanentlyFailedPart(t *testing.T) {
+	b := requireRedis(t)
+
+	job := NewJob(uuid.NewString(), uniqueType("pipeline-stop"), 1000, "", nil)
+	job.Sequence = &model.JobSequence{Current: 0, Remaining: 0}
+	cleanupJob(t, b, job.Id)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	if err := b.StartJob(job.Id); err != nil {
+		t.Fatalf("StartJob: %v", err)
+	}
+
+	stepAType := job.Kind + ":step-a"
+	stepBType := job.Kind + ":step-b"
+	for _, kind := range []string{stepAType, stepBType} {
+		partialJob := NewPartialJob(uuid.NewString(), kind, 1000, job.Id)
+		partialJob.Progress.Total = 1
+		cleanupPartialJob(t, b, partialJob.Id)
+		if err := b.InitJob(job.Id, 1, nil); err != nil {
+			t.Fatalf("InitJob: %v", err)
+		}
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			t.Fatalf("PushPartialJob(%s): %v", kind, err)
+		}
+	}
+
+	stepA, err := b.Take(stepAType, "test")
+	if err != nil || stepA == nil {
+		t.Fatalf("Take(step-a): %v, %+v", err, stepA)
+	}
+	if err := b.Error(stepA.Id, "step-a blew up", false); err != nil {
+		t.Fatalf("Error(step-a): %v", err)
+	}
+
+	if taken, err := b.Take(stepBType, "test"); err != nil || taken != nil {
+		t.Fatalf("Take(step-b) after step-a failed = %+v, %v, want nil, nil - the pipeline must stop", taken, err)
+	}
+
+	stored, err := b.GetJob(job.Id)
+	if err != nil || stored == nil {
+		t.Fatalf("GetJob: %v, %+v", err, stored)
+	}
+	if stored.GetStatus() != model.StatusFAILED {
+		t.Errorf("job status = %v, want FAILED", stored.GetStatus())
+	}
+	if stored.FinishedAt <= 0 {
+		t.Error("expected the job to be finished rather than left running")
+	}
+	if len(stored.Errors) != 1 || stored.Errors[0] != "step-a blew up" {
+		t.Errorf("job errors = %v, want the part's own error once", stored.Errors)
+	}
+	if stored.Sequence == nil || stored.Sequence.Current != -1 {
+		t.Errorf("sequence = %+v, want current -1 so no slot can ever open", stored.Sequence)
+	}
+}
+
+// TestRedisBackend_SequencedJobRunsCleanupButNoFollowUpsAfterAFailedPart
+// mirrors the MemoryBackend test: cleanup undoes a half-finished Job so it
+// runs either way, while follow-ups are work predicated on success.
+func TestRedisBackend_SequencedJobRunsCleanupButNoFollowUpsAfterAFailedPart(t *testing.T) {
+	b := requireRedis(t)
+
+	kind := uniqueType("pipeline-cleanup")
+	followUp := NewJob(uuid.NewString(), kind+"-followup", 1000, "", nil)
+	job := NewJob(uuid.NewString(), kind, 1000, "", nil)
+	job.Sequence = &model.JobSequence{Current: 0, Remaining: 0}
+	job.Cleanup = NewPartialJob(uuid.NewString(), kind+":cleanup", 1000, job.Id)
+	job.FollowUps = []model.Job{*followUp}
+
+	cleanupJob(t, b, job.Id)
+	cleanupJob(t, b, followUp.Id)
+	cleanupPartialJob(t, b, job.Cleanup.Id)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	if err := b.StartJob(job.Id); err != nil {
+		t.Fatalf("StartJob: %v", err)
+	}
+
+	stepAType := kind + ":step-a"
+	stepBType := kind + ":step-b"
+	for _, partialKind := range []string{stepAType, stepBType} {
+		partialJob := NewPartialJob(uuid.NewString(), partialKind, 1000, job.Id)
+		partialJob.Progress.Total = 1
+		cleanupPartialJob(t, b, partialJob.Id)
+		if err := b.InitJob(job.Id, 1, nil); err != nil {
+			t.Fatalf("InitJob: %v", err)
+		}
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			t.Fatalf("PushPartialJob(%s): %v", partialKind, err)
+		}
+	}
+
+	stepA, err := b.Take(stepAType, "test")
+	if err != nil || stepA == nil {
+		t.Fatalf("Take(step-a): %v, %+v", err, stepA)
+	}
+	if err := b.Error(stepA.Id, "step-a blew up", false); err != nil {
+		t.Fatalf("Error(step-a): %v", err)
+	}
+
+	taken, err := b.Take(kind+":cleanup", "test")
+	if err != nil || taken == nil {
+		t.Fatalf("Take(cleanup): %v, %+v - cleanup must run after a failed part", err, taken)
+	}
+	if err := b.Done(taken.Id); err != nil {
+		t.Fatalf("Done(cleanup): %v", err)
+	}
+
+	if pushed, err := b.GetJob(followUp.Id); err != nil || pushed != nil {
+		t.Errorf("follow-up = %+v, %v - a failed Job must not spawn follow-up work", pushed, err)
+	}
+}

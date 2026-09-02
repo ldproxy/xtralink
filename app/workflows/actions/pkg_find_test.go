@@ -133,3 +133,104 @@ func TestFindAction_DoesNotPull(t *testing.T) {
 		t.Errorf("outputs = %+v, want only stale.zip - find must match the mirror as-is, not pull first", result.Outputs)
 	}
 }
+
+func TestFindOutput_DirIsThePathsDirectory(t *testing.T) {
+	cases := map[string]string{
+		"a.zip":                 "",
+		"incoming/a.zip":        "incoming",
+		"incoming/2026/a.zip":   "incoming/2026",
+		"incoming/./a.zip":      "incoming",
+		"incoming/sub/../a.zip": "incoming",
+	}
+	for relPath, wantDir := range cases {
+		t.Run(relPath, func(t *testing.T) {
+			out := findOutput(relPath)
+			if out["dir"] != wantDir {
+				t.Errorf("dir = %q, want %q", out["dir"], wantDir)
+			}
+			if out["path"] != relPath {
+				t.Errorf("path = %q, want it passed through unchanged", out["path"])
+			}
+		})
+	}
+}
+
+func TestFindAnyAction_ReportsTheDirectoryOfTheMatch(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	seedMirror(t, foo, map[string]string{"incoming/2026/a.zip": "a"})
+	appCtx, _ := newTestAppContext(t, targetDir, foo)
+
+	action := &FindAnyAction{AppCtx: appCtx}
+	result, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "foo", "path": "incoming/*/*.zip"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Outputs) != 1 {
+		t.Fatalf("expected exactly 1 output set, got %+v", result.Outputs)
+	}
+	if result.Outputs[0]["path"] != "incoming/2026/a.zip" {
+		t.Errorf("path = %v", result.Outputs[0]["path"])
+	}
+	if result.Outputs[0]["dir"] != "incoming/2026" {
+		t.Errorf("dir = %v, want incoming/2026", result.Outputs[0]["dir"])
+	}
+}
+
+func TestFindAnyAction_DirIsEmptyAtThePackageRoot(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	seedMirror(t, foo, map[string]string{"a.zip": "a"})
+	appCtx, _ := newTestAppContext(t, targetDir, foo)
+
+	action := &FindAnyAction{AppCtx: appCtx}
+	result, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "foo", "path": "*.zip"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Outputs[0]["dir"] != "" {
+		t.Errorf("dir = %v, want empty for a file at the package root", result.Outputs[0]["dir"])
+	}
+}
+
+func TestFindEachAction_ReportsEachMatchesOwnDirectory(t *testing.T) {
+	targetDir := t.TempDir()
+	foo := fsPackage(t, "foo", targetDir)
+	seedMirror(t, foo, map[string]string{
+		"root.zip":       "r",
+		"one/a.zip":      "a",
+		"two/b.zip":      "b",
+		"two/deep/c.zip": "c",
+	})
+	appCtx, _ := newTestAppContext(t, targetDir, foo)
+	action := &FindEachAction{AppCtx: appCtx}
+
+	// filepath.Glob matches one segment at a time - there is no "**" - so
+	// each pattern below picks out exactly one depth.
+	cases := map[string]map[string]string{
+		"*.zip":     {"root.zip": ""},
+		"*/*.zip":   {"one/a.zip": "one", "two/b.zip": "two"},
+		"*/*/*.zip": {"two/deep/c.zip": "two/deep"},
+	}
+	for pattern, want := range cases {
+		t.Run(pattern, func(t *testing.T) {
+			result, err := action.Run(&workflows.StepContext{Params: map[string]any{"pkg": "foo", "path": pattern}})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			got := map[string]string{}
+			for _, out := range result.Outputs {
+				got[out["path"].(string)] = out["dir"].(string)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("outputs = %+v, want %+v", got, want)
+			}
+			for relPath, wantDir := range want {
+				if dir, ok := got[relPath]; !ok || dir != wantDir {
+					t.Errorf("dir for %q = %q (present %v), want %q", relPath, dir, ok, wantDir)
+				}
+			}
+		})
+	}
+}
