@@ -40,6 +40,7 @@ func (f *fakeBackend) Take(partialJobType, executor string) (*model.PartialJob, 
 func (f *fakeBackend) Done(partialJobID string) error { return nil }
 
 func (f *fakeBackend) Error(partialJobID, message string, retry bool) error { return nil }
+func (f *fakeBackend) DoneJob(jobID string) error                           { return nil }
 
 func (f *fakeBackend) GetJobs() ([]*model.Job, error) { return f.getJobsResult, f.getJobsErr }
 

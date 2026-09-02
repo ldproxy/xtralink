@@ -704,6 +704,18 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 	return nil
 }
 
+// DoneJob mirrors doneSet in Java. The finalize-claim key goes with the
+// Job document: it would otherwise sit there until its own 24h TTL expires
+// (s. finalizeIfDone), long after the Job it guards is gone.
+func (b *RedisBackend) DoneJob(jobID string) error {
+	ctx := context.Background()
+
+	if err := b.jsonDel(ctx, b.keyJob+jobID); err != nil {
+		return err
+	}
+	return b.client.Del(ctx, b.keyFinalized+jobID).Err()
+}
+
 func (b *RedisBackend) GetJobs() ([]*model.Job, error) {
 	ctx := context.Background()
 

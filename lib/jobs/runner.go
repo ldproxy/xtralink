@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +17,17 @@ type JobProcessor struct {
 	Kind     string
 	Priority int
 	Process  ProcessFunc
+	// OrphanTimeout opts this processor's PartialJobs into being reclaimed
+	// when they have been taken but not updated for that long, which means
+	// their executor died mid-run. Zero (the default) never reclaims.
+	//
+	// It is opt-in because PartialJob.UpdatedAt is only a liveness signal
+	// for a processor that reports progress regularly - a processor that
+	// legitimately works for minutes without an update would be reclaimed
+	// while still running. Java restricts its reaper to one hardcoded
+	// PartialJob type for exactly this reason; this is the generic form of
+	// that whitelist.
+	OrphanTimeout time.Duration
 }
 
 // Runner is a polling dispatch loop, analogous to JobRunner.java: for each
@@ -23,6 +36,11 @@ type JobProcessor struct {
 // applies the returned JobResult (Done/Error) to the Backend. Unlike Java it
 // polls instead of reacting to a push notification (no pub/sub in this
 // iteration).
+//
+// Alongside dispatch it runs the housekeeping sweeps from Java's
+// checkOrphanedJobsAndCleanup: reclaiming orphaned PartialJobs and removing
+// long-finished Jobs. See docs/jobs/runner-vs-jobrunner.md for the full
+// list of deltas against the Java original.
 type Runner struct {
 	Backend      Backend
 	Executor     string
@@ -35,6 +53,14 @@ type Runner struct {
 	// "resource became available" callback, which needs a concrete
 	// resource to hook into that this generic Runner doesn't have.
 	OnHoldRetryInterval time.Duration
+	// HousekeepingInterval is how often the orphan and cleanup sweeps run
+	// (Java schedules the same pair every minute). Zero or less disables
+	// both.
+	HousekeepingInterval time.Duration
+	// JobRetention is how long a finished Job is kept before being removed
+	// (Java: one hour). Zero or less disables the cleanup sweep, leaving
+	// finished Jobs readable indefinitely.
+	JobRetention time.Duration
 	// OnError receives errors from background job processing that would
 	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
 	OnError func(error)
@@ -44,27 +70,38 @@ type Runner struct {
 	// gets around to it, before or after Start).
 	mu         sync.RWMutex
 	processors map[string]*JobProcessor
+
+	// inFlight holds the ids of the PartialJobs this Runner is processing
+	// right now, so the orphan sweep never reclaims its own work.
+	inFlightMu sync.Mutex
+	inFlight   map[string]bool
 }
 
 func NewRunner(backend Backend, executor string) *Runner {
 	return &Runner{
-		Backend:             backend,
-		Executor:            executor,
-		Concurrency:         2,
-		PollInterval:        200 * time.Millisecond,
-		OnHoldRetryInterval: -1, //2 * time.Second,
-		processors:          make(map[string]*JobProcessor),
+		Backend:              backend,
+		Executor:             executor,
+		Concurrency:          2,
+		PollInterval:         200 * time.Millisecond,
+		OnHoldRetryInterval:  -1, //2 * time.Second,
+		HousekeepingInterval: time.Minute,
+		JobRetention:         time.Hour,
+		processors:           make(map[string]*JobProcessor),
+		inFlight:             make(map[string]bool),
 	}
 }
 
 func NewRunner2() *Runner {
 	return &Runner{
-		Backend:             nil,
-		Executor:            "",
-		Concurrency:         2,
-		PollInterval:        200 * time.Millisecond,
-		OnHoldRetryInterval: -1, //2 * time.Second,
-		processors:          make(map[string]*JobProcessor),
+		Backend:              nil,
+		Executor:             "",
+		Concurrency:          2,
+		PollInterval:         200 * time.Millisecond,
+		OnHoldRetryInterval:  -1, //2 * time.Second,
+		HousekeepingInterval: time.Minute,
+		JobRetention:         time.Hour,
+		processors:           make(map[string]*JobProcessor),
+		inFlight:             make(map[string]bool),
 	}
 }
 
@@ -87,6 +124,14 @@ func (r *Runner) processor(partialJobType string) *JobProcessor {
 func (r *Runner) Run(ctx context.Context) error {
 	sem := make(chan struct{}, r.Concurrency)
 	var wg sync.WaitGroup
+
+	if r.HousekeepingInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.housekeep(ctx)
+		}()
+	}
 
 	for {
 		// Re-read every pass instead of snapshotting: a processor registered
@@ -121,10 +166,12 @@ func (r *Runner) Run(ctx context.Context) error {
 
 			assigned = true
 			processor := r.processor(partialJobType)
+			r.markInFlight(partialJob.Id)
 			wg.Add(1)
 			go func(partialJob *model.PartialJob, processor *JobProcessor) {
 				defer wg.Done()
 				defer func() { <-sem }()
+				defer r.clearInFlight(partialJob.Id)
 				r.process(ctx, partialJob, processor)
 			}(partialJob, processor)
 		}
@@ -169,7 +216,7 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 		}
 	}
 
-	result := processor.Process(partialJob, job, r.Backend)
+	result := r.invoke(partialJob, job, processor)
 	//fmt.Printf("JOBS: Processed partial job %s of type %s with result %v\n", partialJob.Id, partialJob.Kind, result)
 
 	switch {
@@ -180,6 +227,20 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 	case result.IsOnHold():
 		r.scheduleOnHoldRetry(ctx, partialJob)
 	}
+}
+
+// invoke calls the processor and turns a panic into a non-retrying failure,
+// mirroring executeJob in JobRunner.java, which catches Throwable and
+// returns JobResult.error. Without this a single misbehaving processor takes
+// the whole process down with it.
+func (r *Runner) invoke(partialJob *model.PartialJob, job *model.Job, processor *JobProcessor) (result model.JobResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			result = model.Error(fmt.Sprintf("panic while processing partial job %s: %v\n%s", partialJob.Id, rec, debug.Stack()))
+		}
+	}()
+
+	return processor.Process(partialJob, job, r.Backend)
 }
 
 // scheduleOnHoldRetry re-queues partialJob after OnHoldRetryInterval,
@@ -196,6 +257,97 @@ func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *model.Part
 		case <-ctx.Done():
 		}
 	}()
+}
+
+// housekeep runs the periodic sweeps until ctx is cancelled, mirroring
+// checkOrphanedJobsAndCleanup in JobRunner.java.
+func (r *Runner) housekeep(ctx context.Context) {
+	ticker := time.NewTicker(r.HousekeepingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.reapOrphans()
+			r.cleanupFinishedJobs()
+		}
+	}
+}
+
+// reapOrphans re-queues PartialJobs that were taken but have not reported
+// progress within their processor's OrphanTimeout - their executor died
+// mid-run, and without this they stay taken forever.
+func (r *Runner) reapOrphans() {
+	taken, err := r.Backend.GetTaken()
+	if err != nil {
+		r.reportError(err)
+		return
+	}
+
+	now := nowMillis()
+	for _, partialJob := range taken {
+		processor := r.processor(partialJob.Kind)
+		if processor == nil || processor.OrphanTimeout <= 0 {
+			continue
+		}
+		if r.isInFlight(partialJob.Id) {
+			continue
+		}
+		if partialJob.UpdatedAt <= 0 || now-partialJob.UpdatedAt <= processor.OrphanTimeout.Milliseconds() {
+			continue
+		}
+
+		r.reportError(r.Backend.PushPartialJob(partialJob, true))
+	}
+}
+
+// cleanupFinishedJobs removes Jobs that finished longer than JobRetention
+// ago (mirrors cleanupOldJobSets in JobRunner.java). The gate is FinishedAt
+// rather than Java's isDone(): a Job force-failed by a failing setup step
+// never reaches current == total, so Java's gate would leak it forever.
+func (r *Runner) cleanupFinishedJobs() {
+	if r.JobRetention <= 0 {
+		return
+	}
+
+	jobs, err := r.Backend.GetJobs()
+	if err != nil {
+		r.reportError(err)
+		return
+	}
+
+	cutoff := nowMillis() - r.JobRetention.Milliseconds()
+	for _, job := range jobs {
+		if job.FinishedAt > 0 && job.UpdatedAt < cutoff {
+			r.reportError(r.Backend.DoneJob(job.Id))
+		}
+	}
+}
+
+func (r *Runner) markInFlight(partialJobID string) {
+	r.inFlightMu.Lock()
+	defer r.inFlightMu.Unlock()
+
+	if r.inFlight == nil {
+		r.inFlight = make(map[string]bool)
+	}
+	r.inFlight[partialJobID] = true
+}
+
+func (r *Runner) clearInFlight(partialJobID string) {
+	r.inFlightMu.Lock()
+	defer r.inFlightMu.Unlock()
+
+	delete(r.inFlight, partialJobID)
+}
+
+func (r *Runner) isInFlight(partialJobID string) bool {
+	r.inFlightMu.Lock()
+	defer r.inFlightMu.Unlock()
+
+	return r.inFlight[partialJobID]
 }
 
 func (r *Runner) reportError(err error) {

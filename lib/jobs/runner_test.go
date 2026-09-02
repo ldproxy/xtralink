@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -221,4 +222,179 @@ func TestRunner_OnHoldRetriesAfterInterval(t *testing.T) {
 	if got, _ := b.getPartialJob(context.Background(), partialJob.Id); got != nil {
 		t.Error("expected partial job to be deleted (Done()) once the retried attempt succeeded")
 	}
+}
+
+// The tests below drive MemoryBackend rather than Redis: they exercise
+// Runner logic (panic containment, housekeeping sweeps) that is identical
+// for either backend, so there is no reason to make them skip when no Redis
+// is around.
+
+func TestRunner_RecoversFromPanickingProcessor(t *testing.T) {
+	b := NewMemoryBackend()
+	jobType := uniqueType("panic")
+
+	for i := 0; i < 2; i++ {
+		if err := b.PushPartialJob(NewPartialJob(uuid.NewString(), jobType, 1000, ""), false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
+		}
+	}
+
+	var attempts int32
+	r := NewRunner(b, "test")
+	r.Concurrency = 1 // one at a time, so exactly the first attempt panics
+	r.PollInterval = 10 * time.Millisecond
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+		if atomic.AddInt32(&attempts, 1) == 1 {
+			panic("processor exploded")
+		}
+		return model.Success()
+	}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&attempts) >= 2 })
+
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("expected the Runner to survive the panic and attempt both partial jobs, got %d attempts", got)
+	}
+
+	failed, err := b.GetFailed()
+	if err != nil {
+		t.Fatalf("GetFailed: %v", err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("expected exactly 1 failed partial job, got %d", len(failed))
+	}
+	if !strings.Contains(strings.Join(failed[0].Errors, " "), "panic") {
+		t.Errorf("expected the panic to be recorded as the failure reason, got %v", failed[0].Errors)
+	}
+}
+
+func TestRunner_ReclaimsOrphanedPartialJob(t *testing.T) {
+	b := NewMemoryBackend()
+	jobType := uniqueType("orphan")
+
+	if err := b.PushPartialJob(NewPartialJob(uuid.NewString(), jobType, 1000, ""), false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	// Taken and then never touched again: what a crashed executor leaves
+	// behind.
+	taken, err := b.Take(jobType, "dead-executor")
+	if err != nil || taken == nil {
+		t.Fatalf("Take: %v, %+v", err, taken)
+	}
+
+	var processed int32
+	r := NewRunner(b, "test")
+	r.PollInterval = 10 * time.Millisecond
+	r.HousekeepingInterval = 10 * time.Millisecond
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, OrphanTimeout: 30 * time.Millisecond,
+		Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			atomic.AddInt32(&processed, 1)
+			return model.Success()
+		}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool { return atomic.LoadInt32(&processed) > 0 })
+
+	if got := atomic.LoadInt32(&processed); got != 1 {
+		t.Errorf("expected the orphaned partial job to be reclaimed and processed once, got %d", got)
+	}
+}
+
+func TestRunner_DoesNotReclaimItsOwnInFlightPartialJob(t *testing.T) {
+	b := NewMemoryBackend()
+	jobType := uniqueType("inflight")
+
+	if err := b.PushPartialJob(NewPartialJob(uuid.NewString(), jobType, 1000, ""), false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	var started, finished int32
+	r := NewRunner(b, "test")
+	r.PollInterval = 10 * time.Millisecond
+	r.HousekeepingInterval = 10 * time.Millisecond
+	// Deliberately far shorter than the processor runs for: without the
+	// in-flight guard every sweep would re-queue work that is still running.
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, OrphanTimeout: 20 * time.Millisecond,
+		Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			atomic.AddInt32(&started, 1)
+			time.Sleep(200 * time.Millisecond)
+			atomic.AddInt32(&finished, 1)
+			return model.Success()
+		}})
+
+	runRunnerUntil(t, r, 3*time.Second, func() bool { return atomic.LoadInt32(&finished) > 0 })
+
+	if got := atomic.LoadInt32(&started); got != 1 {
+		t.Errorf("expected the in-flight partial job to be dispatched exactly once, got %d", got)
+	}
+}
+
+func TestRunner_RemovesLongFinishedJob(t *testing.T) {
+	b := NewMemoryBackend()
+	job, r := finishingJobRunner(t, b)
+	r.JobRetention = time.Millisecond
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected the finished Job to be removed once JobRetention passed, got %+v", got)
+	}
+}
+
+func TestRunner_KeepsFinishedJobWhenRetentionDisabled(t *testing.T) {
+	b := NewMemoryBackend()
+	job, r := finishingJobRunner(t, b)
+	r.JobRetention = 0
+
+	// Keep running well past the point where the Job is finished, so plenty
+	// of housekeeping sweeps see it and leave it alone.
+	deadline := time.Now().Add(150 * time.Millisecond)
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil || (got.FinishedAt > 0 && time.Now().After(deadline))
+	})
+
+	got, _ := b.GetJob(job.Id)
+	if got == nil {
+		t.Fatal("expected the finished Job to be kept when JobRetention is disabled")
+	}
+	if got.FinishedAt <= 0 {
+		t.Errorf("expected the Job to have finished, got %+v", got)
+	}
+}
+
+// finishingJobRunner pushes a Job with a single worker PartialJob and
+// returns a Runner whose processor completes it, so the cleanup sweep has a
+// finished Job to act on. Housekeeping runs fast; the caller sets
+// JobRetention.
+func finishingJobRunner(t *testing.T, b *MemoryBackend) (*model.Job, *Runner) {
+	t.Helper()
+
+	jobType := uniqueType("retention")
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	if err := b.PushJob(job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	if err := b.InitJob(job.Id, 1, nil); err != nil {
+		t.Fatalf("InitJob: %v", err)
+	}
+	if err := b.PushPartialJob(NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id), false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	r := NewRunner(b, "test")
+	r.PollInterval = 10 * time.Millisecond
+	r.HousekeepingInterval = 10 * time.Millisecond
+	r.Register(&JobProcessor{Kind: jobType + ":worker", Priority: 1000,
+		Process: func(p *model.PartialJob, _ *model.Job, backend Backend) model.JobResult {
+			if err := backend.UpdatePartialJob(p.Id, 1); err != nil {
+				return model.Error(err.Error())
+			}
+			return model.Success()
+		}})
+
+	return job, r
 }

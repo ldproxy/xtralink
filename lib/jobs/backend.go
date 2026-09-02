@@ -39,6 +39,11 @@ type Backend interface {
 	// Error marks a taken PartialJob as failed; if retry is true it is
 	// re-queued instead.
 	Error(partialJobID, message string, retry bool) error
+	// DoneJob removes a Job wholesale (mirrors doneSet in Java), used to
+	// retire Jobs that finished long enough ago to be of no further
+	// interest. Its PartialJobs are already gone by then - Done deletes
+	// each one as it finishes. Unknown ids are not an error.
+	DoneJob(jobID string) error
 
 	GetJobs() ([]*model.Job, error)
 	GetJob(id string) (*model.Job, error)

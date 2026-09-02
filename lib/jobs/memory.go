@@ -476,6 +476,18 @@ func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 	return nil
 }
 
+// DoneJob mirrors doneSet in Java, which is a plain removal from the
+// JobSet map. The listener goes with it: there is nothing left to report
+// progress on.
+func (b *MemoryBackend) DoneJob(jobID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	delete(b.jobs, jobID)
+	delete(b.listeners, jobID)
+	return nil
+}
+
 func (b *MemoryBackend) GetJobs() ([]*model.Job, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
