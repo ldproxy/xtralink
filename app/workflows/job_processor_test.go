@@ -58,7 +58,7 @@ workflows:
         required: true
     steps: []
 
-jobDefinitions:
+jobs:
   - id: nba-transformation
     workflow: nba-transform
     outputs:
@@ -91,7 +91,7 @@ jobDefinitions:
 
 	// A multi-step Job is only ever built ad-hoc these days (s.
 	// job:push's `partials:`, app/workflows/actions/job_push.go) - there is
-	// no more pre-declared multi-step pipeline in jobDefinitions itself, so
+	// no more pre-declared multi-step pipeline in jobs itself, so
 	// this test builds the same shape PushPipeline directly, exactly like
 	// that action does.
 	def1, err := settings.GetJobDefinition("nba-transformation")
@@ -198,7 +198,7 @@ workflows:
         required: true
     steps: []
 
-jobDefinitions:
+jobs:
   - id: step-a
     workflow: needs-param
     parameters:

@@ -4,18 +4,20 @@ import "fmt"
 
 // JobDefinition is a Processor definition for one PartialJob type, wrapping
 // a single Workflow run - a flat, reusable registry entry, not a
-// pre-declared multi-step pipeline. A Job's actual pipeline shape (which
-// PartialJobs it has, in what order/parallelism) is defined by the Job
-// itself when it's pushed (s. jobs.Job.Parallel/jobs.PartialJob.Sequence),
+// pre-declared multi-step pipeline. Configured under the .xtrasync.yml
+// "jobs:" key.
+//
+// A Job's actual pipeline shape (which PartialJobs it has, in what order
+// or parallelism) is decided by the Job itself when it is pushed
+// (s. app/jobs.PushRequest.Sequential and model.PartialJob.Sequence),
 // either as a single-PartialJob Job (`job push <id>`, Id used directly as
-// both Job.Type and PartialJob.Type) or as an ad-hoc multi-step Job
+// both the Job's and the PartialJob's kind) or as an ad-hoc multi-step Job
 // composed from several JobDefinitions (the job:push workflow action's
 // `partials:` list).
 type JobDefinition struct {
-	// Id is this definition's PartialJob type - what `job push`/
-	// `job process`/`partials[].type` reference, unique across all
-	// JobDefinitions (a flat namespace, like PartialJob.Type always has
-	// been).
+	// Id is this definition's PartialJob kind - what `job push`/
+	// `job process`/`partials[].type` reference, unique across every entry
+	// under jobs: (a flat namespace, like PartialJob.Kind always has been).
 	Id string `yaml:"id"`
 	// Workflow is the id of a Workflow declared under workflows:.
 	Workflow string `yaml:"workflow"`
@@ -52,18 +54,18 @@ func validateJobDefinitions(settings *Settings) error {
 
 	for i, def := range settings.JobDefinitions {
 		if def.Id == "" {
-			return fmt.Errorf("jobDefinitions[%d].id is required", i)
+			return fmt.Errorf("jobs[%d].id is required", i)
 		}
 		if seenIds[def.Id] {
-			return fmt.Errorf("jobDefinitions[%d]: duplicate id %q", i, def.Id)
+			return fmt.Errorf("jobs[%d]: duplicate id %q", i, def.Id)
 		}
 		seenIds[def.Id] = true
 
 		if def.Workflow == "" {
-			return fmt.Errorf("jobDefinitions[%d] (%s): workflow is required", i, def.Id)
+			return fmt.Errorf("jobs[%d] (%s): workflow is required", i, def.Id)
 		}
 		if !settings.HasWorkflow(def.Workflow) {
-			return fmt.Errorf("jobDefinitions[%d] (%s): references unknown workflow %q", i, def.Id, def.Workflow)
+			return fmt.Errorf("jobs[%d] (%s): references unknown workflow %q", i, def.Id, def.Workflow)
 		}
 	}
 

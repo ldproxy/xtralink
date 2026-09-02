@@ -130,7 +130,7 @@ func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows
 
 // validateJobPush checks a job:push Step ahead of the run: `partials:`
 // must reference types that already exist as step ids under
-// jobDefinitions: (the same check validateJobDefinitions performs), and
+// jobs: (the same check validateJobDefinitions performs), and
 // every other parameter must be of the kind the Job model expects. It is
 // optional - without partials, job:push falls back to a bare Job,
 // unchanged from before.

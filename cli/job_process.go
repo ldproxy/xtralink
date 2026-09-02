@@ -71,7 +71,7 @@ func stepIdsToProcess(appCtx *app.AppContext, id string) ([]string, error) {
 		ids = append(ids, def.Id)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("no jobDefinitions configured")
+		return nil, fmt.Errorf("no jobs configured")
 	}
 	return ids, nil
 }

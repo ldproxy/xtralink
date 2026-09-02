@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,7 +22,7 @@ type Settings struct {
 	Packages       []Package            `yaml:"packages"`
 	Workflows      []workflows.Workflow `yaml:"workflows,omitempty"`
 	JobQueue       JobQueueConfig       `yaml:"settings,omitempty"`
-	JobDefinitions []JobDefinition      `yaml:"jobDefinitions,omitempty"`
+	JobDefinitions []JobDefinition      `yaml:"jobs,omitempty"`
 }
 
 // JobQueueConfig selects and sizes the job queue backend and configures the
@@ -103,8 +105,20 @@ func LoadSettings(path string) (*Settings, error) {
 		return nil, fmt.Errorf("could not read config (%s): %w", path, err)
 	}
 
+	// KnownFields makes an unrecognized key an error rather than something
+	// silently ignored: a misspelled or renamed setting should say so at
+	// load, not go quietly missing and surface much later as behaviour
+	// nobody asked for. A Step's action parameters still land where they
+	// always did - Step.Params is an inline map, which is exactly the
+	// catch-all strict decoding leaves room for.
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+
+	// An empty file decodes to io.EOF rather than a zero Settings, and
+	// "config is empty" is not the complaint to make about it - let
+	// validation say which setting is actually missing.
 	var settings Settings
-	if err := yaml.Unmarshal(raw, &settings); err != nil {
+	if err := decoder.Decode(&settings); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("could not parse yaml: %w", err)
 	}
 

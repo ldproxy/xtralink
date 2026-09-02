@@ -26,7 +26,7 @@ workflows:
 
 func TestLoadSettings_ParsesJobDefinitions(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
-jobDefinitions:
+jobs:
   - id: nba-transformation
     workflow: nba-transform
     outputs:
@@ -60,20 +60,20 @@ jobDefinitions:
 
 func TestLoadSettings_RejectsDuplicateJobDefinitionId(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
-jobDefinitions:
+jobs:
   - id: shared-id
     workflow: nba-transform
   - id: shared-id
     workflow: nba-transaction
 `)
 	if _, err := LoadSettings(path); err == nil {
-		t.Fatal("expected an error for a duplicate jobDefinitions id")
+		t.Fatal("expected an error for a duplicate jobs id")
 	}
 }
 
 func TestLoadSettings_RejectsDefinitionWithoutWorkflow(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
-jobDefinitions:
+jobs:
   - id: nba-transformation
 `)
 	if _, err := LoadSettings(path); err == nil {
@@ -83,7 +83,7 @@ jobDefinitions:
 
 func TestLoadSettings_RejectsDefinitionReferencingUnknownWorkflow(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
-jobDefinitions:
+jobs:
   - id: nba-transformation
     workflow: does-not-exist
 `)
@@ -94,7 +94,7 @@ jobDefinitions:
 
 func TestSettings_GetJobDefinition(t *testing.T) {
 	path := writeConfig(t, minimalPackageAndWorkflows+`
-jobDefinitions:
+jobs:
   - id: nba-transformation
     workflow: nba-transform
   - id: nba-transaction-step

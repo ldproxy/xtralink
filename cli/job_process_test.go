@@ -72,7 +72,7 @@ func TestStepIdsToProcess_WildcardReturnsEveryStep(t *testing.T) {
 func TestStepIdsToProcess_WildcardWithNoJobDefinitionsIsError(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
 	if _, err := stepIdsToProcess(appCtx, "*"); err == nil {
-		t.Fatal("expected an error when no jobDefinitions are configured")
+		t.Fatal("expected an error when no jobs are configured")
 	}
 }
 
@@ -114,7 +114,7 @@ workflows:
         pkg: foo
         path: "*.zip"
 
-jobDefinitions:
+jobs:
   - id: nba-transformation
     workflow: nba-transform
     outputs:

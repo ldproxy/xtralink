@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -288,5 +289,104 @@ settings:
 `)
 	if _, err := LoadSettings(path); err == nil {
 		t.Fatal("expected an error for an empty settings.redis entry")
+	}
+}
+
+func TestLoadSettings_UnknownKeyIsError(t *testing.T) {
+	cases := map[string]string{
+		"top level": `
+targetDir: /tmp/t
+jobDefinitions:
+  - id: transform-step
+    workflow: transform
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/r
+`,
+		"inside a package": `
+targetDir: /tmp/t
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/r
+    localpath: typo
+`,
+		"inside a workflow": `
+targetDir: /tmp/t
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/r
+workflows:
+  - id: wf
+    describe: a misspelled description
+    steps: []
+`,
+	}
+
+	for name, config := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, config)
+			_, err := LoadSettings(path)
+			if err == nil {
+				t.Fatal("expected an unrecognized key to be rejected")
+			}
+			if !strings.Contains(err.Error(), "could not parse yaml") {
+				t.Errorf("error %q should report a parse failure", err.Error())
+			}
+		})
+	}
+}
+
+// A Step's action parameters are an inline map, so strict decoding must
+// still let arbitrary keys through there - that is the whole mechanism by
+// which an Action interprets its own parameters.
+func TestLoadSettings_StepActionParametersStayFree(t *testing.T) {
+	path := writeConfig(t, `
+targetDir: /tmp/t
+packages:
+  - id: foo
+    type: FS
+    url: /tmp/r
+workflows:
+  - id: wf
+    steps:
+      - id: pulled
+        action: pkg:pull
+        pkg: foo
+      - action: job:push
+        type: nba-apply
+        anything: at all
+        nested:
+          deeper: value
+`)
+
+	settings, err := LoadSettings(path)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	steps := settings.Workflows[0].Steps
+	if steps[0].Params["pkg"] != "foo" {
+		t.Errorf("step 0 params = %+v", steps[0].Params)
+	}
+	if steps[1].Params["anything"] != "at all" {
+		t.Errorf("step 1 params = %+v", steps[1].Params)
+	}
+	if nested, ok := steps[1].Params["nested"].(map[string]any); !ok || nested["deeper"] != "value" {
+		t.Errorf("step 1 nested params = %+v", steps[1].Params["nested"])
+	}
+}
+
+func TestLoadSettings_EmptyFileStillReportsTheMissingSetting(t *testing.T) {
+	path := writeConfig(t, "")
+
+	_, err := LoadSettings(path)
+	if err == nil {
+		t.Fatal("expected an error for an empty config")
+	}
+	if !strings.Contains(err.Error(), "at least one package is required") {
+		t.Errorf("error %q should name the missing setting, not the empty document", err.Error())
 	}
 }
