@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
 
 	"github.com/ldproxy/xtralink/model"
 )
@@ -43,6 +44,10 @@ type RedisBackend struct {
 	// key matching keyJob+"*" and JSON.GETs it, so a plain SETNX string key
 	// under that same prefix breaks it ("wrong Redis type"). Own prefix.
 	keyFinalized string
+
+	// Logger receives debug/trace output about setup, cleanup, sequence
+	// and followUps decisions. Defaults to a no-op logger.
+	Logger zerolog.Logger
 }
 
 // NewRedisBackend connects lazily (go-redis does not dial until the first
@@ -77,6 +82,7 @@ func NewRedisBackend(nodes []string, cluster string) *RedisBackend {
 		keyTaken:      prefix + "taken",
 		keyFailed:     prefix + "failed",
 		keyFinalized:  prefix + "finalized:",
+		Logger:        zerolog.Nop(),
 	}
 }
 
@@ -224,6 +230,7 @@ func (b *RedisBackend) PushJobListen(job *model.Job, onProgress JobListener) err
 	if err := b.putJob(ctx, job); err != nil {
 		return err
 	}
+	logJobPushed(b.Logger, job)
 	if job.Setup != nil {
 		return b.PushPartialJob(job.Setup, false)
 	}
@@ -368,7 +375,11 @@ func (b *RedisBackend) sequenceReady(ctx context.Context, partialJob *model.Part
 	if job == nil || job.Sequence == nil || isSetupOrCleanup(job, partialJob.Id) {
 		return true, nil
 	}
-	return partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current, nil
+	ready := partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current
+	if !ready {
+		logSequenceGated(b.Logger, job, partialJob)
+	}
+	return ready, nil
 }
 
 // Done removes partialJobID from the taken list, runs the setup/cleanup/
@@ -418,9 +429,11 @@ func (b *RedisBackend) onPartialJobDone(ctx context.Context, partialJob *model.P
 	}
 
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("setup finished")
 		return b.syncEmbeddedPartialJob(ctx, job.Id, "setup", partialJob)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("cleanup finished")
 		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "cleanup", partialJob); err != nil {
 			return err
 		}
@@ -474,6 +487,7 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 		return err
 	}
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Strs("errors", partialJob.Errors).Msg("setup failed")
 		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "setup", partialJob); err != nil {
 			return err
 		}
@@ -482,6 +496,7 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 		return b.forceFail(ctx, job, partialJob.Errors)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Strs("errors", partialJob.Errors).Msg("cleanup failed")
 		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "cleanup", partialJob); err != nil {
 			return err
 		}
@@ -509,6 +524,7 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 	// An unsequenced Job is a fan-out instead, where the parts are
 	// independent, so there one failure does not stop the others.
 	if job.Sequence != nil {
+		logSequenceStopped(b.Logger, job, partialJob)
 		if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.sequence.current", -1); err != nil {
 			return err
 		}
@@ -602,6 +618,7 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *model.Job) error
 	if err := b.setPercent(ctx, b.keyJob+job.Id, fresh.Percent()); err != nil {
 		return err
 	}
+	logJobFinished(b.Logger, fresh, "job finished")
 
 	if job.Cleanup != nil {
 		return b.PushPartialJob(job.Cleanup, false)
@@ -644,6 +661,7 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 	if err := b.setStatus(ctx, job.Id, job.GetStatus()); err != nil {
 		return err
 	}
+	logJobFinished(b.Logger, job, "job force-failed")
 
 	if job.Cleanup != nil {
 		return b.PushPartialJob(job.Cleanup, false)
@@ -666,11 +684,14 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 // should be sequenced.
 func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 	if job.Status == model.StatusDISMISSED {
+		logFollowUpsSkipped(b.Logger, job, "job dismissed")
 		return nil
 	}
 	if job.Sequence != nil && job.HasErrors() {
+		logFollowUpsSkipped(b.Logger, job, "sequenced job failed")
 		return nil
 	}
+	logFollowUpsPushed(b.Logger, job)
 
 	for _, followUp := range job.FollowUps {
 		if err := b.PushJob(&followUp); err != nil {
@@ -743,8 +764,10 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 	partialJob.BaseJob.Status = partialJob.GetStatus()
 
 	if retry && len(partialJob.Errors) <= maxRetries {
+		logPartialJobRetry(b.Logger, partialJob, message)
 		return b.PushPartialJob(partialJob, true)
 	}
+	logPartialJobFailed(b.Logger, partialJob, message)
 
 	if err := b.putPartialJob(ctx, partialJob); err != nil {
 		return err
@@ -783,6 +806,7 @@ func (b *RedisBackend) Cancel(jobID string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
+	b.Logger.Debug().Str("job", jobID).Int("droppedQueued", len(queued)).Msg("job cancelled")
 	for _, id := range queued {
 		if err := b.dropQueuedPartialJob(ctx, jobID, id); err != nil {
 			return true, err
@@ -910,6 +934,7 @@ func (b *RedisBackend) finalizeIfDismissed(ctx context.Context, job *model.Job) 
 	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", nowMillis()); err != nil {
 		return err
 	}
+	logJobFinished(b.Logger, fresh, "dismissed job finished")
 
 	// Cleanup still runs - it is the release-resources step - but followUps
 	// never do.
@@ -1130,6 +1155,7 @@ func (b *RedisBackend) registerSequence(ctx context.Context, partialJob *model.P
 	// root". The putPartialJob that follows persists the whole document,
 	// this field included.
 	partialJob.Sequence = &next
+	b.Logger.Trace().Str("job", jobID).Str("partialJob", partialJob.Id).Int("sequence", next).Msg("sequence slot registered")
 
 	return nil
 }
@@ -1170,6 +1196,7 @@ func (b *RedisBackend) advanceSequence(ctx context.Context, jobID string) error 
 	} else {
 		job.Sequence.Current++
 	}
+	logSequenceAdvanced(b.Logger, job)
 
 	return b.jsonSet(ctx, b.keyJob+jobID, "$.sequence.current", job.Sequence.Current)
 }

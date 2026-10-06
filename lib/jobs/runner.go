@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ldproxy/xtralink/model"
+	"github.com/rs/zerolog"
 )
 
 type ProcessFunc func(partialJob *model.PartialJob, job *model.Job, backend Backend) model.JobResult
@@ -64,6 +65,9 @@ type Runner struct {
 	// OnError receives errors from background job processing that would
 	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
 	OnError func(error)
+	// Logger receives debug/trace output about dispatch and housekeeping.
+	// Defaults to a no-op logger.
+	Logger zerolog.Logger
 
 	// processors is guarded by mu: Register may be called from another thread
 	// while Run is dispatching (the FFI binding registers whenever its consumer
@@ -86,6 +90,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		OnHoldRetryInterval:  -1, //2 * time.Second,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
+		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
 	}
@@ -100,6 +105,7 @@ func NewRunner2() *Runner {
 		OnHoldRetryInterval:  -1, //2 * time.Second,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
+		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
 	}
@@ -110,6 +116,7 @@ func (r *Runner) Register(p *JobProcessor) {
 	defer r.mu.Unlock()
 
 	r.processors[p.Kind] = p
+	r.Logger.Debug().Str("kind", p.Kind).Int("priority", p.Priority).Dur("orphanTimeout", p.OrphanTimeout).Msg("processor registered")
 }
 
 func (r *Runner) processor(partialJobType string) *JobProcessor {
@@ -124,6 +131,10 @@ func (r *Runner) processor(partialJobType string) *JobProcessor {
 func (r *Runner) Run(ctx context.Context) error {
 	sem := make(chan struct{}, r.Concurrency)
 	var wg sync.WaitGroup
+
+	r.Logger.Debug().Str("executor", r.Executor).Int("concurrency", r.Concurrency).
+		Dur("pollInterval", r.PollInterval).Dur("housekeepingInterval", r.HousekeepingInterval).
+		Msg("runner started")
 
 	if r.HousekeepingInterval > 0 {
 		wg.Add(1)
@@ -140,7 +151,9 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
+			r.Logger.Debug().Msg("runner stopping, waiting for in-flight partial jobs")
 			wg.Wait()
+			r.Logger.Debug().Msg("runner stopped")
 			return nil
 		default:
 		}
@@ -150,6 +163,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			select {
 			case sem <- struct{}{}:
 			default:
+				r.Logger.Trace().Str("kind", partialJobType).Msg("at concurrency limit, skipping take")
 				continue // at concurrency limit, try the next type
 			}
 
@@ -165,6 +179,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 
 			assigned = true
+			r.Logger.Debug().Str("partialJob", partialJob.Id).Str("kind", partialJobType).Str("job", partialJob.PartOf).Msg("partial job taken")
 			processor := r.processor(partialJobType)
 			r.markInFlight(partialJob.Id)
 			wg.Add(1)
@@ -177,9 +192,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		if !assigned {
+			r.Logger.Trace().Strs("kinds", types).Msg("nothing to take, sleeping")
 			select {
 			case <-ctx.Done():
+				r.Logger.Debug().Msg("runner stopping, waiting for in-flight partial jobs")
 				wg.Wait()
+				r.Logger.Debug().Msg("runner stopped")
 				return nil
 			case <-time.After(r.PollInterval):
 			}
@@ -212,12 +230,16 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 		r.reportError(err)
 
 		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.Id == partialJob.Id) {
+			r.Logger.Debug().Str("job", partialJob.PartOf).Msg("starting job")
 			r.reportError(r.Backend.StartJob(partialJob.PartOf))
 		}
 	}
 
+	started := time.Now()
 	result := r.invoke(partialJob, job, processor)
-	//fmt.Printf("JOBS: Processed partial job %s of type %s with result %v\n", partialJob.Id, partialJob.Kind, result)
+	r.Logger.Debug().Str("partialJob", partialJob.Id).Str("kind", partialJob.Kind).
+		Str("status", string(result.Status)).Str("message", result.Message()).
+		Dur("duration", time.Since(started)).Msg("partial job processed")
 
 	switch {
 	case result.IsSuccess():
@@ -236,6 +258,7 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 func (r *Runner) invoke(partialJob *model.PartialJob, job *model.Job, processor *JobProcessor) (result model.JobResult) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			r.Logger.Debug().Str("partialJob", partialJob.Id).Interface("panic", rec).Msg("processor panicked")
 			result = model.Error(fmt.Sprintf("panic while processing partial job %s: %v\n%s", partialJob.Id, rec, debug.Stack()))
 		}
 	}()
@@ -248,11 +271,14 @@ func (r *Runner) invoke(partialJob *model.PartialJob, job *model.Job, processor 
 // source. It respects ctx so it never outlives the Runner it belongs to.
 func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *model.PartialJob) {
 	if r.OnHoldRetryInterval <= 0 {
+		r.Logger.Debug().Str("partialJob", partialJob.Id).Msg("partial job on hold, retry disabled")
 		return
 	}
+	r.Logger.Debug().Str("partialJob", partialJob.Id).Dur("retryIn", r.OnHoldRetryInterval).Msg("partial job on hold, retry scheduled")
 	go func() {
 		select {
 		case <-time.After(r.OnHoldRetryInterval):
+			r.Logger.Debug().Str("partialJob", partialJob.Id).Msg("re-queueing on-hold partial job")
 			r.reportError(r.Backend.PushPartialJob(partialJob, true))
 		case <-ctx.Done():
 		}
@@ -270,6 +296,7 @@ func (r *Runner) housekeep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			r.Logger.Trace().Msg("housekeeping sweep")
 			r.reapOrphans()
 			r.cleanupFinishedJobs()
 		}
@@ -299,6 +326,8 @@ func (r *Runner) reapOrphans() {
 			continue
 		}
 
+		r.Logger.Debug().Str("partialJob", partialJob.Id).Str("kind", partialJob.Kind).Str("executor", partialJob.Executor).
+			Msg("reclaiming orphaned partial job")
 		r.reportError(r.Backend.PushPartialJob(partialJob, true))
 	}
 }
@@ -322,6 +351,7 @@ func (r *Runner) cleanupFinishedJobs() {
 			continue
 		}
 		if job.FinishedAt > 0 && now-job.UpdatedAt >= retention.Milliseconds() {
+			r.Logger.Debug().Str("job", job.Id).Dur("retention", retention).Msg("removing finished job")
 			r.reportError(r.Backend.DoneJob(job.Id))
 		}
 	}

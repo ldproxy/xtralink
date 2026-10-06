@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ldproxy/xtralink/model"
+	"github.com/rs/zerolog"
 )
 
 // MemoryBackend implements Backend entirely in memory, guarded by a single
@@ -42,6 +43,10 @@ type MemoryBackend struct {
 
 	taken  map[string]bool
 	failed []string
+
+	// Logger receives debug/trace output about setup, cleanup, sequence
+	// and followUps decisions. Defaults to a no-op logger.
+	Logger zerolog.Logger
 }
 
 func NewMemoryBackend() *MemoryBackend {
@@ -51,6 +56,7 @@ func NewMemoryBackend() *MemoryBackend {
 		queues:    map[string]map[int][]string{},
 		taken:     map[string]bool{},
 		listeners: map[string]JobListener{},
+		Logger:    zerolog.Nop(),
 	}
 }
 
@@ -98,6 +104,7 @@ func (b *MemoryBackend) pushJobLocked(job *model.Job, onProgress JobListener) er
 	b.listeners[job.Id] = onProgress
 
 	onProgress.OnProgress(*job)
+	logJobPushed(b.Logger, job)
 
 	if job.Setup != nil {
 		return b.pushPartialJobLocked(job.Setup, false)
@@ -124,6 +131,7 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untak
 			next := job.Sequence.Remaining
 			stored.Sequence = &next
 			job.Sequence.Remaining++
+			b.Logger.Trace().Str("job", job.Id).Str("partialJob", stored.Id).Int("sequence", next).Msg("sequence slot registered")
 		}
 	}
 
@@ -200,7 +208,11 @@ func (b *MemoryBackend) sequenceReadyLocked(partialJob *model.PartialJob) bool {
 	if job == nil || job.Sequence == nil || isSetupOrCleanup(job, partialJob.Id) {
 		return true
 	}
-	return partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current
+	ready := partialJob.Sequence != nil && *partialJob.Sequence == job.Sequence.Current
+	if !ready {
+		logSequenceGated(b.Logger, job, partialJob)
+	}
+	return ready
 }
 
 func descendingPriorities(byPriority map[int][]string) []int {
@@ -240,10 +252,12 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *model.PartialJob) err
 	}
 
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("setup finished")
 		b.syncEmbeddedPartialJobLocked(job, "setup", partialJob)
 		return nil
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("cleanup finished")
 		b.syncEmbeddedPartialJobLocked(job, "cleanup", partialJob)
 
 		listener := b.listeners[partialJob.PartOf]
@@ -287,10 +301,12 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 		return nil
 	}
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Strs("errors", partialJob.Errors).Msg("setup failed")
 		b.syncEmbeddedPartialJobLocked(job, "setup", partialJob)
 		return b.forceFailLocked(job, partialJob.Errors)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
+		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Strs("errors", partialJob.Errors).Msg("cleanup failed")
 		b.syncEmbeddedPartialJobLocked(job, "cleanup", partialJob)
 		job.Errors = append(job.Errors, partialJob.Errors...)
 		job.BaseJob.Status = job.GetStatus()
@@ -313,6 +329,7 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 	// An unsequenced Job is a fan-out instead, where the parts are
 	// independent, so there one failure does not stop the others.
 	if job.Sequence != nil {
+		logSequenceStopped(b.Logger, job, partialJob)
 		job.Sequence.Current = -1
 		return b.forceFailLocked(job, partialJob.Errors)
 	}
@@ -346,6 +363,7 @@ func (b *MemoryBackend) advanceSequenceLocked(job *model.Job) {
 	} else {
 		job.Sequence.Current++
 	}
+	logSequenceAdvanced(b.Logger, job)
 }
 
 // finalizeIfDoneLocked mirrors RedisBackend.finalizeIfDone, minus the SETNX
@@ -358,6 +376,7 @@ func (b *MemoryBackend) finalizeIfDoneLocked(job *model.Job) error {
 
 	job.FinishedAt = nowMillis()
 	job.BaseJob.Status = job.GetStatus()
+	logJobFinished(b.Logger, job, "job finished")
 
 	listener := b.listeners[job.Id]
 	if listener != nil {
@@ -387,6 +406,7 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) error {
 		job.FinishedAt = nowMillis()
 	}
 	job.BaseJob.Status = job.GetStatus()
+	logJobFinished(b.Logger, job, "job force-failed")
 
 	listener := b.listeners[job.Id]
 	if listener != nil {
@@ -404,11 +424,14 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) error {
 // and the known gap it documents for an unsequenced one.
 func (b *MemoryBackend) pushFollowUpsLocked(job *model.Job) error {
 	if job.Status == model.StatusDISMISSED {
+		logFollowUpsSkipped(b.Logger, job, "job dismissed")
 		return nil
 	}
 	if job.Sequence != nil && job.HasErrors() {
+		logFollowUpsSkipped(b.Logger, job, "sequenced job failed")
 		return nil
 	}
+	logFollowUpsPushed(b.Logger, job)
 
 	for _, followUp := range job.FollowUps {
 		if err := b.pushJobLocked(&followUp, NoopJobListener{}); err != nil {
@@ -507,9 +530,11 @@ func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 	partialJob.BaseJob.Status = partialJob.GetStatus()
 
 	if retry && len(partialJob.Errors) <= maxRetries {
+		logPartialJobRetry(b.Logger, partialJob, message)
 		return b.pushPartialJobLocked(partialJob, true)
 	}
 
+	logPartialJobFailed(b.Logger, partialJob, message)
 	b.failed = append(b.failed, partialJobID)
 
 	if partialJob.PartOf != "" {
@@ -532,6 +557,7 @@ func (b *MemoryBackend) Cancel(jobID string) (bool, error) {
 	job.UpdatedAt = nowMillis()
 
 	queued, _ := b.livePartialsLocked(jobID)
+	b.Logger.Debug().Str("job", jobID).Int("droppedQueued", len(queued)).Msg("job cancelled")
 	for _, id := range queued {
 		b.dropQueuedPartialJobLocked(job, id)
 	}
@@ -609,6 +635,7 @@ func (b *MemoryBackend) finalizeIfDismissedLocked(job *model.Job) error {
 	// Progress is deliberately left where cancellation caught it: a Job
 	// stopped at 3 of 10 reports 30%, not a completion it never reached.
 	job.FinishedAt = nowMillis()
+	logJobFinished(b.Logger, job, "dismissed job finished")
 
 	listener := b.listeners[job.Id]
 	if listener != nil {

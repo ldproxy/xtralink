@@ -58,7 +58,7 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 		Dev:      isDev,
 		Settings: settings,
 		Drivers:  drivers.NewFactoryWithLogger(logger),
-		Jobs:     newJobsBackend(settings),
+		Jobs:     newJobsBackend(settings, logger.With().Str("component", "jobs").Logger()),
 		Locks:    newLocker(settings),
 	}
 
@@ -70,11 +70,15 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 // jobs.NewRedisBackend), anything else (including a zero-value Settings
 // that never went through LoadSettings, e.g. in tests) defaults to the
 // in-memory backend, matching JobsConfiguration's own "LOCAL" default.
-func newJobsBackend(settings *Settings) jobs.Backend {
+func newJobsBackend(settings *Settings, logger zerolog.Logger) jobs.Backend {
 	if settings != nil && strings.EqualFold(settings.General.Queue, "redis") {
-		return jobs.NewRedisBackend(settings.General.Redis, settings.General.Cluster)
+		backend := jobs.NewRedisBackend(settings.General.Redis, settings.General.Cluster)
+		backend.Logger = logger
+		return backend
 	}
-	return jobs.NewMemoryBackend()
+	backend := jobs.NewMemoryBackend()
+	backend.Logger = logger
+	return backend
 }
 
 // newLocker only returns a real distributed lock if Redis is actually

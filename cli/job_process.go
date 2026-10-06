@@ -43,6 +43,7 @@ func RunJobWorkers(appCtx *app.AppContext, ctx context.Context, kind string) err
 
 	runner := libjobs.NewRunner(appCtx.Jobs, executorId())
 	runner.Concurrency = appCtx.Settings.General.MaxConcurrent
+	runner.Logger = appCtx.Logger.With().Str("component", "jobs").Logger()
 	runner.OnError = func(err error) {
 		appCtx.Logger.Error().Err(err).Msg("job runner error")
 	}
