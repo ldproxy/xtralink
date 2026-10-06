@@ -45,61 +45,18 @@ type MvFileAction struct {
 func (a *MvFileAction) Type() string { return "pkg:mv_file" }
 
 func (a *MvFileAction) Run(ctx *workflows.StepContext) (workflows.StepResult, error) {
-	fromId, ok := ctx.Params["from"].(string)
-	if !ok || fromId == "" {
-		return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "from" parameter is required`)
-	}
-	toId, ok := ctx.Params["to"].(string)
-	if !ok || toId == "" {
-		return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "to" parameter is required`)
-	}
-	sourceRelPath, ok := ctx.Params["path"].(string)
-	if !ok || sourceRelPath == "" {
-		return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "path" parameter is required`)
-	}
-	targetRelPath := sourceRelPath
-	if raw, ok := ctx.Params["targetPath"]; ok {
-		targetRelPath, ok = raw.(string)
-		if !ok || targetRelPath == "" {
-			return workflows.StepResult{}, fmt.Errorf(`pkg:mv_file: "targetPath" must be a non-empty path, got %v`, raw)
-		}
-	}
-
-	fromPkg, err := a.AppCtx.Settings.GetPackage(fromId)
+	t, err := resolveFileTransfer(a.Type(), a.AppCtx, ctx.Params, true)
 	if err != nil {
 		return workflows.StepResult{}, err
 	}
-	toPkg, err := a.AppCtx.Settings.GetPackage(toId)
-	if err != nil {
-		return workflows.StepResult{}, err
-	}
-	if !SupportsSyncBack(fromPkg.Type) || !SupportsSyncBack(toPkg.Type) {
-		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file only supports FS/S3 packages, got from=%s(%s) to=%s(%s)",
-			fromId, fromPkg.Type, toId, toPkg.Type)
-	}
-	if err := requireLocalMirror(fromPkg); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: from: %w", err)
-	}
-	if err := requireLocalMirror(toPkg); err != nil {
-		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: to: %w", err)
-	}
 
-	srcPath, err := mirrorPath(fromPkg, sourceRelPath)
-	if err != nil {
-		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: path: %w", err)
-	}
-	dstPath, err := mirrorPath(toPkg, targetRelPath)
-	if err != nil {
-		return workflows.StepResult{}, fmt.Errorf("pkg:mv_file: targetPath: %w", err)
-	}
-
-	if err := moveFile(srcPath, dstPath); err != nil {
+	if err := moveFile(t.srcPath, t.dstPath); err != nil {
 		return workflows.StepResult{}, fmt.Errorf("could not move %q from %q to %q as %q: %w",
-			sourceRelPath, fromId, toId, targetRelPath, err)
+			t.sourceRelPath, t.fromId, t.toId, t.targetRelPath, err)
 	}
 
-	ctx.Logger.Debug().Str("from", fromId).Str("to", toId).
-		Str("path", sourceRelPath).Str("target_path", targetRelPath).Msg("moved file between mirrors")
+	ctx.Logger.Debug().Str("from", t.fromId).Str("to", t.toId).
+		Str("path", t.sourceRelPath).Str("target_path", t.targetRelPath).Msg("moved file between mirrors")
 
 	return workflows.Success(), nil
 }
@@ -120,6 +77,9 @@ func moveFile(src, dst string) error {
 }
 
 func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err

@@ -409,6 +409,27 @@ func TestValidate_RejectsMvFileWithUnsupportedPackageType(t *testing.T) {
 	}
 }
 
+func TestValidate_CpFileOnlyRequiresSyncBackForTheTarget(t *testing.T) {
+	appCtx := &app.AppContext{Settings: &app.Settings{Packages: []app.Package{
+		{Id: "foo", Type: "FS"},
+		{Id: "gitpkg", Type: "GIT"},
+	}}}
+	registry := NewRegistry(appCtx)
+	validate := func(from, to string) error {
+		return Validate(appCtx, workflows.Workflow{Id: "wf", Steps: []workflows.Step{{
+			Action: "pkg:cp_file",
+			Params: map[string]any{"from": from, "to": to, "path": "a.zip"},
+		}}}, registry)
+	}
+
+	if err := validate("gitpkg", "foo"); err != nil {
+		t.Errorf("expected a GIT source to be accepted, got: %v", err)
+	}
+	if err := validate("foo", "gitpkg"); err == nil {
+		t.Error("expected an error for a GIT target package")
+	}
+}
+
 func TestValidate_RejectsUnknownPackageReference(t *testing.T) {
 	appCtx := &app.AppContext{Settings: &app.Settings{}}
 	registry := NewRegistry(appCtx)

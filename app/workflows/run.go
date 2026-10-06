@@ -22,6 +22,7 @@ func NewRegistry(appCtx *app.AppContext) *workflows.Registry {
 	registry.Register(&actions.FindAnyAction{AppCtx: appCtx})
 	registry.Register(&actions.FindEachAction{AppCtx: appCtx})
 	registry.Register(&actions.MvFileAction{AppCtx: appCtx})
+	registry.Register(&actions.CpFileAction{AppCtx: appCtx})
 	registry.Register(&actions.JobPushAction{AppCtx: appCtx})
 	registry.Register(&actions.PullAction{AppCtx: appCtx})
 	registry.Register(&actions.PushAction{AppCtx: appCtx})
@@ -96,8 +97,8 @@ func ParseOverrides(raw []string) (map[string]string, error) {
 // validation could not perform (it would need the Action registry, which
 // in turn needs *app.AppContext - an import cycle from app/settings.go):
 // every Step's action must be registered, and pkg/from/to must reference an
-// existing package - pkg:mv_file's from/to and pkg:push's pkg additionally
-// must be FS/S3. Template-valued params (containing "${") are skipped -
+// existing package - pkg:mv_file's from/to, pkg:cp_file's to and
+// pkg:push's pkg additionally must be FS/S3. Template-valued params (containing "${") are skipped -
 // their actual value is only known once earlier Steps have run.
 func Validate(appCtx *app.AppContext, wf workflows.Workflow, registry *workflows.Registry) error {
 	if err := validateSteps(appCtx, wf.Steps, registry, "step"); err != nil {
@@ -140,6 +141,13 @@ func validateSteps(appCtx *app.AppContext, steps []workflows.Step, registry *wor
 			}
 		case "pkg:mv_file":
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "from"); err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+			if err := validateSyncBackPackageRef(appCtx, step.Params, "to"); err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+		case "pkg:cp_file":
+			if err := validatePackageRef(appCtx, step.Params, "from"); err != nil {
 				return fmt.Errorf("%s: %w", where, err)
 			}
 			if err := validateSyncBackPackageRef(appCtx, step.Params, "to"); err != nil {
