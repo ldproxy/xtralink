@@ -43,6 +43,9 @@ func Pull(appCtx *app.AppContext, pkgId string) error {
 		if err := driver.Sync(RemoteFor(r)); err != nil {
 			return fmt.Errorf("remote[%d] fetch failed: %w", i, err)
 		}
+		if err := drivers.RecordManifest(RemoteFor(r)); err != nil {
+			return fmt.Errorf("remote[%d]: %w", i, err)
+		}
 	}
 
 	return nil
@@ -60,5 +63,6 @@ func RemoteFor(p app.Package) drivers.Remote {
 		Password:          p.Password,
 		Path:              p.Path,
 		ResolvedLocalPath: p.ResolvedLocalPath,
+		ManifestPath:      p.ResolvedManifestPath,
 	}
 }

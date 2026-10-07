@@ -938,3 +938,73 @@ workflows:
 		t.Errorf("handler wrote %q, want the failure it was told about", content)
 	}
 }
+
+// TestRun_PushCarriesOnlyTheChangesOfTheWorkflow moves a file from an inbox
+// to an archive while another file is uploaded to the inbox, and pushes
+// both packages. The push of the inbox must remove the moved file but keep
+// the new upload, and the archive - whose local copy was never pulled and
+// holds only the moved file - must keep everything it already had.
+func TestRun_PushCarriesOnlyTheChangesOfTheWorkflow(t *testing.T) {
+	targetDir := t.TempDir()
+	inboxRemote := t.TempDir()
+	archiveRemote := t.TempDir()
+	writeFile(t, filepath.Join(inboxRemote, "a.zip"), "a")
+	writeFile(t, filepath.Join(archiveRemote, "old", "x.zip"), "x")
+
+	config := `
+settings:
+  targetDir: ` + targetDir + `
+packages:
+  - id: inbox
+    type: FS
+    url: ` + inboxRemote + `
+  - id: archive
+    type: FS
+    url: ` + archiveRemote + `
+
+workflows:
+  - id: archive-delivery
+    steps:
+      - action: pkg:pull
+        pkg: inbox
+      - action: cmd:exec
+        cmd: mkdir -p ` + filepath.Join(targetDir, "archive") + `
+      - action: cmd:exec
+        cmd: cp ` + filepath.Join(inboxRemote, "a.zip") + ` ` + filepath.Join(inboxRemote, "b.zip") + `
+      - action: pkg:mv_file
+        from: inbox
+        to: archive
+        path: a.zip
+        targetPath: new/a.zip
+      - action: pkg:push
+        pkg: inbox
+      - action: pkg:push
+        pkg: archive
+`
+	configPath := filepath.Join(t.TempDir(), ".xtrasync.yml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	settings, err := app.LoadSettings(configPath)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+
+	appCtx := &app.AppContext{
+		Logger:   zerolog.Nop(),
+		Settings: settings,
+		Drivers:  drivers.NewFactory(),
+		Jobs:     &fakeBackend{},
+		Locks:    lock.NoopLocker{},
+	}
+
+	if err := Run(appCtx, "archive-delivery", nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertMissing(t, filepath.Join(inboxRemote, "a.zip"))
+	assertContent(t, filepath.Join(inboxRemote, "b.zip"), "a") // uploaded while the workflow ran
+	assertContent(t, filepath.Join(archiveRemote, "new", "a.zip"), "a")
+	assertContent(t, filepath.Join(archiveRemote, "old", "x.zip"), "x")
+}

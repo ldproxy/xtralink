@@ -63,8 +63,8 @@ func TestPushAction_RejectsUnsupportedPackageType(t *testing.T) {
 	}
 }
 
-// SyncBack mirrors, so pushing a package that was never pulled would
-// delete everything on the remote that the empty local copy lacks.
+// A package without a local copy points at a missing step in the workflow;
+// the push refuses it and leaves the remote alone.
 func TestPushAction_UnpulledPackageIsError(t *testing.T) {
 	targetDir := t.TempDir()
 	foo := fsPackage(t, "foo", targetDir)
