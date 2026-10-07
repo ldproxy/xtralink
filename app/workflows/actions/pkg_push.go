@@ -8,13 +8,17 @@ import (
 	"github.com/ldproxy/xtralink/lib/workflows"
 )
 
-// PushAction implements "pkg:push": mirrors a package's local changes back
+// PushAction implements "pkg:push": carries a package's local changes back
 // to its own remote in place (SyncBack) - only FS/S3 support it.
 //
-// The package must already have been pulled. SyncBack mirrors rather than
-// merges, so pushing a local directory that was never filled from the
-// remote would delete everything the remote holds and the local copy does
-// not.
+// What changed is decided against the manifest recorded by the last pull or
+// push (s. drivers.Manifest): new and modified files are uploaded, and only
+// files that were pulled and have since been removed locally are deleted.
+// Whatever reached the remote after the pull is left alone, and a local
+// copy that was never pulled only adds its files.
+//
+// The local copy must exist, though: a push of a package the workflow
+// never pulled or filled is a mistake in the workflow.
 //
 // This is a deliberately different meaning from the CLI's "xtrasync pkg
 // push" command, which builds and publishes a new OCI artifact rather than

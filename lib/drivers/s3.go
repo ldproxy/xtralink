@@ -138,14 +138,15 @@ func (d *s3Driver) Sync(remote Remote) error {
 	return nil
 }
 
-// SyncBack mirrors remote.ResolvedLocalPath back to its S3 bucket/prefix:
-// every local file is (re-)uploaded, and any object under the prefix with no
-// matching local file is deleted - a full reconciliation rather than an
-// incremental diff (package directories are small config bundles, not bulk
-// data, so re-uploading everything on every call is simpler and still
-// cheap). This is what makes pkg:mv_file's move-with-deletion semantics
-// work against a real S3 package.
+// SyncBack carries the changes of a local mirror with a manifest back to
+// its bucket/prefix (s. syncBackChanges). Without a manifest it mirrors
+// remote.ResolvedLocalPath back: every local file is (re-)uploaded, and any
+// object under the prefix with no matching local file is deleted - a full
+// reconciliation rather than an incremental diff.
 func (d *s3Driver) SyncBack(remote Remote) error {
+	if remote.ManifestPath != "" {
+		return d.syncBackChanges(remote)
+	}
 	client, bucket, key, err := d.resolveClient(remote)
 	if err != nil {
 		return err
@@ -226,6 +227,64 @@ func (d *s3Driver) SyncBack(remote Remote) error {
 		Int("deleted", deleted).
 		Msg("synced s3 objects back")
 	return nil
+}
+
+// syncBackChanges uploads the files changed in the local mirror since its
+// manifest was recorded and deletes the objects of the files removed
+// locally. Unlike the full reconciliation above, it leaves alone what
+// reached the bucket in the meantime and does not upload unchanged files,
+// so it also suits packages with bulk data.
+func (d *s3Driver) syncBackChanges(remote Remote) error {
+	client, bucket, key, err := d.resolveClient(remote)
+	if err != nil {
+		return err
+	}
+	prefix := key
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	c, err := changesSinceManifest(remote)
+	if err != nil {
+		return fmt.Errorf("could not sync fs directory back to s3://%s/%s: %w", bucket, prefix, err)
+	}
+	for _, rel := range c.upload {
+		if err := d.uploadFile(client, bucket, prefix+rel, filepath.Join(remote.ResolvedLocalPath, filepath.FromSlash(rel))); err != nil {
+			return fmt.Errorf("s3 upload failed for %s: %w", prefix+rel, err)
+		}
+	}
+	for _, rel := range c.remove {
+		if err := client.FileDelete(simples3.DeleteInput{Bucket: bucket, ObjectKey: prefix + rel}); err != nil {
+			return fmt.Errorf("s3 delete failed for %s: %w", prefix+rel, err)
+		}
+	}
+	if err := WriteManifest(remote.ManifestPath, c.local); err != nil {
+		return err
+	}
+
+	d.logger.Info().
+		Str("bucket", bucket).
+		Str("prefix", prefix).
+		Str("source", remote.ResolvedLocalPath).
+		Int("uploaded", len(c.upload)).
+		Int("deleted", len(c.remove)).
+		Msg("synced s3 changes back")
+	return nil
+}
+
+func (d *s3Driver) uploadFile(client *simples3.S3, bucket, objectKey, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = client.FileUpload(simples3.UploadInput{
+		Bucket:    bucket,
+		ObjectKey: objectKey,
+		FileName:  filepath.Base(path),
+		Body:      f,
+	})
+	return err
 }
 
 func (d *s3Driver) resolveObjects(client *simples3.S3, bucket, key string) ([]simples3.Object, string, error) {

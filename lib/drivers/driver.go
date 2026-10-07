@@ -19,10 +19,11 @@ type PushDriver interface {
 	Push(push PushRequest) error
 }
 
-// SyncBackDriver mirrors a local change (including deletions) back to the
+// SyncBackDriver carries a local change (including deletions) back to the
 // remote it came from, in place - the counterpart to SyncDriver, used where
 // PushDriver's "build a new artifact" semantics don't fit (e.g. a workflow
-// step moving a file between two packages).
+// step moving a file between two packages). With a Remote.ManifestPath only
+// the files changed since the last pull or push are uploaded or deleted.
 type SyncBackDriver interface {
 	SyncBack(remote Remote) error
 }

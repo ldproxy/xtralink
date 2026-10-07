@@ -95,3 +95,69 @@ func TestFSDriver_RoundTripPullThenPush(t *testing.T) {
 	assertFileContent(t, filepath.Join(remoteDir, "moved.txt"), "moved")
 	assertFileContent(t, filepath.Join(remoteDir, "existing.txt"), "existing")
 }
+
+// With a manifest, SyncBack carries the changes made to the local copy
+// since the pull - and nothing else: a file that reached the remote in the
+// meantime (e.g. a new upload to an inbox) survives the push.
+func TestFSDriver_SyncBackWithManifestCarriesOnlyLocalChanges(t *testing.T) {
+	remoteDir := t.TempDir()
+	writeFile(t, filepath.Join(remoteDir, "a.txt"), "a")
+	writeFile(t, filepath.Join(remoteDir, "b.txt"), "b")
+
+	driver := NewFSDriver(zerolog.Nop())
+	remote := Remote{URL: remoteDir, ResolvedLocalPath: t.TempDir(), ManifestPath: filepath.Join(t.TempDir(), "foo.json")}
+	if err := driver.Sync(remote); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if err := RecordManifest(remote); err != nil {
+		t.Fatalf("RecordManifest: %v", err)
+	}
+
+	writeFile(t, filepath.Join(remoteDir, "late.txt"), "late")    // arrives at the remote after the pull
+	writeFile(t, filepath.Join(remoteDir, "b.txt"), "remote edit") // changed at the remote, unchanged locally
+	if err := os.Remove(filepath.Join(remote.ResolvedLocalPath, "a.txt")); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	writeFile(t, filepath.Join(remote.ResolvedLocalPath, "nested", "new.txt"), "new")
+
+	if err := driver.SyncBack(remote); err != nil {
+		t.Fatalf("SyncBack: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(remoteDir, "a.txt")); !os.IsNotExist(err) {
+		t.Errorf("expected a.txt to have been deleted from the remote, stat err = %v", err)
+	}
+	assertFileContent(t, filepath.Join(remoteDir, "nested", "new.txt"), "new")
+	assertFileContent(t, filepath.Join(remoteDir, "late.txt"), "late")
+	assertFileContent(t, filepath.Join(remoteDir, "b.txt"), "remote edit")
+
+	// the push is recorded: deleting new.txt locally now removes it remotely, too
+	if err := os.Remove(filepath.Join(remote.ResolvedLocalPath, "nested", "new.txt")); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if err := driver.SyncBack(remote); err != nil {
+		t.Fatalf("SyncBack (second): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(remoteDir, "nested", "new.txt")); !os.IsNotExist(err) {
+		t.Errorf("expected new.txt to have been deleted from the remote, stat err = %v", err)
+	}
+	assertFileContent(t, filepath.Join(remoteDir, "late.txt"), "late")
+}
+
+// A local copy that was never pulled says nothing about what the remote
+// holds: pushing it adds its files and deletes nothing.
+func TestFSDriver_SyncBackWithoutPullOnlyAdds(t *testing.T) {
+	remoteDir := t.TempDir()
+	writeFile(t, filepath.Join(remoteDir, "keep-me.txt"), "precious")
+	local := t.TempDir()
+	writeFile(t, filepath.Join(local, "2026", "a.txt"), "a")
+
+	driver := NewFSDriver(zerolog.Nop())
+	remote := Remote{URL: remoteDir, ResolvedLocalPath: local, ManifestPath: filepath.Join(t.TempDir(), "foo.json")}
+	if err := driver.SyncBack(remote); err != nil {
+		t.Fatalf("SyncBack: %v", err)
+	}
+
+	assertFileContent(t, filepath.Join(remoteDir, "2026", "a.txt"), "a")
+	assertFileContent(t, filepath.Join(remoteDir, "keep-me.txt"), "precious")
+}

@@ -31,11 +31,52 @@ func (d *fsDriver) Sync(remote Remote) error {
 }
 
 func (d *fsDriver) SyncBack(remote Remote) error {
+	if remote.ManifestPath != "" {
+		return d.syncBackChanges(remote)
+	}
 	if err := syncPathMirror(remote.ResolvedLocalPath, remote.URL); err != nil {
 		return fmt.Errorf("could not mirror fs target back to source (%s -> %s): %w", remote.ResolvedLocalPath, remote.URL, err)
 	}
 	d.logger.Info().Str("source", remote.ResolvedLocalPath).Str("target", remote.URL).Msg("synced fs directory back")
 	return nil
+}
+
+// syncBackChanges copies the files changed in the local mirror since its
+// manifest was recorded to the remote directory and deletes the ones that
+// were removed locally; files that reached the remote in the meantime are
+// left alone.
+func (d *fsDriver) syncBackChanges(remote Remote) error {
+	c, err := changesSinceManifest(remote)
+	if err != nil {
+		return fmt.Errorf("could not sync fs target back to source (%s -> %s): %w", remote.ResolvedLocalPath, remote.URL, err)
+	}
+	for _, rel := range c.upload {
+		src := filepath.Join(remote.ResolvedLocalPath, filepath.FromSlash(rel))
+		dst := filepath.Join(remote.URL, filepath.FromSlash(rel))
+		if err := copyLocalFile(src, dst); err != nil {
+			return fmt.Errorf("could not copy %s back to %s: %w", rel, remote.URL, err)
+		}
+	}
+	for _, rel := range c.remove {
+		if err := os.Remove(filepath.Join(remote.URL, filepath.FromSlash(rel))); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("could not delete %s from %s: %w", rel, remote.URL, err)
+		}
+	}
+	if err := WriteManifest(remote.ManifestPath, c.local); err != nil {
+		return err
+	}
+	d.logger.Info().Str("source", remote.ResolvedLocalPath).Str("target", remote.URL).
+		Int("uploaded", len(c.upload)).Int("deleted", len(c.remove)).Msg("synced fs changes back")
+	return nil
+}
+
+func copyLocalFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	return writeReaderToFile(in, dst)
 }
 
 // syncPathMirror synchronizes a source directory into dst.

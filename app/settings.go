@@ -17,6 +17,10 @@ import (
 
 var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 
+// ManifestDir is the directory below TargetDir that holds a manifest per
+// package, recording the content of its local mirror (s. drivers.Manifest).
+const ManifestDir = ".xtralink/manifests"
+
 type Settings struct {
 	Packages       []Package            `yaml:"packages"`
 	Workflows      []workflows.Workflow `yaml:"workflows,omitempty"`
@@ -59,6 +63,10 @@ type Package struct {
 	LocalPath string `yaml:"localPath,omitempty"`
 
 	ResolvedLocalPath string `yaml:"-"`
+	// ResolvedManifestPath is where the content of the local mirror is
+	// recorded after each pull and push, outside the mirror itself (s.
+	// drivers.Manifest).
+	ResolvedManifestPath string `yaml:"-"`
 }
 
 func (s *Settings) HasPackage(id string) bool {
@@ -188,6 +196,7 @@ func validateAndNormalize(settings *Settings) error {
 		}
 
 		r.ResolvedLocalPath = filepath.Join(settings.General.TargetDir, r.LocalPath)
+		r.ResolvedManifestPath = filepath.Join(settings.General.TargetDir, ManifestDir, r.Id+".json")
 	}
 
 	if err := validateWorkflows(settings.Workflows); err != nil {
