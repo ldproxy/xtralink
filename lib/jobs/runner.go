@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ldproxy/xtralink/model"
 	"github.com/rs/zerolog"
 )
@@ -211,6 +212,11 @@ func (r *Runner) orderedTypes() []string {
 
 	types := make([]string, 0, len(r.processors))
 	for t := range r.processors {
+		// Finalize is called directly by DeleteJob and never queued, so
+		// there is nothing to take for it.
+		if isFinalizeKind(t) {
+			continue
+		}
 		types = append(types, t)
 	}
 	sort.Slice(types, func(i, j int) bool {
@@ -352,9 +358,31 @@ func (r *Runner) cleanupFinishedJobs() {
 		}
 		if job.FinishedAt > 0 && now-job.UpdatedAt >= retention.Milliseconds() {
 			r.Logger.Debug().Str("job", job.Id).Dur("retention", retention).Msg("removing finished job")
-			r.reportError(r.Backend.DoneJob(job.Id))
+			r.reportError(r.DeleteJob(job))
 		}
 	}
+}
+
+// DeleteJob removes job from the Backend, first calling the processor
+// registered for FinalizeKind(job.Kind), if any, so it can release what the
+// Job's outputs referenced. Finalize is called directly instead of being
+// queued because it has to run while the Job still exists, and a queued
+// PartialJob would outlive it.
+//
+// If finalize does not succeed the Job is kept, so the next sweep or delete
+// retries it. Several Runners may also sweep the same Job concurrently, so
+// a finalize processor has to tolerate being called more than once.
+func (r *Runner) DeleteJob(job *model.Job) error {
+	if processor := r.processor(FinalizeKind(job.Kind)); processor != nil {
+		finalize := NewPartialJob(uuid.NewString(), FinalizeKind(job.Kind), job.Priority, job.Id)
+		result := r.invoke(finalize, job, processor)
+		r.Logger.Debug().Str("job", job.Id).Str("status", string(result.Status)).Str("message", result.Message()).
+			Msg("job finalized")
+		if !result.IsSuccess() {
+			return fmt.Errorf("finalize of job %s did not succeed, keeping it: %s", job.Id, result.Message())
+		}
+	}
+	return r.Backend.DoneJob(job.Id)
 }
 
 // retentionFor resolves how long job is kept after it finished: its own

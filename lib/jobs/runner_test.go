@@ -452,6 +452,64 @@ func TestRunner_NegativeJobTtlKeepsTheJob(t *testing.T) {
 	assertJobSurvivesSweeps(t, b, r, job.Id)
 }
 
+func TestRunner_FinalizesJobBeforeRemovingIt(t *testing.T) {
+	b := NewMemoryBackend()
+	job, r := finishingJobRunner(t, b, nil)
+	r.JobRetention = time.Millisecond
+
+	var finalized int32
+	r.Register(&JobProcessor{Kind: FinalizeKind(job.Kind),
+		Process: func(p *model.PartialJob, j *model.Job, backend Backend) model.JobResult {
+			if stored, _ := backend.GetJob(j.Id); stored == nil {
+				t.Error("expected the Job to still exist while it is finalized")
+			}
+			if p.Kind != FinalizeKind(job.Kind) || p.PartOf != job.Id {
+				t.Errorf("unexpected finalize PartialJob %+v", p)
+			}
+			atomic.AddInt32(&finalized, 1)
+			return model.Success()
+		}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected the Job to be removed after finalize, got %+v", got)
+	}
+	if got := atomic.LoadInt32(&finalized); got != 1 {
+		t.Errorf("expected finalize to run once, got %d", got)
+	}
+}
+
+func TestRunner_KeepsJobUntilFinalizeSucceeds(t *testing.T) {
+	b := NewMemoryBackend()
+	job, r := finishingJobRunner(t, b, nil)
+	r.JobRetention = time.Millisecond
+
+	var attempts int32
+	r.Register(&JobProcessor{Kind: FinalizeKind(job.Kind),
+		Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			if atomic.AddInt32(&attempts, 1) < 3 {
+				return model.Error("storage unavailable")
+			}
+			return model.Success()
+		}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		got, _ := b.GetJob(job.Id)
+		return got == nil
+	})
+
+	if got, _ := b.GetJob(job.Id); got != nil {
+		t.Errorf("expected the Job to be removed once finalize succeeded, got %+v", got)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Errorf("expected finalize to be retried until it succeeded on the 3rd attempt, got %d attempts", got)
+	}
+}
+
 // assertJobSurvivesSweeps runs r well past the point where jobID finished,
 // so plenty of housekeeping sweeps see the Job, and asserts it is still
 // there afterwards.

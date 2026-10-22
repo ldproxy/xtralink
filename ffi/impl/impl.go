@@ -198,13 +198,14 @@ func (s *JobQueue) Cancel(id string) bool {
 
 // Delete retires a finished Job ahead of its TTL. An unfinished Job is left
 // alone: its PartialJobs may still be queued or running, and pulling the Job
-// out from under them is what Cancel is for.
+// out from under them is what Cancel is for. It goes through the runner so
+// the Job's finalize processor runs exactly as it does on TTL expiry.
 func (s *JobQueue) Delete(id string) bool {
 	job, err := s.backend.GetJob(id)
 	if err != nil || job == nil || job.FinishedAt <= 0 {
 		return false
 	}
-	return s.backend.DoneJob(id) == nil
+	return s.runner.DeleteJob(job) == nil
 }
 
 func (s *JobQueue) Get(id string) (model.Job, bool) {

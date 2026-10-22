@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"strings"
+
 	"github.com/google/uuid"
 
 	"github.com/ldproxy/xtralink/model"
@@ -54,6 +56,17 @@ func NewJob(id, jobType string, priority int, label string, inputs map[string]an
 func SetupKind(jobKind string) string { return jobKind + ":setup" }
 
 func CleanupKind(jobKind string) string { return jobKind + ":cleanup" }
+
+const finalizeSuffix = ":finalize"
+
+// FinalizeKind names the processor that runs when a Job of jobKind is
+// removed (s. Runner.DeleteJob). Unlike setup and cleanup it is not opted
+// into per Job: only the processor knows whether the Job left anything
+// behind that outlives it, so registering a processor for this kind is the
+// whole opt-in.
+func FinalizeKind(jobKind string) string { return jobKind + finalizeSuffix }
+
+func isFinalizeKind(kind string) bool { return strings.HasSuffix(kind, finalizeSuffix) }
 
 // NewJobFromConfiguration builds the Job a JobConfiguration asks for,
 // including its setup and cleanup PartialJobs and, recursively, its

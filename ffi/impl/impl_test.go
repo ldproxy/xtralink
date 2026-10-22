@@ -20,6 +20,7 @@ const (
 func newTestJobQueue() *JobQueue {
 	q := NewJobQueue()
 	q.backend = jobs.NewMemoryBackend()
+	q.runner.Backend = q.backend
 	return q
 }
 
@@ -91,6 +92,50 @@ func TestJobQueue_DeleteRemovesFinishedJob(t *testing.T) {
 	}
 	if _, ok := q.Get(jobID); ok {
 		t.Error("expected the Job to be gone after Delete")
+	}
+}
+
+type finalizeProcessor struct {
+	result model.JobResult
+	calls  int
+}
+
+func (p *finalizeProcessor) Process(model.PartialJob, model.Job) (model.JobResult, error) {
+	p.calls++
+	return p.result, nil
+}
+
+func TestJobQueue_DeleteFinalizesJob(t *testing.T) {
+	q := newTestJobQueue()
+	jobID := pushJob(t, q)
+	finishJob(t, q, jobID)
+	finalize := &finalizeProcessor{result: model.Success()}
+	if err := q.Register(jobs.FinalizeKind(testJobKind), 0, finalize); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if !q.Delete(jobID) {
+		t.Fatal("expected Delete to retire a finished Job")
+	}
+	if finalize.calls != 1 {
+		t.Errorf("expected finalize to run once on Delete, got %d", finalize.calls)
+	}
+}
+
+func TestJobQueue_DeleteKeepsJobWhenFinalizeFails(t *testing.T) {
+	q := newTestJobQueue()
+	jobID := pushJob(t, q)
+	finishJob(t, q, jobID)
+	finalize := &finalizeProcessor{result: model.Error("storage unavailable")}
+	if err := q.Register(jobs.FinalizeKind(testJobKind), 0, finalize); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if q.Delete(jobID) {
+		t.Error("expected Delete to report false when finalize fails")
+	}
+	if _, ok := q.Get(jobID); !ok {
+		t.Error("expected the Job to be kept so finalize can be retried")
 	}
 }
 
