@@ -36,3 +36,5 @@ data/
 dist/
 node_modules/
 .xtralink.yml
+ffi/java/build/
+ffi/java/.gradle/
