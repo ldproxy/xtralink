@@ -174,6 +174,38 @@ func TestJobQueue_CancelRefusesFinishedJob(t *testing.T) {
 	}
 }
 
+type recordingCancelListener struct{ jobIDs []string }
+
+func (l *recordingCancelListener) OnCancel(jobID string) { l.jobIDs = append(l.jobIDs, jobID) }
+
+func TestJobQueue_CancelNotifiesListener(t *testing.T) {
+	q := newTestJobQueue()
+	listener := &recordingCancelListener{}
+	q.OnCancel(listener)
+	jobID := pushJob(t, q)
+
+	q.Cancel(jobID)
+
+	if len(listener.jobIDs) != 1 || listener.jobIDs[0] != jobID {
+		t.Errorf("notified %v, want [%s]", listener.jobIDs, jobID)
+	}
+}
+
+func TestJobQueue_RefusedCancelDoesNotNotifyListener(t *testing.T) {
+	q := newTestJobQueue()
+	listener := &recordingCancelListener{}
+	q.OnCancel(listener)
+	jobID := pushJob(t, q)
+	finishJob(t, q, jobID)
+
+	q.Cancel(jobID)
+	q.Cancel(uuid.NewString())
+
+	if len(listener.jobIDs) != 0 {
+		t.Errorf("notified %v, want none", listener.jobIDs)
+	}
+}
+
 func TestJobQueue_CancelUnknownIdIsFalse(t *testing.T) {
 	q := newTestJobQueue()
 

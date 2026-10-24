@@ -498,6 +498,24 @@ final class Ffi {
       }
 
       case 1 -> {
+        String jobId;
+
+        try (Arena arena = Arena.ofConfined()) {
+          MemorySegment jobId$ = arena.allocate(C_POINTER);
+          CancelListener_OnCancel_Args$MH.invokeExact(inv, jobId$);
+          var jobId$p = jobId$.get(C_POINTER, 0);
+          jobId = str(jobId$p);
+          freeString(jobId$p);
+        } catch (Throwable t) {
+          throw rethrow(t);
+        }
+
+        if (target != null) {
+          ((CancelListener) target).onCancel(jobId);
+        }
+      }
+
+      case 2 -> {
         de.ii.xtralink.jobs.PartialJob partialJob;
         de.ii.xtralink.jobs.Job job;
 
@@ -579,6 +597,9 @@ final class Ffi {
   static final MethodHandle JobListener_OnProgress_Args$MH =
       downcall("JobListener_OnProgress_Args", FunctionDescriptor.ofVoid(C_LONG_LONG, C_POINTER, C_POINTER));
 
+  static final MethodHandle CancelListener_OnCancel_Args$MH =
+      downcall("CancelListener_OnCancel_Args", FunctionDescriptor.ofVoid(C_LONG_LONG, C_POINTER));
+
   static final MethodHandle JobProcessor_Process_Args$MH =
       downcall("JobProcessor_Process_Args", FunctionDescriptor.ofVoid(C_LONG_LONG, C_POINTER, C_POINTER, C_POINTER, C_POINTER));
 
@@ -644,6 +665,9 @@ final class Ffi {
 
   static final MethodHandle JobQueue_Register$MH =
       downcall("JobQueue_Register", FunctionDescriptor.ofVoid(C_POINTER, C_INT, C_LONG_LONG, C_POINTER));
+
+  static final MethodHandle JobQueue_OnCancel$MH =
+      downcall("JobQueue_OnCancel", FunctionDescriptor.ofVoid(C_LONG_LONG));
 
   private static final MethodHandle InitLibrary$MH =
       downcall("InitLibrary", FunctionDescriptor.ofVoid());

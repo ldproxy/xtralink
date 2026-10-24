@@ -14,6 +14,11 @@ type JobListener interface {
 }
 
 
+type CancelListener interface {
+  OnCancel(jobId string) 
+}
+
+
 type JobProcessor interface {
   Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error)
 }
@@ -38,6 +43,7 @@ type JobQueue interface {
   Taken() model.PartialJobList
   Failed() model.PartialJobList
   Register(jobType string, priority int32, processor JobProcessor) error
+  OnCancel(listener CancelListener) 
 }
 
       

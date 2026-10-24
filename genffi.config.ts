@@ -212,6 +212,13 @@ export namespace GenApi {
   /**
    * @listener
    */
+  export interface CancelListener {
+    onCancel: (jobId: string) => void;
+  }
+
+  /**
+   * @listener
+   */
   export interface JobProcessor {
     /**
      * @throws
@@ -281,5 +288,7 @@ export namespace GenApi {
      * @throws
      */
     register: (jobType: string, priority: int, processor: JobProcessor) => void;
+
+    onCancel: (listener: CancelListener) => void;
   }
 }

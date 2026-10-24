@@ -297,4 +297,12 @@ public final class JobQueue {
       throw Ffi.rethrow(t);
     }
   }
+
+  public static void onCancel(CancelListener.Registration listener) {
+    try {
+      Ffi.JobQueue_OnCancel$MH.invokeExact(listener.id());
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
 }

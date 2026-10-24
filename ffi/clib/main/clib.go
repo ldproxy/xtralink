@@ -558,6 +558,23 @@ func (recv *cbJobListener) OnProgress(job model.Job) {
 		*job_length = C.size_t(len(job_arg))
 	}
 
+//=== CancelListener (callback) ===
+
+var _ api.CancelListener = (*cbCancelListener)(nil)
+
+type cbCancelListener struct{ id int64 }
+
+func (recv *cbCancelListener) OnCancel(jobId string) {
+	postCallback(recv.id, 1, []any{jobId})
+}
+
+//export CancelListener_OnCancel_Args
+	func CancelListener_OnCancel_Args(inv int64, jobId **C.char)  {
+		args := takeCallback(inv).args
+		jobId_arg := args[0].(string)
+		*jobId = C.CString(jobId_arg)
+	}
+
 //=== JobProcessor (callback) ===
 
 var _ api.JobProcessor = (*cbJobProcessor)(nil)
@@ -565,7 +582,7 @@ var _ api.JobProcessor = (*cbJobProcessor)(nil)
 type cbJobProcessor struct{ id int64 }
 
 func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error){
-	answer, delivered := postCallbackAnswer(recv.id, 1, []any{partialJob, job})
+	answer, delivered := postCallbackAnswer(recv.id, 2, []any{partialJob, job})
 	if !delivered {
 		var zero model.JobResult
 		return zero, fmt.Errorf("callback %s was not delivered: the listener is closed, or the callback queue has been shut down", "Process")
@@ -751,6 +768,11 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
 	func JobQueue_Register(jobType *C.char, priority C.int, processor int64, cerr **C.char)  {
 		err := jobQueue.Register(C.GoString(jobType), int32(priority), &cbJobProcessor{id: processor})
   if err != nil { *cerr = C.CString(err.Error()) }
+	}
+
+//export JobQueue_OnCancel
+	func JobQueue_OnCancel(listener int64)  {
+		jobQueue.OnCancel(&cbCancelListener{id: listener})
 	}
 
 
