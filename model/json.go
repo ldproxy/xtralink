@@ -240,3 +240,39 @@ func MarshalJobResult(value JobResult) []byte {
 	}
 	return data
 }
+
+// UnmarshalJobList decodes a JobList from its JSON representation.
+func UnmarshalJobList(data []byte) (JobList, error) {
+	var value JobList
+	err := json.Unmarshal(data, &value)
+	return value, err
+}
+
+// MarshalJobList encodes a JobList as JSON. It panics rather than returning an error:
+// every field of a generated type is JSON-representable by construction, so a failure
+// here is a bug in genffi and not a condition a caller can act on.
+func MarshalJobList(value JobList) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("marshaling JobList: %v", err))
+	}
+	return data
+}
+
+// UnmarshalPartialJobList decodes a PartialJobList from its JSON representation.
+func UnmarshalPartialJobList(data []byte) (PartialJobList, error) {
+	var value PartialJobList
+	err := json.Unmarshal(data, &value)
+	return value, err
+}
+
+// MarshalPartialJobList encodes a PartialJobList as JSON. It panics rather than returning an error:
+// every field of a generated type is JSON-representable by construction, so a failure
+// here is a bug in genffi and not a condition a caller can act on.
+func MarshalPartialJobList(value PartialJobList) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("marshaling PartialJobList: %v", err))
+	}
+	return data
+}

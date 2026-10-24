@@ -188,6 +188,14 @@ export namespace GenModel {
       status: Enums.Result;
       messages: string[];
     };
+
+    export type JobList = {
+      jobs: Job[];
+    };
+
+    export type PartialJobList = {
+      partialJobs: PartialJob[];
+    };
   }
 }
 
@@ -262,6 +270,12 @@ export namespace GenApi {
      * @optional
      */
     getPartial: (id: string) => GenModel.Config.PartialJob;
+
+    list: () => GenModel.Config.JobList;
+
+    taken: () => GenModel.Config.PartialJobList;
+
+    failed: () => GenModel.Config.PartialJobList;
 
     /**
      * @throws

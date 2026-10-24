@@ -181,3 +181,58 @@ func TestJobQueue_CancelUnknownIdIsFalse(t *testing.T) {
 		t.Error("expected Cancel to report false for an unknown id")
 	}
 }
+
+func TestJobQueue_ListReturnsPushedJobs(t *testing.T) {
+	q := newTestJobQueue()
+	jobID := pushJob(t, q)
+
+	list := q.List()
+	if len(list.Jobs) != 1 || list.Jobs[0].Id != jobID {
+		t.Errorf("List() = %+v, want the one pushed Job", list.Jobs)
+	}
+}
+
+func TestJobQueue_TakenReturnsTakenPartialJobs(t *testing.T) {
+	q := newTestJobQueue()
+	pushJob(t, q)
+
+	if taken := q.Taken(); len(taken.PartialJobs) != 0 {
+		t.Fatalf("Taken() before Take = %+v, want empty", taken.PartialJobs)
+	}
+
+	partialJob, err := q.backend.Take(testPartialJobKind, "test")
+	if err != nil || partialJob == nil {
+		t.Fatalf("Take: %v, %+v", err, partialJob)
+	}
+
+	taken := q.Taken()
+	if len(taken.PartialJobs) != 1 || taken.PartialJobs[0].Id != partialJob.Id {
+		t.Errorf("Taken() = %+v, want the taken PartialJob", taken.PartialJobs)
+	}
+}
+
+func TestJobQueue_FailedReturnsFailedPartialJobs(t *testing.T) {
+	q := newTestJobQueue()
+	pushJob(t, q)
+
+	partialJob, err := q.backend.Take(testPartialJobKind, "test")
+	if err != nil || partialJob == nil {
+		t.Fatalf("Take: %v, %+v", err, partialJob)
+	}
+	if err := q.backend.Error(partialJob.Id, "boom", false); err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	failed := q.Failed()
+	if len(failed.PartialJobs) != 1 || failed.PartialJobs[0].Id != partialJob.Id {
+		t.Errorf("Failed() = %+v, want the failed PartialJob", failed.PartialJobs)
+	}
+}
+
+func TestJobQueue_ListsAreEmptyNotNil(t *testing.T) {
+	q := newTestJobQueue()
+
+	if q.List().Jobs == nil || q.Taken().PartialJobs == nil || q.Failed().PartialJobs == nil {
+		t.Error("expected empty lists, not nil, so they serialize as []")
+	}
+}

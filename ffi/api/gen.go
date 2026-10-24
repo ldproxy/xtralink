@@ -34,6 +34,9 @@ type JobQueue interface {
   Delete(id string) bool
   Get(id string) (model.Job, bool)
   GetPartial(id string) (model.PartialJob, bool)
+  List() model.JobList
+  Taken() model.PartialJobList
+  Failed() model.PartialJobList
   Register(jobType string, priority int32, processor JobProcessor) error
 }
 

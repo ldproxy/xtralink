@@ -236,6 +236,51 @@ public final class JobQueue {
     }
   }
 
+  public static de.ii.xtralink.jobs.JobList list() {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_List$MH.invokeExact(clen$);
+      long len$ = clen$.get(Ffi.C_SIZE_T, 0);
+
+      de.ii.xtralink.jobs.JobList out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.JobList.class);
+      Ffi.freeBytes(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
+  public static de.ii.xtralink.jobs.PartialJobList taken() {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_Taken$MH.invokeExact(clen$);
+      long len$ = clen$.get(Ffi.C_SIZE_T, 0);
+
+      de.ii.xtralink.jobs.PartialJobList out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.PartialJobList.class);
+      Ffi.freeBytes(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
+  public static de.ii.xtralink.jobs.PartialJobList failed() {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment clen$ = arena.allocate(Ffi.C_SIZE_T);
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_Failed$MH.invokeExact(clen$);
+      long len$ = clen$.get(Ffi.C_SIZE_T, 0);
+
+      de.ii.xtralink.jobs.PartialJobList out$ = Ffi.json$read(ret$, len$, de.ii.xtralink.jobs.PartialJobList.class);
+      Ffi.freeBytes(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
   public static void register(String jobType, int priority, JobProcessor.Registration processor) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment cerr$ = arena.allocate(Ffi.C_POINTER);

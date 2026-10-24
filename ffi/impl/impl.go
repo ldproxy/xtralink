@@ -224,6 +224,31 @@ func (s *JobQueue) GetPartial(id string) (model.PartialJob, bool) {
 	return *job, true
 }
 
+func (s *JobQueue) List() model.JobList {
+	jobs, _ := s.backend.GetJobs()
+	return model.JobList{Jobs: values(jobs)}
+}
+
+func (s *JobQueue) Taken() model.PartialJobList {
+	partialJobs, _ := s.backend.GetTaken()
+	return model.PartialJobList{PartialJobs: values(partialJobs)}
+}
+
+func (s *JobQueue) Failed() model.PartialJobList {
+	partialJobs, _ := s.backend.GetFailed()
+	return model.PartialJobList{PartialJobs: values(partialJobs)}
+}
+
+func values[T any](pointers []*T) []T {
+	result := make([]T, 0, len(pointers))
+	for _, pointer := range pointers {
+		if pointer != nil {
+			result = append(result, *pointer)
+		}
+	}
+	return result
+}
+
 func CreatePartial(cfg model.PartialJobConfiguration) model.PartialJob {
 	job := *jobs.NewPartialJob(
 		uuid.NewString(),

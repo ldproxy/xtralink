@@ -726,6 +726,27 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
   return (*C.char)(C.CBytes(result_json))
 	}
 
+//export JobQueue_List
+	func JobQueue_List(clen *C.size_t) *C.char {
+		result := model.MarshalJobList(jobQueue.List())
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
+//export JobQueue_Taken
+	func JobQueue_Taken(clen *C.size_t) *C.char {
+		result := model.MarshalPartialJobList(jobQueue.Taken())
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
+//export JobQueue_Failed
+	func JobQueue_Failed(clen *C.size_t) *C.char {
+		result := model.MarshalPartialJobList(jobQueue.Failed())
+  *clen = C.size_t(len(result))
+  return (*C.char)(C.CBytes(result))
+	}
+
 //export JobQueue_Register
 	func JobQueue_Register(jobType *C.char, priority C.int, processor int64, cerr **C.char)  {
 		err := jobQueue.Register(C.GoString(jobType), int32(priority), &cbJobProcessor{id: processor})
