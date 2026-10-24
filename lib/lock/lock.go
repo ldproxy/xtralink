@@ -84,6 +84,9 @@ func (r *RedisLocker) Acquire(ctx context.Context, id string) (func(), bool, err
 
 	go func() {
 		defer close(done)
+		// Losing the lease extension only lets the lock expire early; a panic
+		// would end the host process.
+		defer func() { recover() }()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {

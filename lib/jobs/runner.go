@@ -141,6 +141,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer r.recoverPanic("housekeeping")
 			r.housekeep(ctx)
 		}()
 	}
@@ -188,6 +189,7 @@ func (r *Runner) Run(ctx context.Context) error {
 				defer wg.Done()
 				defer func() { <-sem }()
 				defer r.clearInFlight(partialJob.Id)
+				defer r.recoverPanic("partial job " + partialJob.Id)
 				r.process(ctx, partialJob, processor)
 			}(partialJob, processor)
 		}
@@ -282,6 +284,7 @@ func (r *Runner) scheduleOnHoldRetry(ctx context.Context, partialJob *model.Part
 	}
 	r.Logger.Debug().Str("partialJob", partialJob.Id).Dur("retryIn", r.OnHoldRetryInterval).Msg("partial job on hold, retry scheduled")
 	go func() {
+		defer r.recoverPanic("on-hold retry of partial job " + partialJob.Id)
 		select {
 		case <-time.After(r.OnHoldRetryInterval):
 			r.Logger.Debug().Str("partialJob", partialJob.Id).Msg("re-queueing on-hold partial job")
@@ -302,9 +305,7 @@ func (r *Runner) housekeep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.Logger.Trace().Msg("housekeeping sweep")
-			r.reapOrphans()
-			r.cleanupFinishedJobs()
+			r.sweep()
 		}
 	}
 }
@@ -419,6 +420,25 @@ func (r *Runner) isInFlight(partialJobID string) bool {
 	defer r.inFlightMu.Unlock()
 
 	return r.inFlight[partialJobID]
+}
+
+// A sweep recovers on its own, so that one failing sweep does not end
+// housekeeping for the lifetime of the Runner.
+func (r *Runner) sweep() {
+	defer r.recoverPanic("housekeeping sweep")
+
+	r.Logger.Trace().Msg("housekeeping sweep")
+	r.reapOrphans()
+	r.cleanupFinishedJobs()
+}
+
+// recoverPanic is deferred at the top of every goroutine the Runner starts.
+// The Runner lives inside the host process, which an unrecovered panic in any
+// goroutine would end.
+func (r *Runner) recoverPanic(where string) {
+	if rec := recover(); rec != nil {
+		r.reportError(fmt.Errorf("panic in %s: %v\n%s", where, rec, debug.Stack()))
+	}
 }
 
 func (r *Runner) reportError(err error) {

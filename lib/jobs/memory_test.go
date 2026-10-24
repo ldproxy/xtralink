@@ -1031,3 +1031,43 @@ func TestMemoryBackend_PercentIsStoredAndKeptUpToDate(t *testing.T) {
 	}
 	assertStoredPercentWithoutPartialJobs(t, b, standalone.Id)
 }
+
+type recordingListener struct{ jobs []model.Job }
+
+func (l *recordingListener) OnProgress(job model.Job) { l.jobs = append(l.jobs, job) }
+
+// The FFI listener queues the Job and marshals it later on another thread,
+// so a notified Job must not share progress details with the stored one.
+func TestMemoryBackend_ListenerGetsDetachedProgressDetails(t *testing.T) {
+	b := NewMemoryBackend()
+	jobType := uniqueType("listener-copy")
+
+	listener := &recordingListener{}
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	if err := b.PushJobListen(job, listener); err != nil {
+		t.Fatalf("PushJobListen: %v", err)
+	}
+	if err := b.SetProgressDetails(job.Id, map[string]any{"tiles": map[string]any{"current": 0.0}}); err != nil {
+		t.Fatalf("SetProgressDetails: %v", err)
+	}
+
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, job.Id)
+	partialJob.ProgressUpdates = []model.ProgressUpdate{{Path: "tiles.current", Operation: model.ProgressOperationADD}}
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	if err := b.UpdatePartialJob(partialJob.Id, 1); err != nil {
+		t.Fatalf("UpdatePartialJob: %v", err)
+	}
+	notified := listener.jobs[len(listener.jobs)-1]
+
+	if err := b.UpdatePartialJob(partialJob.Id, 1); err != nil {
+		t.Fatalf("UpdatePartialJob: %v", err)
+	}
+
+	got := notified.Progress.Details["tiles"].(map[string]any)["current"]
+	if got != float64(1) {
+		t.Errorf("notified job changed after a later update: current = %v, want 1", got)
+	}
+}

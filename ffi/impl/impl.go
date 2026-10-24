@@ -152,11 +152,17 @@ func (s *JobQueue) pushPartial(job *model.PartialJob, untake bool) model.Partial
 
 func (s *JobQueue) WaitFor(id string) model.Job {
 	job, _ := s.backend.GetJob(id)
+	if job == nil {
+		return model.Job{}
+	}
 
-	for job != nil && job.FinishedAt <= 0 {
-		//fmt.Printf("JOBS: waiting for job %s to finish, current status: %v\n", job2.Id, job2.Status())
+	for job.FinishedAt <= 0 {
 		time.Sleep(1000 * time.Millisecond)
-		job, _ = s.backend.GetJob(id)
+		next, _ := s.backend.GetJob(id)
+		if next == nil {
+			break
+		}
+		job = next
 	}
 
 	return *job
@@ -164,8 +170,11 @@ func (s *JobQueue) WaitFor(id string) model.Job {
 
 func (s *JobQueue) WaitForPartial(id string) model.PartialJob {
 	job2, _ := s.backend.GetPartialJob(id)
+	if job2 == nil {
+		return model.PartialJob{}
+	}
 
-	for job2 != nil && job2.FinishedAt <= 0 {
+	for job2.FinishedAt <= 0 {
 		//fmt.Printf("JOBS: waiting for partial job %s to finish, current status: %v\n", job2.Id, job2.Status)
 		time.Sleep(1000 * time.Millisecond)
 		job3, _ := s.backend.GetPartialJob(id)

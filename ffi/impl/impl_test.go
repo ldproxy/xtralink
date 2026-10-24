@@ -268,3 +268,16 @@ func TestJobQueue_ListsAreEmptyNotNil(t *testing.T) {
 		t.Error("expected empty lists, not nil, so they serialize as []")
 	}
 }
+
+// WaitFor runs on a goroutine the FFI starts, so dereferencing a missing Job
+// there would end the host process.
+func TestJobQueue_WaitForUnknownIdIsZero(t *testing.T) {
+	q := newTestJobQueue()
+
+	if job := q.WaitFor(uuid.NewString()); job.Id != "" {
+		t.Errorf("WaitFor unknown id = %+v, want zero Job", job)
+	}
+	if partialJob := q.WaitForPartial(uuid.NewString()); partialJob.Id != "" {
+		t.Errorf("WaitForPartial unknown id = %+v, want zero PartialJob", partialJob)
+	}
+}

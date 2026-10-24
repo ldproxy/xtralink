@@ -40,5 +40,5 @@ run = '''
 [tasks.test]
 interactive = true
 run = '''
-  go test -v --cover -skip TestPkgPush ./...
+  go test -race -v --cover -skip TestPkgPush ./...
 '''

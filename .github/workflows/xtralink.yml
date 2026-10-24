@@ -12,6 +12,8 @@ jobs:
         with:
           go-version: "1.26.5"
           cache-dependency-path: ./go.sum
+      - name: test
+        run: go test -race -skip TestPkgPush ./...
       - uses: bhowell2/github-substring-action@1.0.2
         id: short-sha
         with:

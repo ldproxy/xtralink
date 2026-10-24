@@ -103,7 +103,7 @@ func (b *MemoryBackend) pushJobLocked(job *model.Job, onProgress JobListener) er
 	b.jobs[job.Id] = cloneJob(job)
 	b.listeners[job.Id] = onProgress
 
-	onProgress.OnProgress(*job)
+	onProgress.OnProgress(*cloneJob(job))
 	logJobPushed(b.Logger, job)
 
 	if job.Setup != nil {
@@ -262,7 +262,7 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *model.PartialJob) err
 
 		listener := b.listeners[partialJob.PartOf]
 		if listener != nil {
-			listener.OnProgress(*job)
+			listener.OnProgress(*cloneJob(job))
 		}
 
 		return b.pushFollowUpsLocked(job)
@@ -313,7 +313,7 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 
 		listener := b.listeners[partialJob.PartOf]
 		if listener != nil {
-			listener.OnProgress(*job)
+			listener.OnProgress(*cloneJob(job))
 		}
 		return nil
 	}
@@ -340,7 +340,7 @@ func (b *MemoryBackend) onPartialJobPermanentlyFailedLocked(partialJob *model.Pa
 
 	listener := b.listeners[partialJob.PartOf]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	if job.Status == model.StatusDISMISSED {
@@ -380,7 +380,7 @@ func (b *MemoryBackend) finalizeIfDoneLocked(job *model.Job) error {
 
 	listener := b.listeners[job.Id]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	if job.Cleanup != nil {
@@ -410,7 +410,7 @@ func (b *MemoryBackend) forceFailLocked(job *model.Job, errors []string) error {
 
 	listener := b.listeners[job.Id]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	if job.Cleanup != nil {
@@ -457,7 +457,7 @@ func (b *MemoryBackend) StartJob(jobID string) error {
 
 	listener := b.listeners[jobID]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	return nil
@@ -475,7 +475,7 @@ func (b *MemoryBackend) SetProgressDetails(jobID string, details map[string]any)
 
 	listener := b.listeners[jobID]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	return nil
@@ -639,7 +639,7 @@ func (b *MemoryBackend) finalizeIfDismissedLocked(job *model.Job) error {
 
 	listener := b.listeners[job.Id]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	// Cleanup still runs - it is the release-resources step - but followUps
@@ -781,7 +781,7 @@ func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) 
 
 	listener := b.listeners[partialJob.PartOf]
 	if listener != nil {
-		listener.OnProgress(*job)
+		listener.OnProgress(*cloneJob(job))
 	}
 
 	return err

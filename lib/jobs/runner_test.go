@@ -605,3 +605,44 @@ func TestRunner_NonCancellableProcessorRunsToCompletion(t *testing.T) {
 		t.Errorf("expected the work it completed anyway to still count, current = %d", job.Progress.Current)
 	}
 }
+
+type panicOnDone struct{ *MemoryBackend }
+
+func (panicOnDone) Done(string) error { panic("done exploded") }
+
+// The Runner lives inside the host process, so a panic outside the processor,
+// here in the backend, must be reported rather than end the process.
+func TestRunner_RecoversPanicOutsideProcessor(t *testing.T) {
+	b := panicOnDone{NewMemoryBackend()}
+	jobType := uniqueType("panic")
+
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	var mu sync.Mutex
+	var reported []error
+	r := NewRunner(b, "test")
+	r.PollInterval = 20 * time.Millisecond
+	r.OnError = func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, err)
+	}
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+		return model.Success()
+	}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reported) > 0
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reported) == 0 || !strings.Contains(reported[0].Error(), "panic in partial job "+partialJob.Id) {
+		t.Errorf("expected the panic to be reported, got %v", reported)
+	}
+}

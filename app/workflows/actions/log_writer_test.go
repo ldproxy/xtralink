@@ -12,8 +12,10 @@ import (
 )
 
 // captureLogger returns a Debug-level logger writing JSON lines into buf.
+// SyncWriter because os/exec copies stdout and stderr on separate goroutines,
+// and a bare bytes.Buffer is not safe for concurrent writes.
 func captureLogger(buf *bytes.Buffer) zerolog.Logger {
-	return zerolog.New(buf).Level(zerolog.DebugLevel)
+	return zerolog.New(zerolog.SyncWriter(buf)).Level(zerolog.DebugLevel)
 }
 
 // loggedMessages extracts the "message" field of every captured log line.
