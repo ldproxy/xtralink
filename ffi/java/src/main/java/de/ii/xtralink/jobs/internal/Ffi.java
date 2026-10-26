@@ -73,6 +73,19 @@ final class Ffi {
   }
 
   /**
+   * Set {@code -Dgenffi.threads.xtralink=prefix} to name the threads this binding starts
+   * {@code prefix-upcall}, {@code prefix-answer-1} and so on, instead of {@code genffi-…}. Read
+   * whenever a thread is started, so setting it before the first call is enough.
+   *
+   * <p>Daemon threads: nothing the library waits on may keep the JVM alive.
+   */
+  static Thread thread$(Runnable r, String role) {
+    Thread t = new Thread(r, System.getProperty("genffi.threads." + LIB, "genffi") + "-" + role);
+    t.setDaemon(true);
+    return t;
+  }
+
+  /**
    * {@code invokeExact} is declared {@code throws Throwable}, and for a correctly
    * generated descriptor none of it can happen. Unwrapped rather than swallowed, so a
    * genuine {@code Error} still propagates as itself.
@@ -162,13 +175,12 @@ final class Ffi {
    *
    * <p>Daemon threads: an unawaited operation must never keep the JVM alive.
    */
+  private static final java.util.concurrent.atomic.AtomicInteger COLLECTORS =
+      new java.util.concurrent.atomic.AtomicInteger();
+
   private static final java.util.concurrent.ExecutorService ASYNC =
       java.util.concurrent.Executors.newCachedThreadPool(
-          r -> {
-            Thread t = new Thread(r, "genffi-collect");
-            t.setDaemon(true);
-            return t;
-          });
+          r -> thread$(r, "collect-" + COLLECTORS.incrementAndGet()));
 
   /**
    * Stands in for an id the drain thread reported before {@link #pending$} had recorded
@@ -232,8 +244,7 @@ final class Ffi {
    */
   private static synchronized void startAwaits$() {
     if (AWAITS == null) {
-      AWAITS = new Thread(Ffi::drain$, "genffi-await");
-      AWAITS.setDaemon(true);
+      AWAITS = thread$(Ffi::drain$, "await");
       AWAITS.start();
     }
   }
@@ -290,13 +301,12 @@ final class Ffi {
    * <p>Cached and unbounded, so no nesting depth defeats it. Daemon, so an unanswered callback
    * never holds the JVM open.
    */
+  private static final java.util.concurrent.atomic.AtomicInteger ANSWERERS =
+      new java.util.concurrent.atomic.AtomicInteger();
+
   private static final java.util.concurrent.ExecutorService ANSWERS =
       java.util.concurrent.Executors.newCachedThreadPool(
-          r -> {
-            Thread t = new Thread(r, "genffi-answer");
-            t.setDaemon(true);
-            return t;
-          });
+          r -> thread$(r, "answer-" + ANSWERERS.incrementAndGet()));
 
   private static void JobProcessor_Process$answer(
       long inv, Object listener$, de.ii.xtralink.jobs.PartialJob partialJob, de.ii.xtralink.jobs.Job job) {
@@ -378,8 +388,7 @@ final class Ffi {
     LISTENERS.put(id, implementation);
 
     if (UPCALLS == null) {
-      UPCALLS = new Thread(Ffi::pump$, "genffi-upcall");
-      UPCALLS.setDaemon(true);
+      UPCALLS = thread$(Ffi::pump$, "upcall");
       UPCALLS.start();
     }
 
