@@ -100,7 +100,8 @@ func (b *MemoryBackend) PushJobListen(job *model.Job, onProgress JobListener) er
 }
 
 func (b *MemoryBackend) pushJobLocked(job *model.Job, onProgress JobListener) error {
-	b.jobs[job.Id] = cloneJob(job)
+	stored := cloneJob(job)
+	b.jobs[job.Id] = stored
 	b.listeners[job.Id] = onProgress
 
 	onProgress.OnProgress(*cloneJob(job))
@@ -110,6 +111,23 @@ func (b *MemoryBackend) pushJobLocked(job *model.Job, onProgress JobListener) er
 		return b.pushPartialJobLocked(job.Setup, false)
 	}
 
+	return b.queuePartialsLocked(stored)
+}
+
+// queuePartialsLocked mirrors RedisBackend.queuePartials. job must be the
+// stored Job, since queueing grows its total and registers sequence slots.
+func (b *MemoryBackend) queuePartialsLocked(job *model.Job) error {
+	partialJobs := newPartialJobs(job)
+	if len(partialJobs) == 0 {
+		return nil
+	}
+
+	job.Init(len(partialJobs))
+	for _, partialJob := range partialJobs {
+		if err := b.pushPartialJobLocked(partialJob, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -254,7 +272,10 @@ func (b *MemoryBackend) onPartialJobDoneLocked(partialJob *model.PartialJob) err
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
 		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("setup finished")
 		b.syncEmbeddedPartialJobLocked(job, "setup", partialJob)
-		return nil
+		if job.Status == model.StatusDISMISSED {
+			return b.finalizeIfDismissedLocked(job)
+		}
+		return b.queuePartialsLocked(job)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("cleanup finished")

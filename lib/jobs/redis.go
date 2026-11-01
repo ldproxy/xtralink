@@ -234,6 +234,32 @@ func (b *RedisBackend) PushJobListen(job *model.Job, onProgress JobListener) err
 	if job.Setup != nil {
 		return b.PushPartialJob(job.Setup, false)
 	}
+	return b.queuePartials(job)
+}
+
+// queuePartials queues the PartialJobs job.Partials names, the Job's total
+// grown by their count up front (s. newPartialJobs).
+//
+// It runs exactly once per Job, from PushJob or from the one Done that
+// removed the setup PartialJob from the taken list, so the read-modify-write
+// in registerSequence has no concurrent writer to race. The commands are not
+// one transaction, though: a crash halfway leaves the Job with fewer parts
+// queued than its total counts, and it waits until its TTL - the same
+// exposure the separate pushes of a Job and its setup always had.
+func (b *RedisBackend) queuePartials(job *model.Job) error {
+	partialJobs := newPartialJobs(job)
+	if len(partialJobs) == 0 {
+		return nil
+	}
+
+	if err := b.InitJob(job.Id, len(partialJobs), nil); err != nil {
+		return err
+	}
+	for _, partialJob := range partialJobs {
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -411,8 +437,8 @@ func (b *RedisBackend) Done(partialJobID string) error {
 }
 
 // onPartialJobDone mirrors JobSet.done(job) + AbstractJobQueueBackend.
-// onJobFinished in Java: a finishing setup PartialJob just syncs its
-// embedded snapshot (it already pushed its PartialJobs itself); a finishing
+// onJobFinished in Java: a finishing setup PartialJob syncs its embedded
+// snapshot and queues the Job's Partials, which waited for it; a finishing
 // cleanup PartialJob syncs its snapshot and pushes followUps; any other
 // PartialJob finishing hands off to finalizeIfDone.
 //
@@ -430,7 +456,15 @@ func (b *RedisBackend) onPartialJobDone(ctx context.Context, partialJob *model.P
 
 	if job.Setup != nil && job.Setup.Id == partialJob.Id {
 		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("setup finished")
-		return b.syncEmbeddedPartialJob(ctx, job.Id, "setup", partialJob)
+		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "setup", partialJob); err != nil {
+			return err
+		}
+		// A Job cancelled while its setup ran has no parts left to wait
+		// for, so this is the last chance to wind it down.
+		if job.Status == model.StatusDISMISSED {
+			return b.finalizeIfDismissed(ctx, job)
+		}
+		return b.queuePartials(job)
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Msg("cleanup finished")

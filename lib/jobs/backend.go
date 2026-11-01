@@ -19,8 +19,11 @@ func (NoopJobListener) OnProgress(job model.Job) {}
 type Backend interface {
 	IsEnabled() bool
 
-	// PushJob stores a new Job and, if it declares a setup PartialJob,
-	// pushes that onto the queue.
+	// PushJob stores a new Job and queues what it can run first: its setup
+	// PartialJob if it declares one, otherwise one PartialJob per kind in
+	// its Partials. A Job with setup gets its Partials queued only once that
+	// setup finishes successfully (s. Done), since the setup step is what
+	// prepares them; a failed setup fails the Job without them.
 	PushJob(job *model.Job) error
 	PushJobListen(job *model.Job, onProgress JobListener) error
 	// PushPartialJob enqueues a PartialJob. If untake is true, the partial
@@ -33,8 +36,9 @@ type Backend interface {
 	// Done marks a taken PartialJob as finished successfully. If the
 	// PartialJob belongs to a Job, this also runs the setup/cleanup/
 	// followUps decision (mirrors JobSet.done(job) in Java): a finishing
-	// regular PartialJob may push the cleanup PartialJob once the Job is
-	// done, and a finishing cleanup PartialJob pushes the Job's followUps.
+	// setup PartialJob queues the Job's Partials, a finishing regular
+	// PartialJob may push the cleanup PartialJob once the Job is done, and
+	// a finishing cleanup PartialJob pushes the Job's followUps.
 	Done(partialJobID string) error
 	// Error marks a taken PartialJob as failed; if retry is true it is
 	// re-queued instead.
