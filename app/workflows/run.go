@@ -173,9 +173,10 @@ func validateSteps(appCtx *app.AppContext, steps []workflows.Step, registry *wor
 // No kind here - a partial's, a follow-up's, or the Job's own - is checked
 // against this configuration's job definitions. A definition binds a kind
 // to a workflow xtralink runs itself, but a Job may be composed partly of
-// parts another service processes, and follow-ups are pushed as plain Jobs
-// with no parts at all. Requiring a definition would make both impossible
-// to express (s. actions.resolvePartials).
+// parts another service processes, and a follow-up is pushed with exactly
+// the partials it lists, never one implied by its kind. Requiring a
+// definition would make both impossible to express
+// (s. actions.resolvePartials).
 func validateJobPush(params map[string]any) error {
 	if err := validateJobPushPartials(params); err != nil {
 		return err

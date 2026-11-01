@@ -15,7 +15,8 @@ import (
 //
 // Each parameter maps onto one field of model.JobConfiguration, so the
 // step reads the same way the pushed Job looks: kind, label, description,
-// priority, inputs, context, ttlSeconds, setup, cleanup, followUps.
+// priority, inputs, context, ttlSeconds, setup, cleanup, partials,
+// sequential, followUps.
 //
 // `partials:` names the JobDefinitions the Job's PartialJobs run, which is
 // what binds each of them to a workflow; job:push never declares new ones
@@ -46,8 +47,8 @@ func (a *JobPushAction) Run(ctx *workflows.StepContext) (workflows.StepResult, e
 	// none does the Job waits until its TTL. It is also where a mistyped
 	// kind shows up.
 	ctx.Logger.Debug().Str("job", job.Id).Str("kind", job.Kind).
-		Strs("partials", req.Partials).Strs("external", a.externalKinds(req.Partials)).
-		Bool("sequential", req.Sequential).Msg("pushed job")
+		Strs("partials", job.Partials).Strs("external", a.externalKinds(job.Partials)).
+		Bool("sequential", job.Sequence != nil).Msg("pushed job")
 
 	return workflows.Success(), nil
 }
@@ -69,21 +70,7 @@ func (a *JobPushAction) buildRequest(params map[string]any) (*jobs.PushRequest, 
 	if err != nil {
 		return nil, err
 	}
-
-	partials, err := resolvePartials(params)
-	if err != nil {
-		return nil, err
-	}
-	sequential, err := boolParam(params, "sequential")
-	if err != nil {
-		return nil, err
-	}
-
-	return &jobs.PushRequest{
-		JobConfiguration: *cfg,
-		Partials:         partials,
-		Sequential:       sequential,
-	}, nil
+	return &jobs.PushRequest{JobConfiguration: *cfg}, nil
 }
 
 // jobConfiguration reads the parameters that are the Job itself, in the
@@ -118,6 +105,14 @@ func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
 	if err != nil {
 		return nil, err
 	}
+	partials, err := resolvePartials(params)
+	if err != nil {
+		return nil, err
+	}
+	sequential, err := boolParam(params, "sequential")
+	if err != nil {
+		return nil, err
+	}
 	followUps, err := resolveFollowUps(params)
 	if err != nil {
 		return nil, err
@@ -133,6 +128,8 @@ func jobConfiguration(params map[string]any) (*model.JobConfiguration, error) {
 		TtlSeconds:  ttlSeconds,
 		Setup:       setup,
 		Cleanup:     cleanup,
+		Partials:    partials,
+		Sequential:  sequential,
 		FollowUps:   followUps,
 	}, nil
 }
@@ -177,8 +174,8 @@ func resolvePartials(params map[string]any) ([]string, error) {
 // declare follow-ups of its own.
 //
 // A follow-up's kind is not resolved against the JobDefinitions: the
-// backend pushes follow-ups as plain Jobs, so any kind is legitimate there,
-// the same freedom a direct `job push <kind>` has.
+// backend pushes a follow-up with exactly the partials it lists, so a
+// follow-up without any stays a bare Job whatever its kind.
 func resolveFollowUps(params map[string]any) ([]model.JobConfiguration, error) {
 	raw, ok := params["followUps"]
 	if !ok {

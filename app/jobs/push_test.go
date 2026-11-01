@@ -184,11 +184,9 @@ func TestPush_SequentialAssignsSequenceSlots(t *testing.T) {
 
 	kinds := []string{"step-a", "step-b"}
 
-	job, err := Push(appCtx, PushRequest{
-		JobConfiguration: model.JobConfiguration{Kind: "pipeline"},
-		Partials:         kinds,
-		Sequential:       true,
-	})
+	job, err := Push(appCtx, PushRequest{JobConfiguration: model.JobConfiguration{
+		Kind: "pipeline", Partials: kinds, Sequential: true,
+	}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
