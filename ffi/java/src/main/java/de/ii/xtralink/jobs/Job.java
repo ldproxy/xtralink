@@ -20,6 +20,7 @@ public record Job(
     java.util.Map<String, Object> outputs,
     java.util.Optional<PartialJob> setup,
     java.util.Optional<PartialJob> cleanup,
+    java.util.List<String> partials,
     java.util.List<Job> followUps,
     java.util.Optional<JobSequence> sequence,
     java.util.Optional<Integer> ttlSeconds
@@ -43,6 +44,7 @@ public Job(
   java.util.Map<String, Object> outputs,
   java.util.Optional<PartialJob> setup,
   java.util.Optional<PartialJob> cleanup,
+  java.util.List<String> partials,
   java.util.List<Job> followUps,
   java.util.Optional<JobSequence> sequence,
   java.util.Optional<Integer> ttlSeconds
@@ -64,6 +66,7 @@ public Job(
   this.outputs = outputs;
   this.setup = setup;
   this.cleanup = cleanup;
+  this.partials = partials;
   this.followUps = followUps;
   this.sequence = sequence;
   this.ttlSeconds = ttlSeconds;

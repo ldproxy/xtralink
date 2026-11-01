@@ -10,6 +10,7 @@ type Job struct {
   Outputs map[string]any `json:"outputs"`
   Setup *PartialJob `json:"setup"`
   Cleanup *PartialJob `json:"cleanup"`
+  Partials []string `json:"partials"`
   FollowUps []Job `json:"followUps"`
   Sequence *JobSequence `json:"sequence"`
   TtlSeconds *int `json:"ttlSeconds"`
@@ -33,6 +34,7 @@ func NewJob(
   outputs map[string]any,
   setup *PartialJob,
   cleanup *PartialJob,
+  partials []string,
   followUps []Job,
   sequence *JobSequence,
   ttlSeconds *int,
@@ -58,6 +60,7 @@ func NewJob(
     Outputs: outputs,
     Setup: setup,
     Cleanup: cleanup,
+    Partials: partials,
     FollowUps: followUps,
     Sequence: sequence,
     TtlSeconds: ttlSeconds,

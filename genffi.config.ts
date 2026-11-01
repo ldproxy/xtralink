@@ -140,6 +140,7 @@ export namespace GenModel {
       setup: PartialJob;
       /** @optional */
       cleanup: PartialJob;
+      partials: string[];
       followUps: Job[];
       /** @optional */
       sequence: JobSequence;
@@ -161,6 +162,8 @@ export namespace GenModel {
       progress: JobProgress;
       setup: boolean;
       cleanup: boolean;
+      partials: string[];
+      sequential: boolean;
       followUps: JobConfiguration[];
       /**
        * @TJS-type integer
