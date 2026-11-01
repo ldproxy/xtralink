@@ -9,7 +9,7 @@ import "fmt"
 //
 // A Job's actual pipeline shape (which PartialJobs it has, in what order
 // or parallelism) is decided by the Job itself when it is pushed
-// (s. app/jobs.PushRequest.Sequential and model.PartialJob.Sequence),
+// (s. model.JobConfiguration.Sequential and model.PartialJob.Sequence),
 // either as a single-PartialJob Job (`job push <kind>`, the Kind used
 // directly for both the Job and its one PartialJob) or as an ad-hoc
 // multi-part Job composed from several JobDefinitions (the job:push

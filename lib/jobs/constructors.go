@@ -72,6 +72,10 @@ func isFinalizeKind(kind string) bool { return strings.HasSuffix(kind, finalizeS
 // including its setup and cleanup PartialJobs and, recursively, its
 // follow-up Jobs. Every id is assigned here.
 //
+// Partials stay kinds rather than becoming PartialJobs here: the backend
+// queues them only once the Job is ready for them, which for a Job with a
+// setup step is when that step succeeds (s. Backend.PushJob).
+//
 // Setup and Cleanup are booleans on the way in and full PartialJobs on the
 // way out, and both halves of that are deliberate: a caller has nothing to
 // say about them beyond whether they run, while the Job keeps the whole
@@ -84,6 +88,11 @@ func NewJobFromConfiguration(cfg model.JobConfiguration) model.Job {
 	job.Context = cfg.Context
 	job.Progress = cfg.Progress
 	job.TtlSeconds = cfg.TtlSeconds
+	job.Partials = cfg.Partials
+
+	if cfg.Sequential {
+		job.Sequence = &model.JobSequence{Current: 0, Remaining: 0}
+	}
 
 	if cfg.Setup {
 		job.Setup = NewPartialJob(uuid.NewString(), SetupKind(cfg.Kind), cfg.Priority, job.Id)
@@ -100,4 +109,21 @@ func NewJobFromConfiguration(cfg model.JobConfiguration) model.Job {
 	}
 
 	return job
+}
+
+// newPartialJobs builds one PartialJob per kind the Job lists in Partials.
+//
+// Each one counts as exactly one unit of the Job's total - it either fully
+// completes or it doesn't (s. WorkflowJobProcessor, which reports the
+// matching +1 on success) - so whoever queues them grows that total by
+// len(result) before queueing the first. Growing it one PartialJob at a
+// time instead would let an early one finish while current == total and
+// finalize a Job whose remaining parts are not even queued yet.
+func newPartialJobs(job *model.Job) []*model.PartialJob {
+	partialJobs := make([]*model.PartialJob, len(job.Partials))
+	for i, kind := range job.Partials {
+		partialJobs[i] = NewPartialJob(uuid.NewString(), kind, job.Priority, job.Id)
+		partialJobs[i].Progress.Total = 1
+	}
+	return partialJobs
 }

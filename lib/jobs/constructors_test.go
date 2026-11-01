@@ -84,3 +84,22 @@ func TestJobResultConstructors(t *testing.T) {
 		t.Error("Error() should not set Retry")
 	}
 }
+
+func TestNewJobFromConfiguration_CarriesPartialsAndSequential(t *testing.T) {
+	job := NewJobFromConfiguration(model.JobConfiguration{
+		Kind:       "pipeline",
+		Partials:   []string{"a", "b"},
+		Sequential: true,
+		FollowUps:  []model.JobConfiguration{{Kind: "next", Partials: []string{"c"}}},
+	})
+
+	if len(job.Partials) != 2 || job.Partials[0] != "a" || job.Partials[1] != "b" {
+		t.Errorf("Partials = %v, want [a b]", job.Partials)
+	}
+	if job.Sequence == nil || job.Sequence.Current != 0 || job.Sequence.Remaining != 0 {
+		t.Errorf("Sequence = %+v, want an empty sequence", job.Sequence)
+	}
+	if followUp := job.FollowUps[0]; len(followUp.Partials) != 1 || followUp.Sequence != nil {
+		t.Errorf("follow-up: Partials=%v Sequence=%+v, want [c] and no sequence", followUp.Partials, followUp.Sequence)
+	}
+}

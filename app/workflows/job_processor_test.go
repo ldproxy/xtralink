@@ -104,11 +104,12 @@ jobs:
 	if err != nil {
 		t.Fatalf("GetJobDefinition(nba-transaction-step): %v", err)
 	}
-	job, err := appjobs.Push(appCtx, appjobs.PushRequest{
-		JobConfiguration: model.JobConfiguration{Kind: "nba-apply", Priority: 1000},
-		Partials:         []string{def1.Kind, def2.Kind},
-		Sequential:       true,
-	})
+	job, err := appjobs.Push(appCtx, appjobs.PushRequest{JobConfiguration: model.JobConfiguration{
+		Kind:       "nba-apply",
+		Priority:   1000,
+		Partials:   []string{def1.Kind, def2.Kind},
+		Sequential: true,
+	}})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
