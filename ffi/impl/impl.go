@@ -89,7 +89,20 @@ func (s *JobQueue) Register(jobType string, priority int32, processor api.JobPro
 		}
 	}()
 
-	s.runner.Register(&jobs.JobProcessor{Kind: jobType, Priority: int(priority), Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+	s.runner.Register(&jobs.JobProcessor{Kind: jobType, Priority: int(priority), Process: bridge(processor)})
+
+	return nil
+}
+
+// bridge adapts a processor of the host to the Runner. A PartialJob can be
+// taken after its Job is gone, e.g. a PartialJob of a sequence that never
+// became ready and whose failed Job expired; it fails instead of handing the
+// host a Job that does not exist (s. the same guard in WorkflowJobProcessor).
+func bridge(processor api.JobProcessor) func(*model.PartialJob, *model.Job, jobs.Backend) model.JobResult {
+	return func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+		if job == nil {
+			return model.Error(fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf))
+		}
 		result, err := processor.Process(*partialJob, *job)
 		if err != nil {
 			//fmt.Printf("JOBS: Processor for %s returned error: %v\n%s", partialJob.Kind, err, debug.Stack())
@@ -97,9 +110,7 @@ func (s *JobQueue) Register(jobType string, priority int32, processor api.JobPro
 		}
 		//fmt.Printf("JOBS: Processor for %s returned result: %v\n", partialJob.Kind, result)
 		return result
-	}})
-
-	return nil
+	}
 }
 
 func (s *JobQueue) Push(cfg model.JobConfiguration, onProgress api.JobListener) model.Job {

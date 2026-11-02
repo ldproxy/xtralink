@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -279,5 +280,47 @@ func TestJobQueue_WaitForUnknownIdIsZero(t *testing.T) {
 	}
 	if partialJob := q.WaitForPartial(uuid.NewString()); partialJob.Id != "" {
 		t.Errorf("WaitForPartial unknown id = %+v, want zero PartialJob", partialJob)
+	}
+}
+
+// recordingProcessor stands in for the processor of the host.
+type recordingProcessor struct {
+	calls int
+}
+
+func (p *recordingProcessor) Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error) {
+	p.calls++
+	return model.Success(), nil
+}
+
+// A PartialJob can be taken after its Job is gone, e.g. a PartialJob of a
+// sequence that never became ready and whose failed Job expired. The bridge
+// fails it instead of panicking on the missing Job.
+func TestBridge_PartialJobWithoutJobFails(t *testing.T) {
+	processor := &recordingProcessor{}
+	partialJob := jobs.NewPartialJob(uuid.NewString(), testPartialJobKind, 1000, "gone")
+
+	result := bridge(processor)(partialJob, nil, nil)
+
+	if result.Status != model.ResultFAILURE {
+		t.Fatalf("expected a failure, got %+v", result)
+	}
+	if processor.calls != 0 {
+		t.Fatalf("expected the processor not to be called, got %d calls", processor.calls)
+	}
+	if len(result.Messages) != 1 || result.Messages[0] != fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, "gone") {
+		t.Fatalf("unexpected messages %q", result.Messages)
+	}
+}
+
+func TestBridge_PartialJobWithJobIsProcessed(t *testing.T) {
+	processor := &recordingProcessor{}
+	job := jobs.NewJob(uuid.NewString(), testJobKind, 1000, "", nil)
+	partialJob := jobs.NewPartialJob(uuid.NewString(), testPartialJobKind, 1000, job.Id)
+
+	result := bridge(processor)(partialJob, job, nil)
+
+	if result.Status != model.ResultSUCCESS || processor.calls != 1 {
+		t.Fatalf("expected the processor to succeed once, got %+v after %d calls", result, processor.calls)
 	}
 }
