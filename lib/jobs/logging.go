@@ -68,3 +68,10 @@ func logPartialJobFailed(logger zerolog.Logger, partialJob *model.PartialJob, me
 	logger.Warn().Str("partialJob", partialJob.Id).Str("job", partialJob.PartOf).Str("error", message).
 		Msg("partial job permanently failed")
 }
+
+// logStaleUpdate reports progress for a PartialJob that is no longer taken:
+// its executor was presumed dead and the PartialJob reclaimed, or it already
+// finished. Counting it would add the same work twice.
+func logStaleUpdate(logger zerolog.Logger, partialJobID string) {
+	logger.Debug().Str("partialJob", partialJobID).Msg("progress for partial job that is no longer taken ignored")
+}

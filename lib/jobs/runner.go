@@ -23,12 +23,9 @@ type JobProcessor struct {
 	// OrphanTimeout reclaims this processor's PartialJobs when they have
 	// been taken but not updated for that long, which means their executor
 	// died mid-run. Zero means DefaultOrphanTimeout, negative never
-	// reclaims.
-	//
-	// PartialJob.UpdatedAt is only a liveness signal for a processor that
-	// reports progress regularly: one that legitimately works longer than
-	// this without an update is reclaimed by another Runner while still
-	// running, and should set a longer timeout or opt out.
+	// reclaims. The Runner running a PartialJob refreshes UpdatedAt every
+	// HeartbeatInterval, so the timeout has to be well above that, but a
+	// processor need not report progress to stay alive.
 	OrphanTimeout time.Duration
 }
 
@@ -78,6 +75,11 @@ type Runner struct {
 	// (Java schedules the same pair every minute). Zero or less disables
 	// both.
 	HousekeepingInterval time.Duration
+	// HeartbeatInterval is how often the Runner refreshes UpdatedAt of the
+	// PartialJobs it is running, which tells the orphan sweeps of other
+	// Runners that their executor is alive. It has to stay well below every
+	// OrphanTimeout. Zero or less disables it.
+	HeartbeatInterval time.Duration
 	// JobRetention is how long a finished Job is kept before being removed
 	// (Java: one hour). Zero removes it at the first sweep after it
 	// finishes; a negative value keeps finished Jobs indefinitely.
@@ -123,6 +125,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		PollInterval:         5 * time.Second,
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
+		HeartbeatInterval:    15 * time.Second,
 		JobRetention:         time.Hour,
 		ShutdownTimeout:      8 * time.Second,
 		Logger:               zerolog.Nop(),
@@ -140,6 +143,7 @@ func NewRunner2() *Runner {
 		PollInterval:         5 * time.Second,
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
+		HeartbeatInterval:    15 * time.Second,
 		JobRetention:         time.Hour,
 		ShutdownTimeout:      8 * time.Second,
 		Logger:               zerolog.Nop(),
@@ -177,6 +181,15 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	if err := r.Backend.Listen(ctx, Notifications{OnWork: r.poke, OnCancel: r.notifyCancel}); err != nil {
 		r.reportError(err)
+	}
+
+	if r.HeartbeatInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer r.recoverPanic("heartbeat")
+			r.heartbeat(ctx)
+		}()
 	}
 
 	if r.HousekeepingInterval > 0 {
@@ -398,9 +411,28 @@ func (r *Runner) housekeep(ctx context.Context) {
 	}
 }
 
-// reapOrphans re-queues PartialJobs that were taken but have not reported
-// progress within their processor's OrphanTimeout - their executor died
-// mid-run, and without this they stay taken forever.
+func (r *Runner) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(r.HeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if ids := r.inFlightIds(); len(ids) > 0 {
+				r.reportError(r.Backend.Heartbeat(ids))
+			}
+		}
+	}
+}
+
+// reapOrphans re-queues PartialJobs that were taken but not updated within
+// their processor's OrphanTimeout - their executor died mid-run, since a
+// live one keeps them fresh with its heartbeat, and without this they stay
+// taken forever. The re-queue itself only succeeds while the PartialJob is
+// still taken, so a stale snapshot from GetTaken can neither duplicate nor
+// resurrect one that finished or was reclaimed meanwhile.
 func (r *Runner) reapOrphans() {
 	taken, err := r.Backend.GetTaken()
 	if err != nil {

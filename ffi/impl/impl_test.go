@@ -380,3 +380,35 @@ func TestJobQueue_StopWaitsForInFlightWork(t *testing.T) {
 		t.Error("Stop returned while the partial job was still running")
 	}
 }
+
+type recordingProcessor struct{ calls *atomic.Int32 }
+
+func (p recordingProcessor) Process(model.PartialJob, model.Job) (model.JobResult, error) {
+	p.calls.Add(1)
+	return model.Success(), nil
+}
+
+func TestJobQueue_StandalonePartialJobReachesProcessor(t *testing.T) {
+	q := NewJobQueue()
+	var calls atomic.Int32
+	if err := q.Register("standalone", 1000, recordingProcessor{&calls}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := q.Start(model.QueueConfiguration{Concurrency: 1, Executor: "test", Queue: model.QueueLOCAL}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer q.Stop()
+
+	if err := q.backend.PushPartialJob(jobs.NewPartialJob(uuid.NewString(), "standalone", 1000, ""), false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls.Load() == 0 {
+		failed, _ := q.backend.GetFailed()
+		t.Errorf("processor never called, failed: %v", failed)
+	}
+}

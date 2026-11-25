@@ -324,6 +324,9 @@ func TestRedisBackend_UpdatePartialJobFansOutViaProgressUpdates(t *testing.T) {
 	if err := b.PushPartialJob(partialJob, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
+	if _, err := b.Take(partialJob.Kind, "test"); err != nil {
+		t.Fatalf("Take: %v", err)
+	}
 
 	if err := b.UpdatePartialJob(partialJob.Id, 3); err != nil {
 		t.Fatalf("UpdatePartialJob: %v", err)

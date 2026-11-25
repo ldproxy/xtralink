@@ -102,6 +102,11 @@ func (s *JobQueue) Register(jobType string, priority int32, processor api.JobPro
 	}()
 
 	s.runner.Register(&jobs.JobProcessor{Kind: jobType, Priority: int(priority), Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+		// A standalone PartialJob has no Job, and the FFI passes values, so
+		// the processor gets an empty one rather than a nil it cannot see.
+		if job == nil {
+			job = &model.Job{}
+		}
 		result, err := processor.Process(*partialJob, *job)
 		if err != nil {
 			//fmt.Printf("JOBS: Processor for %s returned error: %v\n%s", partialJob.Kind, err, debug.Stack())

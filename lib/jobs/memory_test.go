@@ -311,6 +311,9 @@ func TestMemoryBackend_UpdatePartialJobFansOutViaUpdateTargets(t *testing.T) {
 	if err := b.PushPartialJob(partialJob, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
 	}
+	if _, err := b.Take(partialJob.Kind, "test"); err != nil {
+		t.Fatalf("Take: %v", err)
+	}
 
 	if err := b.UpdatePartialJob(partialJob.Id, 3); err != nil {
 		t.Fatalf("UpdatePartialJob: %v", err)
@@ -733,6 +736,9 @@ func TestMemoryBackend_ConcurrentUpdateDoesNotLoseProgress(t *testing.T) {
 		if err := b.PushPartialJob(pj, false); err != nil {
 			t.Fatalf("PushPartialJob: %v", err)
 		}
+		if _, err := b.Take(pj.Kind, "test"); err != nil {
+			t.Fatalf("Take: %v", err)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -1055,6 +1061,9 @@ func TestMemoryBackend_ListenerGetsDetachedProgressDetails(t *testing.T) {
 	partialJob.ProgressUpdates = []model.ProgressUpdate{{Path: "tiles.current", Operation: model.ProgressOperationADD}}
 	if err := b.PushPartialJob(partialJob, false); err != nil {
 		t.Fatalf("PushPartialJob: %v", err)
+	}
+	if _, err := b.Take(partialJob.Kind, "test"); err != nil {
+		t.Fatalf("Take: %v", err)
 	}
 
 	if err := b.UpdatePartialJob(partialJob.Id, 1); err != nil {

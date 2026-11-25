@@ -39,10 +39,11 @@ type JobDefinition struct {
 	// against the finished Workflow run's own vars tree.
 	Outputs map[string]any `yaml:"outputs,omitempty"`
 	// OrphanTimeout is how long a taken PartialJob of this kind may go
-	// without a progress update before another Runner reclaims it, as a
-	// duration string ("10m"). Unset means lib/jobs.DefaultOrphanTimeout,
-	// a negative duration ("-1s") never reclaims. A workflow step that
-	// runs for minutes without reporting progress needs one of the two.
+	// without an update before another Runner reclaims it, as a duration
+	// string ("10m"). The Runner running it refreshes it every
+	// lib/jobs.Runner.HeartbeatInterval, so only a dead executor's work is
+	// reclaimed. Unset means lib/jobs.DefaultOrphanTimeout, a negative
+	// duration ("-1s") never reclaims.
 	OrphanTimeout time.Duration `yaml:"orphanTimeout,omitempty"`
 }
 

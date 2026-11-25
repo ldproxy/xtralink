@@ -278,14 +278,34 @@ func (b *RedisBackend) queuePartials(job *model.Job) error {
 	return nil
 }
 
+// PushPartialJob with untake re-queues a taken PartialJob, and only a taken
+// one: the caller's copy may be stale (an orphan sweep, an on-hold retry, a
+// host re-push), and by the time it arrives the PartialJob may have finished
+// or been re-queued by someone else already. Removing it from the taken list
+// first is the check, since LREM is atomic and only one caller can win it.
 func (b *RedisBackend) PushPartialJob(partialJob *model.PartialJob, untake bool) error {
 	ctx := context.Background()
+
+	if untake {
+		removed, err := b.client.LRem(ctx, b.keyTaken, 1, partialJob.Id).Result()
+		if err != nil {
+			return err
+		}
+		if removed == 0 {
+			b.Logger.Debug().Str("partialJob", partialJob.Id).Msg("partial job no longer taken, not re-queued")
+			return nil
+		}
+	}
+	return b.enqueue(ctx, partialJob, untake)
+}
+
+// enqueue stores partialJob and puts it into its queue. A requeue goes to
+// the front of the line and keeps the Sequence slot it registered at its
+// original push.
+func (b *RedisBackend) enqueue(ctx context.Context, partialJob *model.PartialJob, requeue bool) error {
 	queue := b.queueKey(partialJob.Kind, partialJob.Priority)
 
-	// Only a fresh push registers a Sequence slot - untake is a re-queue of
-	// a PartialJob already counted once at its original push, incrementing
-	// again would double-count it.
-	if !untake && partialJob.PartOf != "" {
+	if !requeue && partialJob.PartOf != "" {
 		if err := b.registerSequence(ctx, partialJob); err != nil {
 			return err
 		}
@@ -298,10 +318,7 @@ func (b *RedisBackend) PushPartialJob(partialJob *model.PartialJob, untake bool)
 		return err
 	}
 
-	if untake {
-		if err := b.client.LRem(ctx, b.keyTaken, 1, partialJob.Id).Err(); err != nil {
-			return err
-		}
+	if requeue {
 		if err := b.client.RPush(ctx, queue, partialJob.Id).Err(); err != nil {
 			return err
 		}
@@ -825,7 +842,7 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 
 	if retry && len(partialJob.Errors) <= maxRetries {
 		logPartialJobRetry(b.Logger, partialJob, message)
-		return b.PushPartialJob(partialJob, true)
+		return b.enqueue(ctx, partialJob, true)
 	}
 	logPartialJobFailed(b.Logger, partialJob, message)
 
@@ -1174,6 +1191,12 @@ func (b *RedisBackend) UpdatePartialJob(partialJobID string, currentDelta int) e
 	if partialJob == nil {
 		return fmt.Errorf("partial job not found: %s", partialJobID)
 	}
+	if taken, err := b.isTaken(ctx, partialJobID); err != nil || !taken {
+		if err == nil {
+			logStaleUpdate(b.Logger, partialJobID)
+		}
+		return err
+	}
 
 	// Unlike a Job, a taken PartialJob has exactly one writer (the executor
 	// that took it), so its percent can be derived from the copy read above
@@ -1323,4 +1346,25 @@ func (b *RedisBackend) publishJobChanged(ctx context.Context, jobID string) {
 	if jobID != "" {
 		b.publish(ctx, b.channelJob, jobID)
 	}
+}
+
+func (b *RedisBackend) isTaken(ctx context.Context, partialJobID string) (bool, error) {
+	_, err := b.client.LPos(ctx, b.keyTaken, partialJobID, redis.LPosArgs{}).Result()
+	if err == redis.Nil {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Heartbeat uses JSON.SET XX, so a PartialJob that finished and was deleted
+// meanwhile is skipped instead of being recreated as a stub.
+func (b *RedisBackend) Heartbeat(partialJobIDs []string) error {
+	ctx := context.Background()
+	now := nowMillis()
+	for _, id := range partialJobIDs {
+		if err := b.client.JSONSetMode(ctx, b.keyPartial+id, "$.updatedAt", now, "XX").Err(); err != nil && err != redis.Nil {
+			return err
+		}
+	}
+	return nil
 }

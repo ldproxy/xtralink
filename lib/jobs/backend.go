@@ -75,6 +75,11 @@ type Backend interface {
 	GetTaken() ([]*model.PartialJob, error)
 	GetFailed() ([]*model.PartialJob, error)
 
+	// Heartbeat refreshes UpdatedAt of the given PartialJobs, the ones a
+	// Runner is running right now, so orphan sweeps elsewhere can tell a
+	// live executor from a dead one. Ids that are gone are skipped.
+	Heartbeat(partialJobIDs []string) error
+
 	// StartJob sets Job.startedAt to now, if not already started (mirrors
 	// JobSet.start() in Java). Called by the Runner for the first
 	// non-setup PartialJob of a Job that gets taken.

@@ -140,14 +140,30 @@ func (b *MemoryBackend) PushPartialJob(partialJob *model.PartialJob, untake bool
 	return b.pushPartialJobLocked(partialJob, untake)
 }
 
+// pushPartialJobLocked with untake re-queues a taken PartialJob, and only a
+// taken one (s. RedisBackend.PushPartialJob).
 func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untake bool) error {
+	if untake {
+		if !b.taken[partialJob.Id] {
+			b.Logger.Debug().Str("partialJob", partialJob.Id).Msg("partial job no longer taken, not re-queued")
+			return nil
+		}
+		delete(b.taken, partialJob.Id)
+	}
+	return b.enqueueLocked(partialJob, untake)
+}
+
+// enqueueLocked stores partialJob and puts it into its queue. A requeue goes
+// to the front of the line and keeps the Sequence slot it registered at its
+// original push.
+func (b *MemoryBackend) enqueueLocked(partialJob *model.PartialJob, requeue bool) error {
 	stored := clonePartialJob(partialJob)
 	b.partial[stored.Id] = stored
 
-	// Only a fresh push registers a Sequence slot - untake is a re-queue of
-	// a PartialJob already counted once at its original push, incrementing
+	// Only a fresh push registers a Sequence slot - a requeue is of a
+	// PartialJob already counted once at its original push, incrementing
 	// again would double-count it.
-	if !untake && stored.PartOf != "" {
+	if !requeue && stored.PartOf != "" {
 		if job := b.jobs[stored.PartOf]; job != nil && job.Sequence != nil && !isSetupOrCleanup(job, stored.Id) {
 			next := job.Sequence.Remaining
 			stored.Sequence = &next
@@ -162,8 +178,7 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untak
 		b.queues[stored.Kind] = byPriority
 	}
 
-	if untake {
-		delete(b.taken, stored.Id)
+	if requeue {
 		byPriority[stored.Priority] = append(byPriority[stored.Priority], stored.Id)
 	} else {
 		byPriority[stored.Priority] = append([]string{stored.Id}, byPriority[stored.Priority]...)
@@ -557,7 +572,7 @@ func (b *MemoryBackend) Error(partialJobID, message string, retry bool) error {
 
 	if retry && len(partialJob.Errors) <= maxRetries {
 		logPartialJobRetry(b.Logger, partialJob, message)
-		return b.pushPartialJobLocked(partialJob, true)
+		return b.enqueueLocked(partialJob, true)
 	}
 
 	logPartialJobFailed(b.Logger, partialJob, message)
@@ -794,6 +809,10 @@ func (b *MemoryBackend) UpdatePartialJob(partialJobID string, currentDelta int) 
 	if partialJob == nil {
 		return fmt.Errorf("partial job not found: %s", partialJobID)
 	}
+	if !b.taken[partialJobID] {
+		logStaleUpdate(b.Logger, partialJobID)
+		return nil
+	}
 	partialJob.Update(currentDelta)
 
 	if partialJob.PartOf == "" {
@@ -952,4 +971,17 @@ func (b *MemoryBackend) notifyWorkLocked() {
 	for s := range b.subscribers {
 		s.notifyWork()
 	}
+}
+
+func (b *MemoryBackend) Heartbeat(partialJobIDs []string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := nowMillis()
+	for _, id := range partialJobIDs {
+		if partialJob := b.partial[id]; partialJob != nil && b.taken[id] {
+			partialJob.UpdatedAt = now
+		}
+	}
+	return nil
 }

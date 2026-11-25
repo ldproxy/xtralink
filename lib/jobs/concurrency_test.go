@@ -47,6 +47,9 @@ func TestConcurrentUpdateJobDoesNotLoseProgress(t *testing.T) {
 		if err := b.PushPartialJob(j, false); err != nil {
 			t.Fatalf("PushJob: %v", err)
 		}
+		if _, err := b.Take(j.Kind, "test"); err != nil {
+			t.Fatalf("Take: %v", err)
+		}
 	}
 
 	var wg sync.WaitGroup
