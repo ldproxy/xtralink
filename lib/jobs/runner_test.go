@@ -687,3 +687,17 @@ func TestRunner_DoesNotProcessWhenJobCannotBeLoaded(t *testing.T) {
 		t.Errorf("expected the partial job to fail with the load error, got %v", failed)
 	}
 }
+
+func TestJobProcessor_OrphanTimeoutDefaultsToJavasOneMinute(t *testing.T) {
+	for _, tc := range []struct {
+		set, want time.Duration
+	}{
+		{0, DefaultOrphanTimeout},
+		{5 * time.Minute, 5 * time.Minute},
+		{-1, -1},
+	} {
+		if got := (&JobProcessor{OrphanTimeout: tc.set}).orphanTimeout(); got != tc.want {
+			t.Errorf("OrphanTimeout %v resolved to %v, want %v", tc.set, got, tc.want)
+		}
+	}
+}

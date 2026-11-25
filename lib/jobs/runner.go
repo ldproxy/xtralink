@@ -19,17 +19,29 @@ type JobProcessor struct {
 	Kind     string
 	Priority int
 	Process  ProcessFunc
-	// OrphanTimeout opts this processor's PartialJobs into being reclaimed
-	// when they have been taken but not updated for that long, which means
-	// their executor died mid-run. Zero (the default) never reclaims.
+	// OrphanTimeout reclaims this processor's PartialJobs when they have
+	// been taken but not updated for that long, which means their executor
+	// died mid-run. Zero means DefaultOrphanTimeout, negative never
+	// reclaims.
 	//
-	// It is opt-in because PartialJob.UpdatedAt is only a liveness signal
-	// for a processor that reports progress regularly - a processor that
-	// legitimately works for minutes without an update would be reclaimed
-	// while still running. Java restricts its reaper to one hardcoded
-	// PartialJob type for exactly this reason; this is the generic form of
-	// that whitelist.
+	// PartialJob.UpdatedAt is only a liveness signal for a processor that
+	// reports progress regularly: one that legitimately works longer than
+	// this without an update is reclaimed by another Runner while still
+	// running, and should set a longer timeout or opt out.
 	OrphanTimeout time.Duration
+}
+
+// DefaultOrphanTimeout is Java's hardcoded one minute from
+// checkOrphanedJobs, applied to every processor instead of one whitelisted
+// PartialJob type, since processors registered through the FFI cannot set
+// their own.
+const DefaultOrphanTimeout = time.Minute
+
+func (p *JobProcessor) orphanTimeout() time.Duration {
+	if p.OrphanTimeout == 0 {
+		return DefaultOrphanTimeout
+	}
+	return p.OrphanTimeout
 }
 
 // Runner is a polling dispatch loop, analogous to JobRunner.java: for each
@@ -54,6 +66,8 @@ type Runner struct {
 	// elsewhere). This is a simplified stand-in for Java's event-driven
 	// "resource became available" callback, which needs a concrete
 	// resource to hook into that this generic Runner doesn't have.
+	// Zero or less (the default) disables the timer: the processor is
+	// expected to re-push the PartialJob itself, as Java's processors do.
 	OnHoldRetryInterval time.Duration
 	// HousekeepingInterval is how often the orphan and cleanup sweeps run
 	// (Java schedules the same pair every minute). Zero or less disables
@@ -88,7 +102,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		Executor:             executor,
 		Concurrency:          2,
 		PollInterval:         200 * time.Millisecond,
-		OnHoldRetryInterval:  -1, //2 * time.Second,
+		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
 		Logger:               zerolog.Nop(),
@@ -103,7 +117,7 @@ func NewRunner2() *Runner {
 		Executor:             "",
 		Concurrency:          2,
 		PollInterval:         200 * time.Millisecond,
-		OnHoldRetryInterval:  -1, //2 * time.Second,
+		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
 		Logger:               zerolog.Nop(),
@@ -117,7 +131,7 @@ func (r *Runner) Register(p *JobProcessor) {
 	defer r.mu.Unlock()
 
 	r.processors[p.Kind] = p
-	r.Logger.Debug().Str("kind", p.Kind).Int("priority", p.Priority).Dur("orphanTimeout", p.OrphanTimeout).Msg("processor registered")
+	r.Logger.Debug().Str("kind", p.Kind).Int("priority", p.Priority).Dur("orphanTimeout", p.orphanTimeout()).Msg("processor registered")
 }
 
 func (r *Runner) processor(partialJobType string) *JobProcessor {
@@ -330,13 +344,13 @@ func (r *Runner) reapOrphans() {
 	now := nowMillis()
 	for _, partialJob := range taken {
 		processor := r.processor(partialJob.Kind)
-		if processor == nil || processor.OrphanTimeout <= 0 {
+		if processor == nil || processor.orphanTimeout() < 0 {
 			continue
 		}
 		if r.isInFlight(partialJob.Id) {
 			continue
 		}
-		if partialJob.UpdatedAt <= 0 || now-partialJob.UpdatedAt <= processor.OrphanTimeout.Milliseconds() {
+		if partialJob.UpdatedAt <= 0 || now-partialJob.UpdatedAt <= processor.orphanTimeout().Milliseconds() {
 			continue
 		}
 

@@ -1,6 +1,9 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // JobDefinition is a Processor definition for one PartialJob kind, wrapping
 // a single Workflow run - a flat, reusable registry entry, not a
@@ -35,6 +38,12 @@ type JobDefinition struct {
 	// shared Job's Outputs, values are template expressions resolved
 	// against the finished Workflow run's own vars tree.
 	Outputs map[string]any `yaml:"outputs,omitempty"`
+	// OrphanTimeout is how long a taken PartialJob of this kind may go
+	// without a progress update before another Runner reclaims it, as a
+	// duration string ("10m"). Unset means lib/jobs.DefaultOrphanTimeout,
+	// a negative duration ("-1s") never reclaims. A workflow step that
+	// runs for minutes without reporting progress needs one of the two.
+	OrphanTimeout time.Duration `yaml:"orphanTimeout,omitempty"`
 }
 
 // GetJobDefinition finds the JobDefinition for kind - the PartialJob.Kind a

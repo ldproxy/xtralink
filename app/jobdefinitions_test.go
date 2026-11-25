@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 const minimalPackageAndWorkflows = `
 packages:
@@ -114,5 +117,29 @@ jobs:
 	}
 	if _, err := settings.GetJobDefinition("missing"); err == nil {
 		t.Fatal("expected an error for an unknown job definition id")
+	}
+}
+
+func TestLoadSettings_ParsesOrphanTimeout(t *testing.T) {
+	path := writeConfig(t, minimalPackageAndWorkflows+`
+jobs:
+  - kind: slow
+    workflow: nba-transform
+    orphanTimeout: 10m
+  - kind: never-reaped
+    workflow: nba-transform
+    orphanTimeout: -1s
+  - kind: default
+    workflow: nba-transaction
+`)
+
+	settings, err := LoadSettings(path)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	for i, want := range []time.Duration{10 * time.Minute, -time.Second, 0} {
+		if got := settings.JobDefinitions[i].OrphanTimeout; got != want {
+			t.Errorf("[%d].OrphanTimeout = %v, want %v", i, got, want)
+		}
 	}
 }

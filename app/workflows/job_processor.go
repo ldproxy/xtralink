@@ -24,7 +24,7 @@ func WorkflowJobProcessor(appCtx *app.AppContext, kind string) (*jobs.JobProcess
 	if err != nil {
 		return nil, err
 	}
-	return &jobs.JobProcessor{Kind: kind, Priority: 1000, Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
+	return &jobs.JobProcessor{Kind: kind, Priority: 1000, OrphanTimeout: def.OrphanTimeout, Process: func(partialJob *model.PartialJob, job *model.Job, backend jobs.Backend) model.JobResult {
 		if job == nil {
 			// Can legitimately happen if the Job was deleted/expired while an
 			// orphaned PartialJob for it still lingered in the queue (s. the
