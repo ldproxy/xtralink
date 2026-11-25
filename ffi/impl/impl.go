@@ -33,7 +33,9 @@ func NewJobQueue() *JobQueue {
 		fmt.Printf("xtralink - Runner error: %v\n", err)
 	}
 
-	return &JobQueue{runner: runner}
+	queue := &JobQueue{runner: runner}
+	runner.OnCancel = queue.notifyCancelListener
+	return queue
 }
 
 func (s *JobQueue) Start(cfg model.QueueConfiguration) (err error) {
@@ -212,18 +214,18 @@ func (s *JobQueue) Outputs(id string, outputs model.SetOutputs) {
 
 // Cancel dismisses a Job: queued PartialJobs are dropped, running ones are
 // left to finish, and the Job winds down once the last of them reports.
-// Cancel notifies the CancelListener, so processors running PartialJobs of
-// the Job can stop early. Only processors in this process are reached, which
-// covers the memory backend but not other replicas sharing a Redis backend.
+// The CancelListener of every started JobQueue sharing the backend is
+// notified asynchronously, this one included, so processors running
+// PartialJobs of the Job can stop early wherever they run.
 func (s *JobQueue) Cancel(id string) bool {
 	cancelled, err := s.backend.Cancel(id)
-	if err != nil || !cancelled {
-		return false
-	}
+	return err == nil && cancelled
+}
+
+func (s *JobQueue) notifyCancelListener(jobID string) {
 	if listener := s.cancelListener.Load(); listener != nil {
-		(*listener).OnCancel(id)
+		(*listener).OnCancel(jobID)
 	}
-	return true
 }
 
 func (s *JobQueue) OnCancel(listener api.CancelListener) {

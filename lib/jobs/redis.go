@@ -45,6 +45,10 @@ type RedisBackend struct {
 	// under that same prefix breaks it ("wrong Redis type"). Own prefix.
 	keyFinalized string
 
+	// Pub/sub channels behind Listen, scoped by cluster like the keys.
+	channelWork   string
+	channelCancel string
+
 	// Logger receives debug/trace output about setup, cleanup, sequence
 	// and followUps decisions. Defaults to a no-op logger.
 	Logger zerolog.Logger
@@ -82,6 +86,8 @@ func NewRedisBackend(nodes []string, cluster string) *RedisBackend {
 		keyTaken:      prefix + "taken",
 		keyFailed:     prefix + "failed",
 		keyFinalized:  prefix + "finalized:",
+		channelWork:   prefix + "events:work",
+		channelCancel: prefix + "events:cancel",
 		Logger:        zerolog.Nop(),
 	}
 }
@@ -287,9 +293,15 @@ func (b *RedisBackend) PushPartialJob(partialJob *model.PartialJob, untake bool)
 		if err := b.client.LRem(ctx, b.keyTaken, 1, partialJob.Id).Err(); err != nil {
 			return err
 		}
-		return b.client.RPush(ctx, queue, partialJob.Id).Err()
+		if err := b.client.RPush(ctx, queue, partialJob.Id).Err(); err != nil {
+			return err
+		}
+	} else if err := b.client.LPush(ctx, queue, partialJob.Id).Err(); err != nil {
+		return err
 	}
-	return b.client.LPush(ctx, queue, partialJob.Id).Err()
+
+	b.publish(ctx, b.channelWork, partialJob.Kind)
+	return nil
 }
 
 // Take scans partialJobType's queue, highest priority first, for the first
@@ -831,6 +843,7 @@ func (b *RedisBackend) Cancel(jobID string) (bool, error) {
 	if err := b.setStatus(ctx, jobID, model.StatusDISMISSED); err != nil {
 		return false, err
 	}
+	b.publish(ctx, b.channelCancel, jobID)
 	if err := b.jsonSet(ctx, b.keyJob+jobID, "$.updatedAt", nowMillis()); err != nil {
 		return true, err
 	}
@@ -1232,5 +1245,56 @@ func (b *RedisBackend) advanceSequence(ctx context.Context, jobID string) error 
 	}
 	logSequenceAdvanced(b.Logger, job)
 
-	return b.jsonSet(ctx, b.keyJob+jobID, "$.sequence.current", job.Sequence.Current)
+	if err := b.jsonSet(ctx, b.keyJob+jobID, "$.sequence.current", job.Sequence.Current); err != nil {
+		return err
+	}
+	b.publish(ctx, b.channelWork, jobID)
+	return nil
+}
+
+// Listen subscribes to this cluster's event channels. go-redis resubscribes
+// on its own after a dropped connection, but whatever is published while it
+// is down is lost, which the Runner's poll fallback covers.
+func (b *RedisBackend) Listen(ctx context.Context, n Notifications) error {
+	pubsub := b.client.Subscribe(ctx, b.channelWork, b.channelCancel)
+	_, err := pubsub.Receive(ctx)
+	messages := pubsub.Channel()
+
+	go func() {
+		defer pubsub.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-messages:
+				if !ok {
+					return
+				}
+				switch msg.Channel {
+				case b.channelWork:
+					if n.OnWork != nil {
+						n.OnWork()
+					}
+				case b.channelCancel:
+					if n.OnCancel != nil {
+						n.OnCancel(msg.Payload)
+					}
+				}
+			}
+		}
+	}()
+
+	if err != nil {
+		return fmt.Errorf("subscribing to job events: %w", err)
+	}
+	return nil
+}
+
+// publish notifies listeners on a best-effort basis: the state change it
+// announces is already stored, so a failure here must not fail the caller.
+// Listeners that miss it catch up on their next poll.
+func (b *RedisBackend) publish(ctx context.Context, channel, payload string) {
+	if err := b.client.Publish(ctx, channel, payload).Err(); err != nil {
+		b.Logger.Warn().Err(err).Str("channel", channel).Msg("publishing job event failed")
+	}
 }

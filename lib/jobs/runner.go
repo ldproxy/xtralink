@@ -45,21 +45,25 @@ func (p *JobProcessor) orphanTimeout() time.Duration {
 	return p.OrphanTimeout
 }
 
-// Runner is a polling dispatch loop, analogous to JobRunner.java: for each
+// Runner is a dispatch loop, analogous to JobRunner.java: for each
 // registered JobProcessor's PartialJob type (highest priority first) it
 // takes open PartialJobs, executes them concurrently up to Concurrency, and
-// applies the returned JobResult (Done/Error) to the Backend. Unlike Java it
-// polls instead of reacting to a push notification (no pub/sub in this
-// iteration).
+// applies the returned JobResult (Done/Error) to the Backend. Like Java's
+// onPush it rescans whenever the Backend reports new work or one of its own
+// PartialJobs finishes; PollInterval is only the fallback for missed
+// events.
 //
 // Alongside dispatch it runs the housekeeping sweeps from Java's
 // checkOrphanedJobsAndCleanup: reclaiming orphaned PartialJobs and removing
 // long-finished Jobs. See docs/jobs/runner-vs-jobrunner.md for the full
 // list of deltas against the Java original.
 type Runner struct {
-	Backend      Backend
-	Executor     string
-	Concurrency  int
+	Backend     Backend
+	Executor    string
+	Concurrency int
+	// PollInterval is how long the Runner sleeps when it found nothing to
+	// take and receives no event. Events normally wake it first, so this
+	// only bounds the delay after a missed one.
 	PollInterval time.Duration
 	// OnHoldRetryInterval is how long an OnHold PartialJob waits before
 	// being re-queued (PartialJob.Retry semantics reused for this, since
@@ -87,6 +91,10 @@ type Runner struct {
 	// OnError receives errors from background job processing that would
 	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
 	OnError func(error)
+	// OnCancel receives the id of every Job dismissed by Backend.Cancel,
+	// in this or (with RedisBackend) any other process, while Run is
+	// running, so processors working on it can stop early.
+	OnCancel func(jobID string)
 	// Logger receives debug/trace output about dispatch and housekeeping.
 	// Defaults to a no-op logger.
 	Logger zerolog.Logger
@@ -101,6 +109,10 @@ type Runner struct {
 	// right now, so the orphan sweep never reclaims its own work.
 	inFlightMu sync.Mutex
 	inFlight   map[string]bool
+
+	// wake interrupts the poll sleep; buffered to one so any number of
+	// events while the Runner is busy collapse into one rescan.
+	wake chan struct{}
 }
 
 func NewRunner(backend Backend, executor string) *Runner {
@@ -108,7 +120,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		Backend:              backend,
 		Executor:             executor,
 		Concurrency:          2,
-		PollInterval:         200 * time.Millisecond,
+		PollInterval:         5 * time.Second,
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
@@ -116,6 +128,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
+		wake:                 make(chan struct{}, 1),
 	}
 }
 
@@ -124,7 +137,7 @@ func NewRunner2() *Runner {
 		Backend:              nil,
 		Executor:             "",
 		Concurrency:          2,
-		PollInterval:         200 * time.Millisecond,
+		PollInterval:         5 * time.Second,
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
@@ -132,6 +145,7 @@ func NewRunner2() *Runner {
 		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
+		wake:                 make(chan struct{}, 1),
 	}
 }
 
@@ -140,6 +154,7 @@ func (r *Runner) Register(p *JobProcessor) {
 	defer r.mu.Unlock()
 
 	r.processors[p.Kind] = p
+	r.poke()
 	r.Logger.Debug().Str("kind", p.Kind).Int("priority", p.Priority).Dur("orphanTimeout", p.orphanTimeout()).Msg("processor registered")
 }
 
@@ -159,6 +174,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.Logger.Debug().Str("executor", r.Executor).Int("concurrency", r.Concurrency).
 		Dur("pollInterval", r.PollInterval).Dur("housekeepingInterval", r.HousekeepingInterval).
 		Msg("runner started")
+
+	if err := r.Backend.Listen(ctx, Notifications{OnWork: r.poke, OnCancel: r.notifyCancel}); err != nil {
+		r.reportError(err)
+	}
 
 	if r.HousekeepingInterval > 0 {
 		wg.Add(1)
@@ -207,6 +226,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			wg.Add(1)
 			go func(partialJob *model.PartialJob, processor *JobProcessor) {
 				defer wg.Done()
+				defer r.poke() // a slot is free, and Done may have queued follow-on work
 				defer func() { <-sem }()
 				defer r.clearInFlight(partialJob.Id)
 				defer r.recoverPanic("partial job " + partialJob.Id)
@@ -219,6 +239,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return r.drain(&wg)
+			case <-r.wake:
 			case <-time.After(r.PollInterval):
 			}
 		}
@@ -252,6 +273,19 @@ func (r *Runner) drain(wg *sync.WaitGroup) error {
 		abandoned := r.inFlightIds()
 		r.Logger.Debug().Strs("partialJobs", abandoned).Msg("runner stopped, in-flight partial jobs abandoned")
 		return fmt.Errorf("shutdown timed out after %v, partial jobs still running: %s", r.ShutdownTimeout, strings.Join(abandoned, ", "))
+	}
+}
+
+func (r *Runner) poke() {
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Runner) notifyCancel(jobID string) {
+	if r.OnCancel != nil {
+		r.OnCancel(jobID)
 	}
 }
 

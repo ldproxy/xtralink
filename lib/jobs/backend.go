@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"context"
+
 	"github.com/ldproxy/xtralink/model"
 )
 
@@ -18,6 +20,14 @@ func (NoopJobListener) OnProgress(job model.Job) {}
 // PushPartialJob methods.
 type Backend interface {
 	IsEnabled() bool
+
+	// Listen subscribes n to this backend's events until ctx is done:
+	// pushes and cancellations from this process, and with RedisBackend
+	// also from every other process sharing the queue. It returns once the
+	// subscription is in place. An error means it is not (yet) in place;
+	// RedisBackend keeps retrying in the background, so the caller should
+	// report it and carry on, with polling as the fallback.
+	Listen(ctx context.Context, n Notifications) error
 
 	// PushJob stores a new Job and queues what it can run first: its setup
 	// PartialJob if it declares one, otherwise one PartialJob per kind in

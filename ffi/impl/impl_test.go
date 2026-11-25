@@ -1,6 +1,8 @@
 package impl
 
 import (
+	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,35 +178,97 @@ func TestJobQueue_CancelRefusesFinishedJob(t *testing.T) {
 	}
 }
 
-type recordingCancelListener struct{ jobIDs []string }
+type recordingCancelListener struct {
+	mu     sync.Mutex
+	jobIDs []string
+}
 
-func (l *recordingCancelListener) OnCancel(jobID string) { l.jobIDs = append(l.jobIDs, jobID) }
+func (l *recordingCancelListener) OnCancel(jobID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.jobIDs = append(l.jobIDs, jobID)
+}
 
-func TestJobQueue_CancelNotifiesListener(t *testing.T) {
+func (l *recordingCancelListener) notified() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.jobIDs...)
+}
+
+type probeProcessor struct{ ran chan struct{} }
+
+func (p probeProcessor) Process(model.PartialJob, model.Job) (model.JobResult, error) {
+	close(p.ran)
+	return model.Success(), nil
+}
+
+// listeningJobQueue runs the dispatch loop, which owns the backend
+// subscription that delivers cancel notifications. Run subscribes before it
+// dispatches anything, so a processed probe PartialJob proves the
+// subscription is in place.
+func listeningJobQueue(t *testing.T) (*JobQueue, *recordingCancelListener) {
+	t.Helper()
 	q := newTestJobQueue()
 	listener := &recordingCancelListener{}
 	q.OnCancel(listener)
+
+	probe := probeProcessor{ran: make(chan struct{})}
+	if err := q.Register("probe", 1000, probe); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	probeJobID := uuid.NewString()
+	if err := q.backend.PushJob(jobs.NewJob(probeJobID, "probe", 1000, "", nil)); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	if err := q.backend.PushPartialJob(jobs.NewPartialJob(uuid.NewString(), "probe", 1000, probeJobID), false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = q.runner.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
+
+	select {
+	case <-probe.ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatch loop never started")
+	}
+	return q, listener
+}
+
+func TestJobQueue_CancelNotifiesListener(t *testing.T) {
+	q, listener := listeningJobQueue(t)
 	jobID := pushJob(t, q)
 
 	q.Cancel(jobID)
 
-	if len(listener.jobIDs) != 1 || listener.jobIDs[0] != jobID {
-		t.Errorf("notified %v, want [%s]", listener.jobIDs, jobID)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(listener.notified()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := listener.notified(); len(got) != 1 || got[0] != jobID {
+		t.Errorf("notified %v, want [%s]", got, jobID)
 	}
 }
 
 func TestJobQueue_RefusedCancelDoesNotNotifyListener(t *testing.T) {
-	q := newTestJobQueue()
-	listener := &recordingCancelListener{}
-	q.OnCancel(listener)
+	q, listener := listeningJobQueue(t)
 	jobID := pushJob(t, q)
 	finishJob(t, q, jobID)
 
 	q.Cancel(jobID)
 	q.Cancel(uuid.NewString())
 
-	if len(listener.jobIDs) != 0 {
-		t.Errorf("notified %v, want none", listener.jobIDs)
+	time.Sleep(50 * time.Millisecond)
+	if got := listener.notified(); len(got) != 0 {
+		t.Errorf("notified %v, want none", got)
 	}
 }
 

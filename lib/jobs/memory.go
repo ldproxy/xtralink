@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -27,6 +28,8 @@ import (
 // impossible.
 type MemoryBackend struct {
 	mu sync.Mutex
+
+	subscribers map[*subscriber]bool
 
 	partial   map[string]*model.PartialJob
 	jobs      map[string]*model.Job
@@ -165,6 +168,7 @@ func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untak
 	} else {
 		byPriority[stored.Priority] = append([]string{stored.Id}, byPriority[stored.Priority]...)
 	}
+	b.notifyWorkLocked()
 	return nil
 }
 
@@ -385,6 +389,7 @@ func (b *MemoryBackend) advanceSequenceLocked(job *model.Job) {
 		job.Sequence.Current++
 	}
 	logSequenceAdvanced(b.Logger, job)
+	b.notifyWorkLocked()
 }
 
 // finalizeIfDoneLocked mirrors RedisBackend.finalizeIfDone, minus the SETNX
@@ -576,6 +581,9 @@ func (b *MemoryBackend) Cancel(jobID string) (bool, error) {
 
 	job.Status = model.StatusDISMISSED
 	job.UpdatedAt = nowMillis()
+	for s := range b.subscribers {
+		s.notifyCancel(jobID)
+	}
 
 	queued, _ := b.livePartialsLocked(jobID)
 	b.Logger.Debug().Str("job", jobID).Int("droppedQueued", len(queued)).Msg("job cancelled")
@@ -919,4 +927,29 @@ func incrJSONPath(root map[string]any, path string, delta int) error {
 		current = arr[seg.index]
 	}
 	return nil
+}
+
+func (b *MemoryBackend) Listen(ctx context.Context, n Notifications) error {
+	s := newSubscriber()
+
+	b.mu.Lock()
+	if b.subscribers == nil {
+		b.subscribers = map[*subscriber]bool{}
+	}
+	b.subscribers[s] = true
+	b.mu.Unlock()
+
+	go func() {
+		s.deliver(ctx, n)
+		b.mu.Lock()
+		delete(b.subscribers, s)
+		b.mu.Unlock()
+	}()
+	return nil
+}
+
+func (b *MemoryBackend) notifyWorkLocked() {
+	for s := range b.subscribers {
+		s.notifyWork()
+	}
 }

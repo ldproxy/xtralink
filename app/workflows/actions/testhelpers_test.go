@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +21,8 @@ type fakeBackend struct {
 	pushedJob *model.Job
 }
 
-func (f *fakeBackend) IsEnabled() bool { return true }
+func (f *fakeBackend) IsEnabled() bool                                  { return true }
+func (f *fakeBackend) Listen(context.Context, jobs.Notifications) error { return nil }
 func (f *fakeBackend) PushJob(job *model.Job) error {
 	return f.PushJobListen(job, jobs.NoopJobListener{})
 }
