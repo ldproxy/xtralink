@@ -3,18 +3,17 @@
 package model
 
 type InitProgress struct {
-  Total int `json:"total"`
-  Details map[string]any `json:"details"`
+	Total   int            `json:"total"`
+	Details map[string]any `json:"details"`
 }
 
 func NewInitProgress(
-  total int,
-  details map[string]any,
+	total int,
+	details map[string]any,
 ) *InitProgress {
 
-  return &InitProgress{
-    Total: total,
-    Details: details,
-  }
+	return &InitProgress{
+		Total:   total,
+		Details: details,
+	}
 }
-  

@@ -3,45 +3,44 @@
 package model
 
 type BaseJob struct {
-  Id string `json:"id"`
-  Kind string `json:"kind"`
-  CreatedAt int64 `json:"createdAt"`
-  StartedAt int64 `json:"startedAt"`
-  UpdatedAt int64 `json:"updatedAt"`
-  FinishedAt int64 `json:"finishedAt"`
-  Priority int `json:"priority"`
-  Progress JobProgress `json:"progress"`
-  Status Status `json:"status"`
-  Errors []string `json:"errors"`
-  Context map[string]any `json:"context"`
+	Id         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	CreatedAt  int64          `json:"createdAt"`
+	StartedAt  int64          `json:"startedAt"`
+	UpdatedAt  int64          `json:"updatedAt"`
+	FinishedAt int64          `json:"finishedAt"`
+	Priority   int            `json:"priority"`
+	Progress   JobProgress    `json:"progress"`
+	Status     Status         `json:"status"`
+	Errors     []string       `json:"errors"`
+	Context    map[string]any `json:"context"`
 }
 
 func NewBaseJob(
-  id string,
-  kind string,
-  createdAt int64,
-  startedAt int64,
-  updatedAt int64,
-  finishedAt int64,
-  priority int,
-  progress JobProgress,
-  status Status,
-  errors []string,
-  context map[string]any,
+	id string,
+	kind string,
+	createdAt int64,
+	startedAt int64,
+	updatedAt int64,
+	finishedAt int64,
+	priority int,
+	progress JobProgress,
+	status Status,
+	errors []string,
+	context map[string]any,
 ) *BaseJob {
 
-  return &BaseJob{
-    Id: id,
-    Kind: kind,
-    CreatedAt: createdAt,
-    StartedAt: startedAt,
-    UpdatedAt: updatedAt,
-    FinishedAt: finishedAt,
-    Priority: priority,
-    Progress: progress,
-    Status: status,
-    Errors: errors,
-    Context: context,
-  }
+	return &BaseJob{
+		Id:         id,
+		Kind:       kind,
+		CreatedAt:  createdAt,
+		StartedAt:  startedAt,
+		UpdatedAt:  updatedAt,
+		FinishedAt: finishedAt,
+		Priority:   priority,
+		Progress:   progress,
+		Status:     status,
+		Errors:     errors,
+		Context:    context,
+	}
 }
-  

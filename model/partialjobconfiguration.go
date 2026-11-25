@@ -3,33 +3,32 @@
 package model
 
 type PartialJobConfiguration struct {
-  Kind string `json:"kind"`
-  Priority int `json:"priority"`
-  PartOf string `json:"partOf"`
-  Progress JobProgress `json:"progress"`
-  ProgressUpdates []ProgressUpdate `json:"progressUpdates"`
-  Sequence *int `json:"sequence"`
-  Context map[string]any `json:"context"`
+	Kind            string           `json:"kind"`
+	Priority        int              `json:"priority"`
+	PartOf          string           `json:"partOf"`
+	Progress        JobProgress      `json:"progress"`
+	ProgressUpdates []ProgressUpdate `json:"progressUpdates"`
+	Sequence        *int             `json:"sequence"`
+	Context         map[string]any   `json:"context"`
 }
 
 func NewPartialJobConfiguration(
-  kind string,
-  priority int,
-  partOf string,
-  progress JobProgress,
-  progressUpdates []ProgressUpdate,
-  sequence *int,
-  context map[string]any,
+	kind string,
+	priority int,
+	partOf string,
+	progress JobProgress,
+	progressUpdates []ProgressUpdate,
+	sequence *int,
+	context map[string]any,
 ) *PartialJobConfiguration {
 
-  return &PartialJobConfiguration{
-    Kind: kind,
-    Priority: priority,
-    PartOf: partOf,
-    Progress: progress,
-    ProgressUpdates: progressUpdates,
-    Sequence: sequence,
-    Context: context,
-  }
+	return &PartialJobConfiguration{
+		Kind:            kind,
+		Priority:        priority,
+		PartOf:          partOf,
+		Progress:        progress,
+		ProgressUpdates: progressUpdates,
+		Sequence:        sequence,
+		Context:         context,
+	}
 }
-  

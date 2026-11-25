@@ -3,15 +3,14 @@
 package model
 
 type PartialJobList struct {
-  PartialJobs []PartialJob `json:"partialJobs"`
+	PartialJobs []PartialJob `json:"partialJobs"`
 }
 
 func NewPartialJobList(
-  partialJobs []PartialJob,
+	partialJobs []PartialJob,
 ) *PartialJobList {
 
-  return &PartialJobList{
-    PartialJobs: partialJobs,
-  }
+	return &PartialJobList{
+		PartialJobs: partialJobs,
+	}
 }
-  

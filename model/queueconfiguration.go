@@ -3,27 +3,26 @@
 package model
 
 type QueueConfiguration struct {
-  Concurrency int `json:"concurrency"`
-  Executor string `json:"executor"`
-  Queue Queue `json:"queue"`
-  Cluster *string `json:"cluster"`
-  Redis []string `json:"redis"`
+	Concurrency int      `json:"concurrency"`
+	Executor    string   `json:"executor"`
+	Queue       Queue    `json:"queue"`
+	Cluster     *string  `json:"cluster"`
+	Redis       []string `json:"redis"`
 }
 
 func NewQueueConfiguration(
-  concurrency int,
-  executor string,
-  queue Queue,
-  cluster *string,
-  redis []string,
+	concurrency int,
+	executor string,
+	queue Queue,
+	cluster *string,
+	redis []string,
 ) *QueueConfiguration {
 
-  return &QueueConfiguration{
-    Concurrency: concurrency,
-    Executor: executor,
-    Queue: queue,
-    Cluster: cluster,
-    Redis: redis,
-  }
+	return &QueueConfiguration{
+		Concurrency: concurrency,
+		Executor:    executor,
+		Queue:       queue,
+		Cluster:     cluster,
+		Redis:       redis,
+	}
 }
-  

@@ -3,67 +3,66 @@
 package model
 
 type Job struct {
-  BaseJob
-  Label string `json:"label"`
-  Description string `json:"description"`
-  Inputs map[string]any `json:"inputs"`
-  Outputs map[string]any `json:"outputs"`
-  Setup *PartialJob `json:"setup"`
-  Cleanup *PartialJob `json:"cleanup"`
-  Partials []string `json:"partials"`
-  FollowUps []Job `json:"followUps"`
-  Sequence *JobSequence `json:"sequence"`
-  TtlSeconds *int `json:"ttlSeconds"`
+	BaseJob
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	Inputs      map[string]any `json:"inputs"`
+	Outputs     map[string]any `json:"outputs"`
+	Setup       *PartialJob    `json:"setup"`
+	Cleanup     *PartialJob    `json:"cleanup"`
+	Partials    []string       `json:"partials"`
+	FollowUps   []Job          `json:"followUps"`
+	Sequence    *JobSequence   `json:"sequence"`
+	TtlSeconds  *int           `json:"ttlSeconds"`
 }
 
 func NewJob(
-  id string,
-  kind string,
-  createdAt int64,
-  startedAt int64,
-  updatedAt int64,
-  finishedAt int64,
-  priority int,
-  progress JobProgress,
-  status Status,
-  errors []string,
-  context map[string]any,
-  label string,
-  description string,
-  inputs map[string]any,
-  outputs map[string]any,
-  setup *PartialJob,
-  cleanup *PartialJob,
-  partials []string,
-  followUps []Job,
-  sequence *JobSequence,
-  ttlSeconds *int,
+	id string,
+	kind string,
+	createdAt int64,
+	startedAt int64,
+	updatedAt int64,
+	finishedAt int64,
+	priority int,
+	progress JobProgress,
+	status Status,
+	errors []string,
+	context map[string]any,
+	label string,
+	description string,
+	inputs map[string]any,
+	outputs map[string]any,
+	setup *PartialJob,
+	cleanup *PartialJob,
+	partials []string,
+	followUps []Job,
+	sequence *JobSequence,
+	ttlSeconds *int,
 ) *Job {
 
-  return &Job{
-    BaseJob: BaseJob{
-      Id: id,
-      Kind: kind,
-      CreatedAt: createdAt,
-      StartedAt: startedAt,
-      UpdatedAt: updatedAt,
-      FinishedAt: finishedAt,
-      Priority: priority,
-      Progress: progress,
-      Status: status,
-      Errors: errors,
-      Context: context,
-    },
-    Label: label,
-    Description: description,
-    Inputs: inputs,
-    Outputs: outputs,
-    Setup: setup,
-    Cleanup: cleanup,
-    Partials: partials,
-    FollowUps: followUps,
-    Sequence: sequence,
-    TtlSeconds: ttlSeconds,
-  }
+	return &Job{
+		BaseJob: BaseJob{
+			Id:         id,
+			Kind:       kind,
+			CreatedAt:  createdAt,
+			StartedAt:  startedAt,
+			UpdatedAt:  updatedAt,
+			FinishedAt: finishedAt,
+			Priority:   priority,
+			Progress:   progress,
+			Status:     status,
+			Errors:     errors,
+			Context:    context,
+		},
+		Label:       label,
+		Description: description,
+		Inputs:      inputs,
+		Outputs:     outputs,
+		Setup:       setup,
+		Cleanup:     cleanup,
+		Partials:    partials,
+		FollowUps:   followUps,
+		Sequence:    sequence,
+		TtlSeconds:  ttlSeconds,
+	}
 }
-  

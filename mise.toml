@@ -15,6 +15,7 @@ run = '''
 interactive = true
 run = '''
   npx genffi --config ./genffi.config.ts
+  gofmt -w model ffi
 '''
 
 [tasks.build-cli]

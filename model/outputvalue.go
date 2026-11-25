@@ -3,21 +3,20 @@
 package model
 
 type OutputValue struct {
-  Value any `json:"value"`
-  Href string `json:"href"`
-  Kind string `json:"kind"`
+	Value any    `json:"value"`
+	Href  string `json:"href"`
+	Kind  string `json:"kind"`
 }
 
 func NewOutputValue(
-  value any,
-  href string,
-  kind string,
+	value any,
+	href string,
+	kind string,
 ) *OutputValue {
 
-  return &OutputValue{
-    Value: value,
-    Href: href,
-    Kind: kind,
-  }
+	return &OutputValue{
+		Value: value,
+		Href:  href,
+		Kind:  kind,
+	}
 }
-  

@@ -3,18 +3,17 @@
 package model
 
 type ProgressUpdate struct {
-  Path string `json:"path"`
-  Operation ProgressOperation `json:"operation"`
+	Path      string            `json:"path"`
+	Operation ProgressOperation `json:"operation"`
 }
 
 func NewProgressUpdate(
-  path string,
-  operation ProgressOperation,
+	path string,
+	operation ProgressOperation,
 ) *ProgressUpdate {
 
-  return &ProgressUpdate{
-    Path: path,
-    Operation: operation,
-  }
+	return &ProgressUpdate{
+		Path:      path,
+		Operation: operation,
+	}
 }
-  

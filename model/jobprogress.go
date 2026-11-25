@@ -3,24 +3,23 @@
 package model
 
 type JobProgress struct {
-  Current int `json:"current"`
-  Total int `json:"total"`
-  Percent int `json:"percent"`
-  Details map[string]any `json:"details"`
+	Current int            `json:"current"`
+	Total   int            `json:"total"`
+	Percent int            `json:"percent"`
+	Details map[string]any `json:"details"`
 }
 
 func NewJobProgress(
-  current int,
-  total int,
-  percent int,
-  details map[string]any,
+	current int,
+	total int,
+	percent int,
+	details map[string]any,
 ) *JobProgress {
 
-  return &JobProgress{
-    Current: current,
-    Total: total,
-    Percent: percent,
-    Details: details,
-  }
+	return &JobProgress{
+		Current: current,
+		Total:   total,
+		Percent: percent,
+		Details: details,
+	}
 }
-  

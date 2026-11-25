@@ -3,51 +3,50 @@
 package model
 
 type JobConfiguration struct {
-  Kind string `json:"kind"`
-  Priority int `json:"priority"`
-  Label string `json:"label"`
-  Description string `json:"description"`
-  Inputs map[string]any `json:"inputs"`
-  Context map[string]any `json:"context"`
-  Progress JobProgress `json:"progress"`
-  Setup bool `json:"setup"`
-  Cleanup bool `json:"cleanup"`
-  Partials []string `json:"partials"`
-  Sequential bool `json:"sequential"`
-  FollowUps []JobConfiguration `json:"followUps"`
-  TtlSeconds *int `json:"ttlSeconds"`
+	Kind        string             `json:"kind"`
+	Priority    int                `json:"priority"`
+	Label       string             `json:"label"`
+	Description string             `json:"description"`
+	Inputs      map[string]any     `json:"inputs"`
+	Context     map[string]any     `json:"context"`
+	Progress    JobProgress        `json:"progress"`
+	Setup       bool               `json:"setup"`
+	Cleanup     bool               `json:"cleanup"`
+	Partials    []string           `json:"partials"`
+	Sequential  bool               `json:"sequential"`
+	FollowUps   []JobConfiguration `json:"followUps"`
+	TtlSeconds  *int               `json:"ttlSeconds"`
 }
 
 func NewJobConfiguration(
-  kind string,
-  priority int,
-  label string,
-  description string,
-  inputs map[string]any,
-  context map[string]any,
-  progress JobProgress,
-  setup bool,
-  cleanup bool,
-  partials []string,
-  sequential bool,
-  followUps []JobConfiguration,
-  ttlSeconds *int,
+	kind string,
+	priority int,
+	label string,
+	description string,
+	inputs map[string]any,
+	context map[string]any,
+	progress JobProgress,
+	setup bool,
+	cleanup bool,
+	partials []string,
+	sequential bool,
+	followUps []JobConfiguration,
+	ttlSeconds *int,
 ) *JobConfiguration {
 
-  return &JobConfiguration{
-    Kind: kind,
-    Priority: priority,
-    Label: label,
-    Description: description,
-    Inputs: inputs,
-    Context: context,
-    Progress: progress,
-    Setup: setup,
-    Cleanup: cleanup,
-    Partials: partials,
-    Sequential: sequential,
-    FollowUps: followUps,
-    TtlSeconds: ttlSeconds,
-  }
+	return &JobConfiguration{
+		Kind:        kind,
+		Priority:    priority,
+		Label:       label,
+		Description: description,
+		Inputs:      inputs,
+		Context:     context,
+		Progress:    progress,
+		Setup:       setup,
+		Cleanup:     cleanup,
+		Partials:    partials,
+		Sequential:  sequential,
+		FollowUps:   followUps,
+		TtlSeconds:  ttlSeconds,
+	}
 }
-  

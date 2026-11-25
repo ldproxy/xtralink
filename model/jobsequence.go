@@ -3,18 +3,17 @@
 package model
 
 type JobSequence struct {
-  Current int `json:"current"`
-  Remaining int `json:"remaining"`
+	Current   int `json:"current"`
+	Remaining int `json:"remaining"`
 }
 
 func NewJobSequence(
-  current int,
-  remaining int,
+	current int,
+	remaining int,
 ) *JobSequence {
 
-  return &JobSequence{
-    Current: current,
-    Remaining: remaining,
-  }
+	return &JobSequence{
+		Current:   current,
+		Remaining: remaining,
+	}
 }
-  

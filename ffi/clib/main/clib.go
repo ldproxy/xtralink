@@ -25,9 +25,6 @@ func main() {}
 //=== INIT ===
 
 var jobQueue api.JobQueue
-	
-
-
 
 type cInit interface {
 	JobQueue() api.JobQueue
@@ -149,6 +146,7 @@ func takeFuture(id int64) *futureSlot {
 // result is ready to be awaited, 0 while it is still running.
 //
 // This is what a caller on an event loop uses instead of blocking a thread in the Await.
+//
 //export Future_Poll
 func Future_Poll(future int64) C.short {
 	slot := lookupFuture(future)
@@ -169,6 +167,7 @@ func Future_Poll(future int64) C.short {
 //
 // It does not *cancel* anything: the goroutine runs to completion and its result is dropped
 // on the floor. Any side effect the operation has still happens.
+//
 //export Future_Free
 func Future_Free(future int64) {
 	futures_mu.Lock()
@@ -198,6 +197,7 @@ func Future_Free(future int64) {
 //   - **Readiness is *scanned*, not queued.** A caller that never calls this still completes
 //     operations, and a queue of completed ids nobody drains would grow without bound. The map
 //     is only ever as large as the number in flight.
+//
 //export Ffi_WaitAny
 func Ffi_WaitAny(timeout_ms C.int) int64 {
 	timer := time.NewTimer(time.Duration(timeout_ms) * time.Millisecond)
@@ -218,6 +218,7 @@ func Ffi_WaitAny(timeout_ms C.int) int64 {
 
 // Future_Count is how many operations have been started and neither awaited nor freed. For
 // tests and diagnostics: a count that does not come back to zero is a leak.
+//
 //export Future_Count
 func Future_Count() int64 {
 	futures_mu.Lock()
@@ -283,6 +284,7 @@ var (
 
 // Callback_Register allocates a listener id. The caller associates it with whatever object
 // it will dispatch to and passes the id wherever the api declares a @callback parameter.
+//
 //export Callback_Register
 func Callback_Register() int64 {
 	callbacks_mu.Lock()
@@ -308,6 +310,7 @@ func Callback_Register() int64 {
 // Polled rather than signalled: the wait is normally over on the first check or the one
 // after, and a condition variable here would need a second wake path beside callbacks_wake
 // for no measurable gain.
+//
 //export Callback_Unregister
 func Callback_Unregister(listener int64, timeout_ms C.int) C.short {
 	callbacks_mu.Lock()
@@ -481,6 +484,7 @@ func returnCallback(inv int64, answer callbackAnswer) {
 // polling interval, because the wait is a channel receive rather than a sleep. Having been
 // handed an id, the caller MUST call the matching <Iface>_<Method>_Args accessor exactly
 // once — that is what releases the slot.
+//
 //export Callback_Next
 func Callback_Next(timeout_ms C.int, listener *C.longlong, method *C.int) int64 {
 	timer := time.NewTimer(time.Duration(timeout_ms) * time.Millisecond)
@@ -516,6 +520,7 @@ func Callback_Next(timeout_ms C.int, listener *C.longlong, method *C.int) int64 
 // Callback_Shutdown stops delivery for good: every blocked Callback_Next returns 0, the
 // queue is discarded and nothing further is posted. For an orderly teardown, not a pause —
 // there is no way back.
+//
 //export Callback_Shutdown
 func Callback_Shutdown() {
 	callbacks_mu.Lock()
@@ -535,13 +540,13 @@ func Callback_Shutdown() {
 // Callback_Count is how many invocations have been posted and not yet collected, queued and
 // handed-out alike. For tests and diagnostics: a count that does not come back to zero is a
 // listener nobody is draining.
+//
 //export Callback_Count
 func Callback_Count() int64 {
 	callbacks_mu.Lock()
 	defer callbacks_mu.Unlock()
 	return int64(len(callbacks_queue) + len(callbacks_pending))
 }
-
 
 //=== JobListener (callback) ===
 
@@ -554,13 +559,13 @@ func (recv *cbJobListener) OnProgress(job model.Job) {
 }
 
 //export JobListener_OnProgress_Args
-	func JobListener_OnProgress_Args(inv int64, job **C.char, job_length *C.size_t)  {
-		defer recoverExport("JobListener_OnProgress_Args")
-		args := takeCallback(inv).args
-		job_arg := args[0].([]byte)
-		*job = (*C.char)(C.CBytes(job_arg))
-		*job_length = C.size_t(len(job_arg))
-	}
+func JobListener_OnProgress_Args(inv int64, job **C.char, job_length *C.size_t) {
+	defer recoverExport("JobListener_OnProgress_Args")
+	args := takeCallback(inv).args
+	job_arg := args[0].([]byte)
+	*job = (*C.char)(C.CBytes(job_arg))
+	*job_length = C.size_t(len(job_arg))
+}
 
 //=== CancelListener (callback) ===
 
@@ -573,12 +578,12 @@ func (recv *cbCancelListener) OnCancel(jobId string) {
 }
 
 //export CancelListener_OnCancel_Args
-	func CancelListener_OnCancel_Args(inv int64, jobId **C.char)  {
-		defer recoverExport("CancelListener_OnCancel_Args")
-		args := takeCallback(inv).args
-		jobId_arg := args[0].(string)
-		*jobId = C.CString(jobId_arg)
-	}
+func CancelListener_OnCancel_Args(inv int64, jobId **C.char) {
+	defer recoverExport("CancelListener_OnCancel_Args")
+	args := takeCallback(inv).args
+	jobId_arg := args[0].(string)
+	*jobId = C.CString(jobId_arg)
+}
 
 //=== JobProcessor (callback) ===
 
@@ -586,7 +591,7 @@ var _ api.JobProcessor = (*cbJobProcessor)(nil)
 
 type cbJobProcessor struct{ id int64 }
 
-func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error){
+func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error) {
 	answer, delivered := postCallbackAnswer(recv.id, 2, []any{model.MarshalPartialJob(partialJob), model.MarshalJob(job)})
 	if !delivered {
 		var zero model.JobResult
@@ -597,225 +602,238 @@ func (recv *cbJobProcessor) Process(partialJob model.PartialJob, job model.Job) 
 }
 
 //export JobProcessor_Process_Args
-	func JobProcessor_Process_Args(inv int64, partialJob **C.char, partialJob_length *C.size_t, job **C.char, job_length *C.size_t)  {
-		defer recoverExport("JobProcessor_Process_Args")
-		args := takeCallback(inv).args
-		partialJob_arg := args[0].([]byte)
-		*partialJob = (*C.char)(C.CBytes(partialJob_arg))
-		*partialJob_length = C.size_t(len(partialJob_arg))
-		job_arg := args[1].([]byte)
-		*job = (*C.char)(C.CBytes(job_arg))
-		*job_length = C.size_t(len(job_arg))
-	}
+func JobProcessor_Process_Args(inv int64, partialJob **C.char, partialJob_length *C.size_t, job **C.char, job_length *C.size_t) {
+	defer recoverExport("JobProcessor_Process_Args")
+	args := takeCallback(inv).args
+	partialJob_arg := args[0].([]byte)
+	*partialJob = (*C.char)(C.CBytes(partialJob_arg))
+	*partialJob_length = C.size_t(len(partialJob_arg))
+	job_arg := args[1].([]byte)
+	*job = (*C.char)(C.CBytes(job_arg))
+	*job_length = C.size_t(len(job_arg))
+}
 
 //export JobProcessor_Process_Return
-	func JobProcessor_Process_Return(inv int64, value *C.char, value_length C.size_t, err *C.char)  {
-		defer recoverExport("JobProcessor_Process_Return")
-		value_value, value_err := model.UnmarshalJobResult(C.GoBytes(unsafe.Pointer(value), C.int(value_length)))
-		if value_err != nil {
-			returnCallback(inv, callbackAnswer{err: value_err})
-			return
-		}
-		returnCallback(inv, callbackAnswer{value: value_value, err: goError(err)})
+func JobProcessor_Process_Return(inv int64, value *C.char, value_length C.size_t, err *C.char) {
+	defer recoverExport("JobProcessor_Process_Return")
+	value_value, value_err := model.UnmarshalJobResult(C.GoBytes(unsafe.Pointer(value), C.int(value_length)))
+	if value_err != nil {
+		returnCallback(inv, callbackAnswer{err: value_err})
+		return
 	}
-
+	returnCallback(inv, callbackAnswer{value: value_value, err: goError(err)})
+}
 
 //=== JobQueue ===
 
 //export JobQueue_Start
-	func JobQueue_Start(cfg *C.char, cfg_length C.size_t, cerr **C.char)  {
-		defer recoverExportErr("JobQueue_Start", cerr)
-		cfg_value, cfg_err := model.UnmarshalQueueConfiguration(C.GoBytes(unsafe.Pointer(cfg), C.int(cfg_length)))
-  if cfg_err != nil {
-    *cerr = C.CString(cfg_err.Error())
-    return
-  }
-  err := jobQueue.Start(cfg_value)
-  if err != nil { *cerr = C.CString(err.Error()) }
+func JobQueue_Start(cfg *C.char, cfg_length C.size_t, cerr **C.char) {
+	defer recoverExportErr("JobQueue_Start", cerr)
+	cfg_value, cfg_err := model.UnmarshalQueueConfiguration(C.GoBytes(unsafe.Pointer(cfg), C.int(cfg_length)))
+	if cfg_err != nil {
+		*cerr = C.CString(cfg_err.Error())
+		return
 	}
+	err := jobQueue.Start(cfg_value)
+	if err != nil {
+		*cerr = C.CString(err.Error())
+	}
+}
 
 //export JobQueue_Stop
-	func JobQueue_Stop()  {
-		defer recoverExport("JobQueue_Stop")
-		jobQueue.Stop()
-	}
+func JobQueue_Stop() {
+	defer recoverExport("JobQueue_Stop")
+	jobQueue.Stop()
+}
 
 //export JobQueue_Push
-	func JobQueue_Push(job *C.char, job_length C.size_t, onProgress int64, clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_Push")
-		job_value, job_err := model.UnmarshalJobConfiguration(C.GoBytes(unsafe.Pointer(job), C.int(job_length)))
-  if job_err != nil { panic(fmt.Sprintf("job: %v", job_err)) }
-  result := model.MarshalJob(jobQueue.Push(job_value, &cbJobListener{id: onProgress}))
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
+func JobQueue_Push(job *C.char, job_length C.size_t, onProgress int64, clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_Push")
+	job_value, job_err := model.UnmarshalJobConfiguration(C.GoBytes(unsafe.Pointer(job), C.int(job_length)))
+	if job_err != nil {
+		panic(fmt.Sprintf("job: %v", job_err))
 	}
+	result := model.MarshalJob(jobQueue.Push(job_value, &cbJobListener{id: onProgress}))
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_PushPartial
-	func JobQueue_PushPartial(partialJob *C.char, partialJob_length C.size_t, clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_PushPartial")
-		partialJob_value, partialJob_err := model.UnmarshalPartialJobConfiguration(C.GoBytes(unsafe.Pointer(partialJob), C.int(partialJob_length)))
-  if partialJob_err != nil { panic(fmt.Sprintf("partialJob: %v", partialJob_err)) }
-  result := model.MarshalPartialJob(jobQueue.PushPartial(partialJob_value))
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
+func JobQueue_PushPartial(partialJob *C.char, partialJob_length C.size_t, clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_PushPartial")
+	partialJob_value, partialJob_err := model.UnmarshalPartialJobConfiguration(C.GoBytes(unsafe.Pointer(partialJob), C.int(partialJob_length)))
+	if partialJob_err != nil {
+		panic(fmt.Sprintf("partialJob: %v", partialJob_err))
 	}
+	result := model.MarshalPartialJob(jobQueue.PushPartial(partialJob_value))
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_RepushPartial
-	func JobQueue_RepushPartial(id *C.char, clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_RepushPartial")
-		result := model.MarshalPartialJob(jobQueue.RepushPartial(C.GoString(id)))
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
-	}
+func JobQueue_RepushPartial(id *C.char, clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_RepushPartial")
+	result := model.MarshalPartialJob(jobQueue.RepushPartial(C.GoString(id)))
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_WaitFor_Start
-	func JobQueue_WaitFor_Start(id *C.char) int64 {
-		defer recoverExport("JobQueue_WaitFor_Start")
-		fut, future := newFuture()
-  go func(recv api.JobQueue, id string) {
-    defer readyFuture(fut)
-    defer func() { recover() }()
-    result := recv.WaitFor(id)
-    fut.result = result
-  }(jobQueue, C.GoString(id))
-  return future
-	}
+func JobQueue_WaitFor_Start(id *C.char) int64 {
+	defer recoverExport("JobQueue_WaitFor_Start")
+	fut, future := newFuture()
+	go func(recv api.JobQueue, id string) {
+		defer readyFuture(fut)
+		defer func() { recover() }()
+		result := recv.WaitFor(id)
+		fut.result = result
+	}(jobQueue, C.GoString(id))
+	return future
+}
 
 //export JobQueue_WaitFor_Await
-	func JobQueue_WaitFor_Await(future int64, clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_WaitFor_Await")
-		fut := takeFuture(future)
-  result, _ := fut.result.(model.Job)
-  result_json := model.MarshalJob(result)
-  *clen = C.size_t(len(result_json))
-  return (*C.char)(C.CBytes(result_json))
-	}
+func JobQueue_WaitFor_Await(future int64, clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_WaitFor_Await")
+	fut := takeFuture(future)
+	result, _ := fut.result.(model.Job)
+	result_json := model.MarshalJob(result)
+	*clen = C.size_t(len(result_json))
+	return (*C.char)(C.CBytes(result_json))
+}
 
 //export JobQueue_WaitForPartial_Start
-	func JobQueue_WaitForPartial_Start(id *C.char) int64 {
-		defer recoverExport("JobQueue_WaitForPartial_Start")
-		fut, future := newFuture()
-  go func(recv api.JobQueue, id string) {
-    defer readyFuture(fut)
-    defer func() { recover() }()
-    result := recv.WaitForPartial(id)
-    fut.result = result
-  }(jobQueue, C.GoString(id))
-  return future
-	}
+func JobQueue_WaitForPartial_Start(id *C.char) int64 {
+	defer recoverExport("JobQueue_WaitForPartial_Start")
+	fut, future := newFuture()
+	go func(recv api.JobQueue, id string) {
+		defer readyFuture(fut)
+		defer func() { recover() }()
+		result := recv.WaitForPartial(id)
+		fut.result = result
+	}(jobQueue, C.GoString(id))
+	return future
+}
 
 //export JobQueue_WaitForPartial_Await
-	func JobQueue_WaitForPartial_Await(future int64, clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_WaitForPartial_Await")
-		fut := takeFuture(future)
-  result, _ := fut.result.(model.PartialJob)
-  result_json := model.MarshalPartialJob(result)
-  *clen = C.size_t(len(result_json))
-  return (*C.char)(C.CBytes(result_json))
-	}
+func JobQueue_WaitForPartial_Await(future int64, clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_WaitForPartial_Await")
+	fut := takeFuture(future)
+	result, _ := fut.result.(model.PartialJob)
+	result_json := model.MarshalPartialJob(result)
+	*clen = C.size_t(len(result_json))
+	return (*C.char)(C.CBytes(result_json))
+}
 
 //export JobQueue_Init
-	func JobQueue_Init(id *C.char, progress *C.char, progress_length C.size_t)  {
-		defer recoverExport("JobQueue_Init")
-		progress_value, progress_err := model.UnmarshalInitProgress(C.GoBytes(unsafe.Pointer(progress), C.int(progress_length)))
-  if progress_err != nil { panic(fmt.Sprintf("progress: %v", progress_err)) }
-  jobQueue.Init(C.GoString(id), progress_value)
+func JobQueue_Init(id *C.char, progress *C.char, progress_length C.size_t) {
+	defer recoverExport("JobQueue_Init")
+	progress_value, progress_err := model.UnmarshalInitProgress(C.GoBytes(unsafe.Pointer(progress), C.int(progress_length)))
+	if progress_err != nil {
+		panic(fmt.Sprintf("progress: %v", progress_err))
 	}
+	jobQueue.Init(C.GoString(id), progress_value)
+}
 
 //export JobQueue_UpdatePartial
-	func JobQueue_UpdatePartial(id *C.char, delta C.int)  {
-		defer recoverExport("JobQueue_UpdatePartial")
-		jobQueue.UpdatePartial(C.GoString(id), int32(delta))
-	}
+func JobQueue_UpdatePartial(id *C.char, delta C.int) {
+	defer recoverExport("JobQueue_UpdatePartial")
+	jobQueue.UpdatePartial(C.GoString(id), int32(delta))
+}
 
 //export JobQueue_Outputs
-	func JobQueue_Outputs(id *C.char, outputs *C.char, outputs_length C.size_t)  {
-		defer recoverExport("JobQueue_Outputs")
-		outputs_value, outputs_err := model.UnmarshalSetOutputs(C.GoBytes(unsafe.Pointer(outputs), C.int(outputs_length)))
-  if outputs_err != nil { panic(fmt.Sprintf("outputs: %v", outputs_err)) }
-  jobQueue.Outputs(C.GoString(id), outputs_value)
+func JobQueue_Outputs(id *C.char, outputs *C.char, outputs_length C.size_t) {
+	defer recoverExport("JobQueue_Outputs")
+	outputs_value, outputs_err := model.UnmarshalSetOutputs(C.GoBytes(unsafe.Pointer(outputs), C.int(outputs_length)))
+	if outputs_err != nil {
+		panic(fmt.Sprintf("outputs: %v", outputs_err))
 	}
+	jobQueue.Outputs(C.GoString(id), outputs_value)
+}
 
 //export JobQueue_Cancel
-	func JobQueue_Cancel(id *C.char) C.short {
-		defer recoverExport("JobQueue_Cancel")
-		return CBool(jobQueue.Cancel(C.GoString(id)))
-	}
+func JobQueue_Cancel(id *C.char) C.short {
+	defer recoverExport("JobQueue_Cancel")
+	return CBool(jobQueue.Cancel(C.GoString(id)))
+}
 
 //export JobQueue_Delete
-	func JobQueue_Delete(id *C.char) C.short {
-		defer recoverExport("JobQueue_Delete")
-		return CBool(jobQueue.Delete(C.GoString(id)))
-	}
+func JobQueue_Delete(id *C.char) C.short {
+	defer recoverExport("JobQueue_Delete")
+	return CBool(jobQueue.Delete(C.GoString(id)))
+}
 
 //export JobQueue_Get
-	func JobQueue_Get(id *C.char, clen *C.size_t, cok *C.short) *C.char {
-		defer recoverExport("JobQueue_Get")
-		result, ok := jobQueue.Get(C.GoString(id))
-  if ok { *cok = 1 } else { *cok = 0 }
-  result_json := model.MarshalJob(result)
-  *clen = C.size_t(len(result_json))
-  return (*C.char)(C.CBytes(result_json))
+func JobQueue_Get(id *C.char, clen *C.size_t, cok *C.short) *C.char {
+	defer recoverExport("JobQueue_Get")
+	result, ok := jobQueue.Get(C.GoString(id))
+	if ok {
+		*cok = 1
+	} else {
+		*cok = 0
 	}
+	result_json := model.MarshalJob(result)
+	*clen = C.size_t(len(result_json))
+	return (*C.char)(C.CBytes(result_json))
+}
 
 //export JobQueue_GetPartial
-	func JobQueue_GetPartial(id *C.char, clen *C.size_t, cok *C.short) *C.char {
-		defer recoverExport("JobQueue_GetPartial")
-		result, ok := jobQueue.GetPartial(C.GoString(id))
-  if ok { *cok = 1 } else { *cok = 0 }
-  result_json := model.MarshalPartialJob(result)
-  *clen = C.size_t(len(result_json))
-  return (*C.char)(C.CBytes(result_json))
+func JobQueue_GetPartial(id *C.char, clen *C.size_t, cok *C.short) *C.char {
+	defer recoverExport("JobQueue_GetPartial")
+	result, ok := jobQueue.GetPartial(C.GoString(id))
+	if ok {
+		*cok = 1
+	} else {
+		*cok = 0
 	}
+	result_json := model.MarshalPartialJob(result)
+	*clen = C.size_t(len(result_json))
+	return (*C.char)(C.CBytes(result_json))
+}
 
 //export JobQueue_List
-	func JobQueue_List(clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_List")
-		result := model.MarshalJobList(jobQueue.List())
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
-	}
+func JobQueue_List(clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_List")
+	result := model.MarshalJobList(jobQueue.List())
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_Taken
-	func JobQueue_Taken(clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_Taken")
-		result := model.MarshalPartialJobList(jobQueue.Taken())
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
-	}
+func JobQueue_Taken(clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_Taken")
+	result := model.MarshalPartialJobList(jobQueue.Taken())
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_Failed
-	func JobQueue_Failed(clen *C.size_t) *C.char {
-		defer recoverExport("JobQueue_Failed")
-		result := model.MarshalPartialJobList(jobQueue.Failed())
-  *clen = C.size_t(len(result))
-  return (*C.char)(C.CBytes(result))
-	}
+func JobQueue_Failed(clen *C.size_t) *C.char {
+	defer recoverExport("JobQueue_Failed")
+	result := model.MarshalPartialJobList(jobQueue.Failed())
+	*clen = C.size_t(len(result))
+	return (*C.char)(C.CBytes(result))
+}
 
 //export JobQueue_Register
-	func JobQueue_Register(jobType *C.char, priority C.int, processor int64, cerr **C.char)  {
-		defer recoverExportErr("JobQueue_Register", cerr)
-		err := jobQueue.Register(C.GoString(jobType), int32(priority), &cbJobProcessor{id: processor})
-  if err != nil { *cerr = C.CString(err.Error()) }
+func JobQueue_Register(jobType *C.char, priority C.int, processor int64, cerr **C.char) {
+	defer recoverExportErr("JobQueue_Register", cerr)
+	err := jobQueue.Register(C.GoString(jobType), int32(priority), &cbJobProcessor{id: processor})
+	if err != nil {
+		*cerr = C.CString(err.Error())
 	}
+}
 
 //export JobQueue_OnCancel
-	func JobQueue_OnCancel(listener int64)  {
-		defer recoverExport("JobQueue_OnCancel")
-		jobQueue.OnCancel(&cbCancelListener{id: listener})
-	}
-
+func JobQueue_OnCancel(listener int64) {
+	defer recoverExport("JobQueue_OnCancel")
+	jobQueue.OnCancel(&cbCancelListener{id: listener})
+}
 
 //=== ENUMS ===
 
-
-
 //=== STRUCTS ===
 
-
-
 //=== FREE ===
-
 
 //export FreeString
 func FreeString(str *C.char) {
@@ -836,16 +854,13 @@ func FreeBytes(bytes *C.char) {
 // the same, since a returned array has no Free<Struct> of its own to hang this off and a
 // caller reaching for FreeString on a **C.char has to stop and wonder whether that is
 // right.
+//
 //export FreeArray
 func FreeArray(array *C.char) {
 	C.free(unsafe.Pointer(array))
 }
 
-
-
-
 //=== UTIL ===
-
 
 // recoverExport and recoverExportErr are deferred by every export, and have to be the
 // deferred function itself: recover only stops a panic when called from that directly.
@@ -914,5 +929,3 @@ func CElemInt32(fromGo int32) C.int { return C.int(fromGo) }
 func GoElemBool(fromC *C.short) bool { return *fromC == 1 }
 
 func CElemBool(fromGo bool) C.short { return CBool(fromGo) }
-
-    

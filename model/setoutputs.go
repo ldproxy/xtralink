@@ -3,15 +3,14 @@
 package model
 
 type SetOutputs struct {
-  Outputs map[string]any `json:"outputs"`
+	Outputs map[string]any `json:"outputs"`
 }
 
 func NewSetOutputs(
-  outputs map[string]any,
+	outputs map[string]any,
 ) *SetOutputs {
 
-  return &SetOutputs{
-    Outputs: outputs,
-  }
+	return &SetOutputs{
+		Outputs: outputs,
+	}
 }
-  

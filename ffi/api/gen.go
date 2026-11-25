@@ -4,46 +4,36 @@ package api
 
 import model "github.com/ldproxy/xtralink/model"
 
-
-
-
-
-
 type JobListener interface {
-  OnProgress(job model.Job) 
+	OnProgress(job model.Job)
 }
-
 
 type CancelListener interface {
-  OnCancel(jobId string) 
+	OnCancel(jobId string)
 }
-
 
 type JobProcessor interface {
-  Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error)
+	Process(partialJob model.PartialJob, job model.Job) (model.JobResult, error)
 }
-
 
 type JobQueue interface {
-  Start(cfg model.QueueConfiguration) error
-  Stop() 
-  Push(job model.JobConfiguration, onProgress JobListener) model.Job
-  PushPartial(partialJob model.PartialJobConfiguration) model.PartialJob
-  RepushPartial(id string) model.PartialJob
-  WaitFor(id string) model.Job
-  WaitForPartial(id string) model.PartialJob
-  Init(id string, progress model.InitProgress) 
-  UpdatePartial(id string, delta int32) 
-  Outputs(id string, outputs model.SetOutputs) 
-  Cancel(id string) bool
-  Delete(id string) bool
-  Get(id string) (model.Job, bool)
-  GetPartial(id string) (model.PartialJob, bool)
-  List() model.JobList
-  Taken() model.PartialJobList
-  Failed() model.PartialJobList
-  Register(jobType string, priority int32, processor JobProcessor) error
-  OnCancel(listener CancelListener) 
+	Start(cfg model.QueueConfiguration) error
+	Stop()
+	Push(job model.JobConfiguration, onProgress JobListener) model.Job
+	PushPartial(partialJob model.PartialJobConfiguration) model.PartialJob
+	RepushPartial(id string) model.PartialJob
+	WaitFor(id string) model.Job
+	WaitForPartial(id string) model.PartialJob
+	Init(id string, progress model.InitProgress)
+	UpdatePartial(id string, delta int32)
+	Outputs(id string, outputs model.SetOutputs)
+	Cancel(id string) bool
+	Delete(id string) bool
+	Get(id string) (model.Job, bool)
+	GetPartial(id string) (model.PartialJob, bool)
+	List() model.JobList
+	Taken() model.PartialJobList
+	Failed() model.PartialJobList
+	Register(jobType string, priority int32, processor JobProcessor) error
+	OnCancel(listener CancelListener)
 }
-
-      

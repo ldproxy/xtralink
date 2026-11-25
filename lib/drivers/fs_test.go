@@ -113,7 +113,7 @@ func TestFSDriver_SyncBackWithManifestCarriesOnlyLocalChanges(t *testing.T) {
 		t.Fatalf("RecordManifest: %v", err)
 	}
 
-	writeFile(t, filepath.Join(remoteDir, "late.txt"), "late")    // arrives at the remote after the pull
+	writeFile(t, filepath.Join(remoteDir, "late.txt"), "late")     // arrives at the remote after the pull
 	writeFile(t, filepath.Join(remoteDir, "b.txt"), "remote edit") // changed at the remote, unchanged locally
 	if err := os.Remove(filepath.Join(remote.ResolvedLocalPath, "a.txt")); err != nil {
 		t.Fatalf("Remove: %v", err)

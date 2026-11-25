@@ -3,15 +3,14 @@
 package model
 
 type JobList struct {
-  Jobs []Job `json:"jobs"`
+	Jobs []Job `json:"jobs"`
 }
 
 func NewJobList(
-  jobs []Job,
+	jobs []Job,
 ) *JobList {
 
-  return &JobList{
-    Jobs: jobs,
-  }
+	return &JobList{
+		Jobs: jobs,
+	}
 }
-  
