@@ -5,6 +5,20 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # checkout, and the release on a version tag
+    services:
+      # The lib/jobs Redis tests skip without a reachable Redis; redis:8
+      # ships the JSON module RedisBackend needs.
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
     steps:
       - name: clone
         uses: actions/checkout@v4
@@ -12,29 +26,27 @@ jobs:
         with:
           go-version: "1.26.5"
           cache-dependency-path: ./go.sum
+      - name: check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt-formatted (run gofmt -w):"
+            echo "$unformatted"
+            exit 1
+          fi
+          go vet ./...
       - name: test
         run: go test -race -skip TestPkgPush ./...
-      - uses: bhowell2/github-substring-action@1.0.2
-        id: short-sha
-        with:
-          value: ${{ github.sha }}
-          length_from_start: 7
       - name: build
         env:
-          CMD_GIT_BRANCH: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitBranch=${{ github.ref_name }}
-          CMD_GIT_SHA: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitSha=${{ steps.short-sha.outputs.substring }}
-          CMD_GIT_TAG: github.com/interactive-instruments/xtraplatform-cli/xtractl/cmd.gitTag=${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          GIT_BRANCH: ${{ github.ref_name }}
+          GIT_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          #git config --global --add safe.directory $GITHUB_WORKSPACE
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/linux-amd64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/linux-arm64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/darwin-arm64/xtralink -ldflags="-s -w -X ${CMD_GIT_TAG} -X ${CMD_GIT_SHA} -X ${CMD_GIT_BRANCH}"
+          LDFLAGS="-s -w -X main.gitTag=${GIT_TAG} -X main.gitSha=${GITHUB_SHA::7} -X main.gitBranch=${GIT_BRANCH}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/linux-amd64/xtralink -ldflags="$LDFLAGS"
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/linux-arm64/xtralink -ldflags="$LDFLAGS"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/darwin-arm64/xtralink -ldflags="$LDFLAGS"
           cp Dockerfile dist/
-      - name: log1
-        run: |
-          ls -lR ./dist
-      - name: log2
-        run: |
           ls -lR ./dist
       - name: save
         uses: actions/upload-artifact@v4
@@ -75,17 +87,11 @@ jobs:
       - name: log1
         run: |
           ls -lR
-      - uses: bhowell2/github-substring-action@1.0.2
-        id: short-sha
-        with:
-          value: ${{ github.sha }}
-          length_from_start: 7
-      - uses: bhowell2/github-substring-action@1.0.2
-        if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
-        id: short-tag
-        with:
-          value: ${{ github.ref_name }}
-          index_of_str: "v"
+      - name: versions
+        id: version
+        run: |
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: login
         uses: docker/login-action@v3
         with:
@@ -103,7 +109,7 @@ jobs:
           pull: true
           tags: |
             ghcr.io/ldproxy/xtralink:next
-            ghcr.io/ldproxy/xtralink:next-${{steps.short-sha.outputs.substring}}
+            ghcr.io/ldproxy/xtralink:next-${{steps.version.outputs.sha}}
           platforms: |
             linux/amd64
             linux/arm64
@@ -116,7 +122,7 @@ jobs:
           pull: true
           tags: |
             ghcr.io/ldproxy/xtralink:${{ github.ref_name }}
-            ghcr.io/ldproxy/xtralink:${{ github.ref_name }}-${{steps.short-sha.outputs.substring}}
+            ghcr.io/ldproxy/xtralink:${{ github.ref_name }}-${{steps.version.outputs.sha}}
           platforms: |
             linux/amd64
             linux/arm64
@@ -128,7 +134,7 @@ jobs:
           push: true
           pull: true
           tags: |
-            ghcr.io/ldproxy/xtralink:${{ steps.short-tag.outputs.substring }}
+            ghcr.io/ldproxy/xtralink:${{ steps.version.outputs.tag }}
             ghcr.io/ldproxy/xtralink:latest
           platforms: |
             linux/amd64
