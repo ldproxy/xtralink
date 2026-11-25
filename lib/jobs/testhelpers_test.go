@@ -29,7 +29,7 @@ func requireRedis(t *testing.T) *RedisBackend {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := b.client.Ping(ctx).Err(); err != nil {
-		t.Skipf("redis not reachable at %s, skipping integration test: %v", addr, err)
+		skipOrFailWithoutRedis(t, addr, err)
 	}
 	t.Cleanup(func() { deleteClusterKeys(t, b) })
 	return b
@@ -199,4 +199,15 @@ func cleanupPartialJob(t *testing.T, b *RedisBackend, id string) {
 		b.client.LRem(ctx, b.keyTaken, 0, id)
 		b.client.Del(ctx, b.keyPartial+id)
 	})
+}
+
+// skipOrFailWithoutRedis skips a Redis test when no Redis is reachable, so
+// `go test ./...` works without one, unless REQUIRE_REDIS is set: CI sets it
+// so a missing Redis fails the build instead of quietly running fewer tests.
+func skipOrFailWithoutRedis(t *testing.T, addr string, err error) {
+	t.Helper()
+	if os.Getenv("REQUIRE_REDIS") != "" {
+		t.Fatalf("REQUIRE_REDIS is set but redis is not reachable at %s: %v", addr, err)
+	}
+	t.Skipf("redis not reachable at %s, skipping integration test: %v", addr, err)
 }

@@ -36,7 +36,9 @@ jobs:
           fi
           go vet ./...
       - name: test
-        run: go test -race -skip TestPkgPush ./...
+        env:
+          REQUIRE_REDIS: "1"
+        run: go test -race -v -skip TestPkgPush ./...
       - name: build
         env:
           GIT_BRANCH: ${{ github.ref_name }}

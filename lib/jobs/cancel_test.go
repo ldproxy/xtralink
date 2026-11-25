@@ -1,11 +1,8 @@
 package jobs
 
 import (
-	"context"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -19,38 +16,7 @@ func forEachBackend(t *testing.T, run func(t *testing.T, b Backend)) {
 	t.Helper()
 
 	t.Run("memory", func(t *testing.T) { run(t, NewMemoryBackend()) })
-	t.Run("redis", func(t *testing.T) { run(t, requireIsolatedRedis(t)) })
-}
-
-// requireIsolatedRedis returns a RedisBackend whose key namespace is private
-// to this test and removes every key it created afterwards. Cancellation
-// scans across every queue in the namespace, so sharing one with the other
-// tests would make these both slow and hard to reason about.
-func requireIsolatedRedis(t *testing.T) *RedisBackend {
-	t.Helper()
-
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		addr = "localhost:6379"
-	}
-
-	cluster := "cancel-" + uuid.NewString()
-	b := NewRedisBackend([]string{addr}, cluster)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	if err := b.client.Ping(ctx).Err(); err != nil {
-		t.Skipf("redis not reachable at %s, skipping integration test: %v", addr, err)
-	}
-
-	t.Cleanup(func() {
-		keys, err := b.client.Keys(context.Background(), "xtrasync:jobs:"+cluster+":*").Result()
-		if err == nil && len(keys) > 0 {
-			b.client.Del(context.Background(), keys...)
-		}
-	})
-
-	return b
+	t.Run("redis", func(t *testing.T) { run(t, requireRedis(t)) })
 }
 
 // cancelJob is the fixture the cases below cancel: one Job, some worker

@@ -16,6 +16,11 @@ func requireRedis(t *testing.T) *RedisLocker {
 	}
 	l := NewRedisLocker([]string{addr}, "")
 	if err := l.client.Ping(context.Background()).Err(); err != nil {
+		// CI sets REQUIRE_REDIS so a missing Redis fails the build instead
+		// of quietly skipping these tests.
+		if os.Getenv("REQUIRE_REDIS") != "" {
+			t.Fatalf("REQUIRE_REDIS is set but redis is not reachable at %s: %v", addr, err)
+		}
 		t.Skipf("redis not reachable at %s, skipping: %v", addr, err)
 	}
 	return l
