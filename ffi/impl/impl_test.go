@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -452,5 +453,33 @@ func TestJobQueue_DeleteRefusesAJobWithAPendingCleanup(t *testing.T) {
 	_ = q.backend.Done(cleanup.Id)
 	if !q.Delete(job.Id) {
 		t.Error("refused to delete a settled job")
+	}
+}
+
+func startedQueue(t *testing.T, cfg model.QueueConfiguration) *JobQueue {
+	t.Helper()
+	q := NewJobQueue()
+	if err := q.Start(cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(q.Stop)
+	return q
+}
+
+const takeRequest = `{"jsonrpc":"2.0","method":"Take","params":["` + testPartialJobKind + `","remote"],"id":7}`
+
+func TestJobQueue_RpcServesLocalQueue(t *testing.T) {
+	q := startedQueue(t, model.QueueConfiguration{Concurrency: 1, Executor: "test", Queue: model.QueueLOCAL})
+	q.PushPartial(model.PartialJobConfiguration{Kind: testPartialJobKind, Priority: 1})
+
+	response := q.Rpc(takeRequest)
+	if !strings.Contains(response, `"id":7`) || !strings.Contains(response, `"kind":"`+testPartialJobKind+`"`) {
+		t.Errorf("Rpc(Take) = %s, want the pushed PartialJob", response)
+	}
+}
+
+func TestJobQueue_RpcRefusesQueueNotStarted(t *testing.T) {
+	if response := NewJobQueue().Rpc(takeRequest); !strings.Contains(response, `"error"`) {
+		t.Errorf("Rpc(Take) = %s, want an error", response)
 	}
 }

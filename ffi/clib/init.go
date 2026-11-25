@@ -12,7 +12,7 @@
 // on from what is here — it says so and still leaves the file alone. Keep the
 // line to keep being told; remove it and nothing is reported.
 //
-// genffi:scaffold 003e2eddb25e
+// genffi:scaffold 7a535f040108
 
 package clib
 

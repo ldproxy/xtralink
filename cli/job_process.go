@@ -2,11 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/ldproxy/xtralink/app"
 	appworkflows "github.com/ldproxy/xtralink/app/workflows"
@@ -56,12 +60,43 @@ func RunJobWorkers(appCtx *app.AppContext, ctx context.Context, kind string) err
 		runner.Register(processor)
 	}
 
+	if queue := appCtx.Settings.General; queue.Queue == "rpc" && !queue.RPC.IsClient() {
+		stopServing, err := serveJobQueue(appCtx, queue.RPC.Listen)
+		if err != nil {
+			return err
+		}
+		defer stopServing()
+	}
+
 	appCtx.Logger.Info().Strs("kinds", kinds).Int("concurrency", runner.Concurrency).Msg("job runner starting")
 	if err := runner.Run(ctx); err != nil {
 		return err
 	}
 	appCtx.Logger.Info().Msg("job runner stopped")
 	return nil
+}
+
+// serveJobQueue exposes this process's queue over JSON-RPC on listen, so
+// executors in client mode can work it, until the returned stop is called.
+func serveJobQueue(appCtx *app.AppContext, listen string) (stop func(), err error) {
+	listener, err := net.Listen("tcp", listen)
+	if err != nil {
+		return nil, fmt.Errorf("serving job queue on %s: %w", listen, err)
+	}
+
+	server := &http.Server{Handler: libjobs.NewRPCHandler(appCtx.Jobs), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			appCtx.Logger.Error().Err(err).Msg("job queue rpc server stopped")
+		}
+	}()
+	appCtx.Logger.Info().Str("listen", listener.Addr().String()).Msg("serving job queue over rpc")
+
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}, nil
 }
 
 // kindsToProcess resolves the command's argument ("*" for every configured

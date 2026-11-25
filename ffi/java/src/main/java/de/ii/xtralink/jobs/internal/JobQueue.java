@@ -281,6 +281,19 @@ public final class JobQueue {
     }
   }
 
+  public static String rpc(String request) {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment ret$ = (MemorySegment) Ffi.JobQueue_Rpc$MH.invokeExact(Ffi.str(arena, request));
+
+      String out$ = Ffi.str(ret$);
+      Ffi.freeString(ret$);
+
+      return out$;
+    } catch (Throwable t) {
+      throw Ffi.rethrow(t);
+    }
+  }
+
   public static void register(String jobType, int priority, JobProcessor.Registration processor) {
     try (Arena arena = Arena.ofConfined()) {
       MemorySegment cerr$ = arena.allocate(Ffi.C_POINTER);

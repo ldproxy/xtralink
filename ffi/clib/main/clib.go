@@ -814,6 +814,12 @@ func JobQueue_Failed(clen *C.size_t) *C.char {
 	return (*C.char)(C.CBytes(result))
 }
 
+//export JobQueue_Rpc
+func JobQueue_Rpc(request *C.char) *C.char {
+	defer recoverExport("JobQueue_Rpc")
+	return C.CString(jobQueue.Rpc(C.GoString(request)))
+}
+
 //export JobQueue_Register
 func JobQueue_Register(jobType *C.char, priority C.int, processor int64, cerr **C.char) {
 	defer recoverExportErr("JobQueue_Register", cerr)

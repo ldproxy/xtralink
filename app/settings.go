@@ -36,9 +36,13 @@ type GeneralConfig struct {
 	// TargetDir is the directory every package's local mirror is created
 	// under (s. Package.LocalPath).
 	TargetDir string `yaml:"targetDir,omitempty"`
-	// Queue is "local" (in-memory, single-node only) or "redis". Default:
-	// "local".
+	// Queue is "local" (in-memory, single-node only), "redis" or "rpc"
+	// (s. RPC). Default: "local".
 	Queue string `yaml:"queue,omitempty"`
+	// RPC configures queue "rpc". With URL set, this process owns no queue
+	// and works the one served at URL (client mode). Without it, this process
+	// owns an in-memory queue and serves it on Listen (server mode).
+	RPC RPCConfig `yaml:"rpc,omitempty"`
 	// Cluster identifies a group of instances that share state (the job
 	// queue, and the workflow lock) through Redis. Only instances with the
 	// same configuration should use the same value. If not set, falls back
@@ -51,6 +55,15 @@ type GeneralConfig struct {
 	// one node; more than one switches to cluster mode.
 	Redis []string `yaml:"redis,omitempty"`
 }
+
+type RPCConfig struct {
+	// Listen is the "host:port" the queue is served on in server mode.
+	Listen string `yaml:"listen,omitempty"`
+	// URL is the queue endpoint to connect to in client mode.
+	URL string `yaml:"url,omitempty"`
+}
+
+func (c RPCConfig) IsClient() bool { return c.URL != "" }
 
 type Package struct {
 	Type      string `yaml:"type"`
@@ -221,9 +234,13 @@ func validateAndNormalizeJobQueue(cfg *GeneralConfig) error {
 	}
 	cfg.Cluster = strings.TrimSpace(cfg.Cluster)
 	switch cfg.Queue {
-	case "local", "redis":
+	case "local", "redis", "rpc":
 	default:
-		return fmt.Errorf("settings.queue=%q is invalid (allowed: local, redis)", cfg.Queue)
+		return fmt.Errorf("settings.queue=%q is invalid (allowed: local, redis, rpc)", cfg.Queue)
+	}
+
+	if err := validateRPC(cfg); err != nil {
+		return err
 	}
 
 	if cfg.MaxConcurrent == 0 {
@@ -243,6 +260,24 @@ func validateAndNormalizeJobQueue(cfg *GeneralConfig) error {
 		return fmt.Errorf("settings.queue=redis requires at least one entry in settings.redis")
 	}
 
+	return nil
+}
+
+func validateRPC(cfg *GeneralConfig) error {
+	cfg.RPC.Listen = strings.TrimSpace(cfg.RPC.Listen)
+	cfg.RPC.URL = strings.TrimSpace(cfg.RPC.URL)
+	rpcConfigured := cfg.RPC.Listen != "" || cfg.RPC.URL != ""
+
+	switch {
+	case cfg.Queue != "rpc" && rpcConfigured:
+		return fmt.Errorf("settings.rpc is only used with settings.queue=rpc")
+	case cfg.Queue != "rpc":
+		return nil
+	case cfg.RPC.Listen != "" && cfg.RPC.URL != "":
+		return fmt.Errorf("settings.rpc: set either listen (server mode) or url (client mode), not both")
+	case cfg.RPC.Listen == "" && cfg.RPC.URL == "":
+		return fmt.Errorf("settings.queue=rpc requires settings.rpc.listen (server mode) or settings.rpc.url (client mode)")
+	}
 	return nil
 }
 

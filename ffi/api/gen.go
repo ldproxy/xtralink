@@ -34,6 +34,7 @@ type JobQueue interface {
 	List() model.JobList
 	Taken() model.PartialJobList
 	Failed() model.PartialJobList
+	Rpc(request string) string
 	Register(jobType string, priority int32, processor JobProcessor) error
 	OnCancel(listener CancelListener)
 }

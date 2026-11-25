@@ -270,6 +270,48 @@ settings:
 	}
 }
 
+func TestLoadSettings_RPCQueueModes(t *testing.T) {
+	cases := map[string]struct {
+		rpc        string
+		wantClient bool
+		wantErr    bool
+	}{
+		"server":  {rpc: "    listen: \":7080\"\n", wantClient: false},
+		"client":  {rpc: "    url: http://queue:7080/\n", wantClient: true},
+		"both":    {rpc: "    listen: \":7080\"\n    url: http://queue:7080/\n", wantErr: true},
+		"neither": {rpc: "    listen: \"\"\n", wantErr: true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, minimalPackage+"\nsettings:\n  queue: rpc\n  rpc:\n"+c.rpc)
+			settings, err := LoadSettings(path)
+			if c.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadSettings: %v", err)
+			}
+			if settings.General.RPC.IsClient() != c.wantClient {
+				t.Errorf("IsClient = %v, want %v", settings.General.RPC.IsClient(), c.wantClient)
+			}
+		})
+	}
+}
+
+func TestLoadSettings_RejectsRPCSettingsWithoutRPCQueue(t *testing.T) {
+	path := writeConfig(t, minimalPackage+`
+settings:
+  rpc:
+    url: http://queue:7080/
+`)
+	if _, err := LoadSettings(path); err == nil {
+		t.Fatal("expected an error for settings.rpc without settings.queue=rpc")
+	}
+}
+
 func TestLoadSettings_RejectsNegativeMaxConcurrent(t *testing.T) {
 	path := writeConfig(t, minimalPackage+`
 settings:

@@ -297,6 +297,15 @@ func (s *JobQueue) Failed() model.PartialJobList {
 	return model.PartialJobList{PartialJobs: values(partialJobs)}
 }
 
+// Rpc serves a LOCAL queue to xtralink executors in rpc client mode. A Redis
+// queue is not served: executors reach it directly.
+func (s *JobQueue) Rpc(request string) string {
+	if _, local := s.backend.(*jobs.MemoryBackend); !s.started || !local {
+		return string(jobs.RPCUnavailable([]byte(request), "job queue is not served by this process"))
+	}
+	return string(jobs.NewRPCHandler(s.backend).Handle([]byte(request)))
+}
+
 func values[T any](pointers []*T) []T {
 	result := make([]T, 0, len(pointers))
 	for _, pointer := range pointers {

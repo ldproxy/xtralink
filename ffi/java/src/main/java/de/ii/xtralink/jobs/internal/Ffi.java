@@ -672,6 +672,9 @@ final class Ffi {
   static final MethodHandle JobQueue_Failed$MH =
       downcall("JobQueue_Failed", FunctionDescriptor.of(C_POINTER, C_POINTER));
 
+  static final MethodHandle JobQueue_Rpc$MH =
+      downcall("JobQueue_Rpc", FunctionDescriptor.of(C_POINTER, C_POINTER));
+
   static final MethodHandle JobQueue_Register$MH =
       downcall("JobQueue_Register", FunctionDescriptor.ofVoid(C_POINTER, C_INT, C_LONG_LONG, C_POINTER));
 

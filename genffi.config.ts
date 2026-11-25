@@ -288,6 +288,13 @@ export namespace GenApi {
     failed: () => GenModel.Config.PartialJobList;
 
     /**
+     * Handles one JSON-RPC 2.0 request against this queue (s.
+     * lib/jobs/rpc.go) and returns the response. Only a started LOCAL queue
+     * is served; any other answers with a JSON-RPC error.
+     */
+    rpc: (request: string) => string;
+
+    /**
      * @throws
      */
     register: (jobType: string, priority: int, processor: JobProcessor) => void;

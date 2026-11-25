@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,4 +199,35 @@ func TestRunJobWorkers_WithNoJobsConfiguredIsError(t *testing.T) {
 	if err := RunJobWorkers(appCtx, context.Background(), "no-such-kind"); err == nil {
 		t.Fatal("expected an error for an unknown kind")
 	}
+}
+
+func TestServeJobQueue_ServesTheOwnedQueue(t *testing.T) {
+	owner := jobs.NewMemoryBackend()
+	partialJob := jobs.NewPartialJob("partial-1", "step-a", 1, "")
+	if err := owner.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+	appCtx := &app.AppContext{Logger: zerolog.Nop(), Jobs: owner}
+
+	listen := freeLocalAddress(t)
+	stop, err := serveJobQueue(appCtx, listen)
+	if err != nil {
+		t.Fatalf("serveJobQueue: %v", err)
+	}
+	defer stop()
+
+	taken, err := jobs.NewRemoteBackend("http://"+listen).Take("step-a", "remote")
+	if err != nil || taken == nil || taken.Id != "partial-1" {
+		t.Fatalf("Take = %v, %v; want partial-1", taken, err)
+	}
+}
+
+func freeLocalAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().String()
 }

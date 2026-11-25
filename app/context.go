@@ -67,10 +67,14 @@ func NewAppContext(name string, version string, verbosity uint, settings *Settin
 
 // newJobsBackend picks the job queue backend from Settings.General.Queue -
 // "redis" connects to Settings.General.Redis (single node or cluster, s.
-// jobs.NewRedisBackend), anything else (including a zero-value Settings
+// jobs.NewRedisBackend), "rpc" in client mode connects to
+// Settings.General.RPC.URL, anything else (including a zero-value Settings
 // that never went through LoadSettings, e.g. in tests) defaults to the
 // in-memory backend, matching JobsConfiguration's own "LOCAL" default.
 func newJobsBackend(settings *Settings, logger zerolog.Logger) jobs.Backend {
+	if settings != nil && settings.General.Queue == "rpc" && settings.General.RPC.IsClient() {
+		return jobs.NewRemoteBackend(settings.General.RPC.URL)
+	}
 	if settings != nil && strings.EqualFold(settings.General.Queue, "redis") {
 		backend := jobs.NewRedisBackend(settings.General.Redis, settings.General.Cluster)
 		backend.Logger = logger
