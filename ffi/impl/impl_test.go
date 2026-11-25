@@ -1,7 +1,9 @@
 package impl
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -279,5 +281,38 @@ func TestJobQueue_WaitForUnknownIdIsZero(t *testing.T) {
 	}
 	if partialJob := q.WaitForPartial(uuid.NewString()); partialJob.Id != "" {
 		t.Errorf("WaitForPartial unknown id = %+v, want zero PartialJob", partialJob)
+	}
+}
+
+type slowProcessor struct{ finished *atomic.Bool }
+
+func (p slowProcessor) Process(model.PartialJob, model.Job) (model.JobResult, error) {
+	time.Sleep(100 * time.Millisecond)
+	p.finished.Store(true)
+	return model.Success(), nil
+}
+
+func TestJobQueue_StopWaitsForInFlightWork(t *testing.T) {
+	q := NewJobQueue()
+	var finished atomic.Bool
+	if err := q.Register(testPartialJobKind, 1000, slowProcessor{&finished}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := q.Start(model.QueueConfiguration{Concurrency: 1, Executor: "test", Queue: model.QueueLOCAL}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pushJob(t, q)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if taken, _ := q.backend.GetTaken(); len(taken) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	q.Stop()
+	if !finished.Load() {
+		t.Error("Stop returned while the partial job was still running")
 	}
 }

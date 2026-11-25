@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,6 +78,12 @@ type Runner struct {
 	// (Java: one hour). Zero removes it at the first sweep after it
 	// finishes; a negative value keeps finished Jobs indefinitely.
 	JobRetention time.Duration
+	// ShutdownTimeout bounds how long Run waits for in-flight PartialJobs
+	// once its context is cancelled. Java waits 30 s before shutdownNow;
+	// the default stays below Docker's 10 s stop grace period instead, so
+	// the host still gets to finish its own shutdown before SIGKILL. Zero
+	// or less waits without a bound.
+	ShutdownTimeout time.Duration
 	// OnError receives errors from background job processing that would
 	// otherwise be silently dropped (Take/Done/Error/StartJob failures).
 	OnError func(error)
@@ -105,6 +112,7 @@ func NewRunner(backend Backend, executor string) *Runner {
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
+		ShutdownTimeout:      8 * time.Second,
 		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
@@ -120,6 +128,7 @@ func NewRunner2() *Runner {
 		OnHoldRetryInterval:  -1,
 		HousekeepingInterval: time.Minute,
 		JobRetention:         time.Hour,
+		ShutdownTimeout:      8 * time.Second,
 		Logger:               zerolog.Nop(),
 		processors:           make(map[string]*JobProcessor),
 		inFlight:             make(map[string]bool),
@@ -167,10 +176,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			r.Logger.Debug().Msg("runner stopping, waiting for in-flight partial jobs")
-			wg.Wait()
-			r.Logger.Debug().Msg("runner stopped")
-			return nil
+			return r.drain(&wg)
 		default:
 		}
 
@@ -212,13 +218,40 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Logger.Trace().Strs("kinds", types).Msg("nothing to take, sleeping")
 			select {
 			case <-ctx.Done():
-				r.Logger.Debug().Msg("runner stopping, waiting for in-flight partial jobs")
-				wg.Wait()
-				r.Logger.Debug().Msg("runner stopped")
-				return nil
+				return r.drain(&wg)
 			case <-time.After(r.PollInterval):
 			}
 		}
+	}
+}
+
+// drain waits for in-flight work after Run's context is cancelled, for at
+// most ShutdownTimeout. Go cannot stop a running goroutine, so on timeout
+// the abandoned PartialJobs keep running and stay taken: if they finish,
+// they report as usual, and if the process exits first, the orphan sweep of
+// another Runner reclaims them.
+func (r *Runner) drain(wg *sync.WaitGroup) error {
+	r.Logger.Debug().Dur("timeout", r.ShutdownTimeout).Msg("runner stopping, waiting for in-flight partial jobs")
+
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+
+	var timeout <-chan time.Time
+	if r.ShutdownTimeout > 0 {
+		timeout = time.After(r.ShutdownTimeout)
+	}
+
+	select {
+	case <-drained:
+		r.Logger.Debug().Msg("runner stopped")
+		return nil
+	case <-timeout:
+		abandoned := r.inFlightIds()
+		r.Logger.Debug().Strs("partialJobs", abandoned).Msg("runner stopped, in-flight partial jobs abandoned")
+		return fmt.Errorf("shutdown timed out after %v, partial jobs still running: %s", r.ShutdownTimeout, strings.Join(abandoned, ", "))
 	}
 }
 
@@ -427,6 +460,18 @@ func (r *Runner) markInFlight(partialJobID string) {
 		r.inFlight = make(map[string]bool)
 	}
 	r.inFlight[partialJobID] = true
+}
+
+func (r *Runner) inFlightIds() []string {
+	r.inFlightMu.Lock()
+	defer r.inFlightMu.Unlock()
+
+	ids := make([]string, 0, len(r.inFlight))
+	for id := range r.inFlight {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (r *Runner) clearInFlight(partialJobID string) {

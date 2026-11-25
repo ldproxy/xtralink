@@ -701,3 +701,71 @@ func TestJobProcessor_OrphanTimeoutDefaultsToJavasOneMinute(t *testing.T) {
 		}
 	}
 }
+
+// blockingRunner runs one PartialJob whose processor blocks until release is
+// closed, and returns once the processor has started.
+func blockingRunner(t *testing.T, shutdownTimeout time.Duration) (r *Runner, partialJobID string, release chan struct{}, stop func() (error, time.Duration)) {
+	t.Helper()
+	b := NewMemoryBackend()
+	jobType := uniqueType("shutdown")
+
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, "")
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	started := make(chan struct{})
+	release = make(chan struct{})
+	r = NewRunner(b, "test")
+	r.PollInterval = 5 * time.Millisecond
+	r.ShutdownTimeout = shutdownTimeout
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+		close(started)
+		<-release
+		return model.Success()
+	}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("processor never started")
+	}
+
+	return r, partialJob.Id, release, func() (error, time.Duration) {
+		begin := time.Now()
+		cancel()
+		select {
+		case err := <-done:
+			return err, time.Since(begin)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run did not return")
+			return nil, 0
+		}
+	}
+}
+
+func TestRunner_ShutdownGivesUpOnInFlightWorkAfterTimeout(t *testing.T) {
+	_, partialJobID, release, stop := blockingRunner(t, 50*time.Millisecond)
+	defer close(release)
+
+	err, took := stop()
+	if err == nil || !strings.Contains(err.Error(), partialJobID) {
+		t.Errorf("expected a timeout error naming %s, got %v", partialJobID, err)
+	}
+	if took > time.Second {
+		t.Errorf("Run took %v to give up, want about the 50ms timeout", took)
+	}
+}
+
+func TestRunner_ShutdownWaitsForInFlightWorkWithinTimeout(t *testing.T) {
+	_, _, release, stop := blockingRunner(t, 5*time.Second)
+	time.AfterFunc(50*time.Millisecond, func() { close(release) })
+
+	if err, _ := stop(); err != nil {
+		t.Errorf("expected a clean shutdown once the work finished, got %v", err)
+	}
+}

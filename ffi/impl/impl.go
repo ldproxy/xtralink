@@ -19,6 +19,7 @@ type JobQueue struct {
 	backend        jobs.Backend
 	runner         *jobs.Runner
 	stopRunner     context.CancelFunc
+	runnerStopped  chan struct{}
 	started        bool
 	cancelListener atomic.Pointer[api.CancelListener]
 }
@@ -62,14 +63,21 @@ func (s *JobQueue) Start(cfg model.QueueConfiguration) (err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopRunner = cancel
-	go func() { s.runner.Run(ctx) }()
+	s.runnerStopped = make(chan struct{})
+	go func(runner *jobs.Runner, stopped chan struct{}) {
+		defer close(stopped)
+		if err := runner.Run(ctx); err != nil && runner.OnError != nil {
+			runner.OnError(err)
+		}
+	}(s.runner, s.runnerStopped)
 	s.started = true
 
 	return nil
 }
 
 // Stops the dispatch loop but keeps runner and registrations, so a later Start
-// resumes with the same processors.
+// resumes with the same processors. Blocks until in-flight PartialJobs have
+// finished, for at most the Runner's ShutdownTimeout.
 func (s *JobQueue) Stop() {
 	defer func() { recover() }()
 
@@ -78,7 +86,9 @@ func (s *JobQueue) Stop() {
 	}
 
 	s.stopRunner()
+	<-s.runnerStopped
 	s.stopRunner = nil
+	s.runnerStopped = nil
 	s.started = false
 }
 
