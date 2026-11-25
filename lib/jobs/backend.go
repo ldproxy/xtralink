@@ -82,7 +82,8 @@ type Backend interface {
 
 	// StartJob sets Job.startedAt to now, if not already started (mirrors
 	// JobSet.start() in Java). Called by the Runner for the first
-	// non-setup PartialJob of a Job that gets taken.
+	// non-setup PartialJob of a Job that gets taken. A finished Job is left
+	// alone, so its cleanup never starts a Job that failed before starting.
 	StartJob(jobID string) error
 	// SetProgressDetails overwrites Job.progressDetails wholesale. This is
 	// the one-time, type-specific initial build done by a setup step;

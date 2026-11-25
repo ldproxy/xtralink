@@ -36,3 +36,10 @@ func IsSettled(job *model.Job) bool {
 	}
 	return job.Cleanup == nil || job.Cleanup.FinishedAt > 0
 }
+
+// sameTake reports whether a and b are copies of the same take of a
+// PartialJob. Take stamps Executor and StartedAt afresh every time, so a
+// copy read before a re-queue and a later take never match.
+func sameTake(a, b *model.PartialJob) bool {
+	return a.Executor == b.Executor && a.StartedAt == b.StartedAt
+}

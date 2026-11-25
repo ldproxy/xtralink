@@ -75,3 +75,9 @@ func logPartialJobFailed(logger zerolog.Logger, partialJob *model.PartialJob, me
 func logStaleUpdate(logger zerolog.Logger, partialJobID string) {
 	logger.Debug().Str("partialJob", partialJobID).Msg("progress for partial job that is no longer taken ignored")
 }
+
+// logStaleRequeue reports a re-queue of a take that is over: the PartialJob
+// finished, or was re-queued and taken again, since the caller read it.
+func logStaleRequeue(logger zerolog.Logger, partialJobID string) {
+	logger.Debug().Str("partialJob", partialJobID).Msg("partial job no longer in the take seen by the caller, not re-queued")
+}

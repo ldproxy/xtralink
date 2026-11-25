@@ -430,3 +430,27 @@ func TestJobQueue_RestartKeepsTheMemoryQueue(t *testing.T) {
 		t.Error("job pushed before Stop is gone after Start")
 	}
 }
+
+// A finished Job whose cleanup has not run yet is not settled: deleting it
+// then would lose the cleanup's outcome and its follow-ups.
+func TestJobQueue_DeleteRefusesAJobWithAPendingCleanup(t *testing.T) {
+	q := newTestJobQueue()
+	job := jobs.NewJobFromConfiguration(model.JobConfiguration{Kind: testJobKind, Priority: 1000, Partials: []string{testPartialJobKind}, Cleanup: true})
+	if err := q.backend.PushJob(&job); err != nil {
+		t.Fatalf("PushJob: %v", err)
+	}
+	part, _ := q.backend.Take(testPartialJobKind, "test")
+	_ = q.backend.StartJob(job.Id)
+	_ = q.backend.UpdatePartialJob(part.Id, 1)
+	_ = q.backend.Done(part.Id)
+
+	if q.Delete(job.Id) {
+		t.Fatal("deleted a job whose cleanup has not run")
+	}
+
+	cleanup, _ := q.backend.Take(jobs.CleanupKind(testJobKind), "test")
+	_ = q.backend.Done(cleanup.Id)
+	if !q.Delete(job.Id) {
+		t.Error("refused to delete a settled job")
+	}
+}

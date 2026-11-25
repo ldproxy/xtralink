@@ -143,14 +143,19 @@ func (b *MemoryBackend) PushPartialJob(partialJob *model.PartialJob, untake bool
 // pushPartialJobLocked with untake re-queues a taken PartialJob, and only a
 // taken one (s. RedisBackend.PushPartialJob).
 func (b *MemoryBackend) pushPartialJobLocked(partialJob *model.PartialJob, untake bool) error {
-	if untake {
-		if !b.taken[partialJob.Id] {
-			b.Logger.Debug().Str("partialJob", partialJob.Id).Msg("partial job no longer taken, not re-queued")
-			return nil
-		}
-		delete(b.taken, partialJob.Id)
+	if !untake {
+		return b.enqueueLocked(partialJob, false)
 	}
-	return b.enqueueLocked(partialJob, untake)
+
+	stored := b.partial[partialJob.Id]
+	if !b.taken[partialJob.Id] || stored == nil || !sameTake(stored, partialJob) {
+		logStaleRequeue(b.Logger, partialJob.Id)
+		return nil
+	}
+	delete(b.taken, partialJob.Id)
+	// The stored copy, not the caller's: it carries the progress reported
+	// since the caller read it.
+	return b.enqueueLocked(stored, true)
 }
 
 // enqueueLocked stores partialJob and puts it into its queue. A requeue goes
@@ -491,7 +496,7 @@ func (b *MemoryBackend) StartJob(jobID string) error {
 	defer b.mu.Unlock()
 
 	job := b.jobs[jobID]
-	if job == nil {
+	if job == nil || job.FinishedAt > 0 {
 		return nil
 	}
 	job.StartedAt = nowMillis()

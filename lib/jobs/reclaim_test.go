@@ -97,46 +97,55 @@ func TestUpdatePartialJob_IgnoresAPartialJobNoLongerTaken(t *testing.T) {
 
 // A processor that runs longer than the orphan timeout without reporting
 // progress must not be reclaimed by another Runner while its own Runner's
-// heartbeat keeps it fresh.
+// heartbeat keeps it fresh. The sweeping Runner cannot take anything
+// itself (Concurrency 0), so the one run is the worker's.
 func TestRunner_HeartbeatKeepsALongRunningPartialJobFromBeingReclaimed(t *testing.T) {
-	b := NewMemoryBackend()
-	kind := uniqueType("heartbeat")
+	forBothBackends(t, func(t *testing.T, b Backend) {
+		kind := uniqueType("heartbeat")
 
-	var calls atomic.Int32
-	release := make(chan struct{})
-	worker := NewRunner(b, "worker")
-	worker.PollInterval = 5 * time.Millisecond
-	worker.HeartbeatInterval = 10 * time.Millisecond
-	worker.HousekeepingInterval = 0
-	worker.Register(&JobProcessor{Kind: kind, Priority: 1, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
-		calls.Add(1)
-		<-release
-		return model.Success()
-	}})
+		var runs atomic.Int32
+		release := make(chan struct{})
+		worker := NewRunner(b, "worker")
+		worker.PollInterval = 5 * time.Millisecond
+		worker.HeartbeatInterval = 10 * time.Millisecond
+		worker.HousekeepingInterval = 0
+		worker.Register(&JobProcessor{Kind: kind, Priority: 1, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			runs.Add(1)
+			<-release
+			return model.Success()
+		}})
 
-	sweeper := NewRunner(b, "sweeper")
-	sweeper.HousekeepingInterval = 10 * time.Millisecond
-	sweeper.Register(&JobProcessor{Kind: kind, Priority: 1, OrphanTimeout: 50 * time.Millisecond, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
-		calls.Add(1)
-		return model.Success()
-	}})
+		sweeper := NewRunner(b, "sweeper")
+		sweeper.Concurrency = 0
+		sweeper.HeartbeatInterval = 0
+		sweeper.HousekeepingInterval = 10 * time.Millisecond
+		sweeper.Register(&JobProcessor{Kind: kind, Priority: 1, OrphanTimeout: 50 * time.Millisecond, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			t.Error("the sweeper must not run anything")
+			return model.Success()
+		}})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stopped := make(chan struct{}, 2)
-	for _, r := range []*Runner{worker, sweeper} {
-		go func(r *Runner) { _ = r.Run(ctx); stopped <- struct{}{} }(r)
-	}
-	if err := b.PushPartialJob(NewPartialJob(uuid.NewString(), kind, 1, ""), false); err != nil {
-		t.Fatalf("PushPartialJob: %v", err)
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		stopped := make(chan struct{}, 2)
+		for _, r := range []*Runner{worker, sweeper} {
+			go func(r *Runner) { _ = r.Run(ctx); stopped <- struct{}{} }(r)
+		}
+		partialJob := NewPartialJob(uuid.NewString(), kind, 1, "")
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
+		}
 
-	time.Sleep(300 * time.Millisecond) // six orphan timeouts
-	close(release)
-	cancel()
-	<-stopped
-	<-stopped
+		time.Sleep(300 * time.Millisecond) // six orphan timeouts
+		queued, _ := b.GetOpen(kind)
+		close(release)
+		cancel()
+		<-stopped
+		<-stopped
 
-	if got := calls.Load(); got != 1 {
-		t.Errorf("partial job processed %d times, want 1", got)
-	}
+		if got := runs.Load(); got != 1 {
+			t.Errorf("partial job run %d times by the worker, want 1", got)
+		}
+		if len(queued) != 0 {
+			t.Errorf("partial job was re-queued while the worker ran it")
+		}
+	})
 }

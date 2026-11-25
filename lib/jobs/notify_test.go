@@ -175,7 +175,7 @@ func TestRedisBackend_ListenerFollowsJobAdvancedElsewhere(t *testing.T) {
 	}
 
 	got, calls := listener.last()
-	if got.FinishedAt == 0 || got.Progress.Current != 1 {
+	if got.FinishedAt <= 0 || got.Progress.Current != 1 {
 		t.Fatalf("last delivered state after %d calls: finishedAt=%d current=%d, want the finished Job", calls, got.FinishedAt, got.Progress.Current)
 	}
 	if watched := pusher.watchedJobs(); len(watched) != 0 {

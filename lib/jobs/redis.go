@@ -288,25 +288,57 @@ func (b *RedisBackend) queuePartials(job *model.Job) error {
 	return nil
 }
 
-// PushPartialJob with untake re-queues a taken PartialJob, and only a taken
-// one: the caller's copy may be stale (an orphan sweep, an on-hold retry, a
-// host re-push), and by the time it arrives the PartialJob may have finished
-// or been re-queued by someone else already. Removing it from the taken list
-// first is the check, since LREM is atomic and only one caller can win it.
+// PushPartialJob with untake re-queues a taken PartialJob, and only the take
+// the caller saw (s. sameTake): the caller's copy may be stale (an orphan
+// sweep, an on-hold retry, a host re-push), and by the time it arrives the
+// PartialJob may have finished, or been re-queued by someone else and taken
+// again. WATCH on the PartialJob's document makes the check and the removal
+// from the taken list one step, since every Take, Done and heartbeat
+// rewrites or deletes that document.
 func (b *RedisBackend) PushPartialJob(partialJob *model.PartialJob, untake bool) error {
 	ctx := context.Background()
+	if !untake {
+		return b.enqueue(ctx, partialJob, false)
+	}
 
-	if untake {
-		removed, err := b.client.LRem(ctx, b.keyTaken, 1, partialJob.Id).Result()
+	key := b.keyPartial + partialJob.Id
+	var stored *model.PartialJob
+	untakeIfSameTake := func(tx *redis.Tx) error {
+		var current model.PartialJob
+		found, err := jsonGetFrom(ctx, tx, key, &current)
+		if err != nil || !found || !sameTake(&current, partialJob) {
+			return err
+		}
+		var removed *redis.IntCmd
+		if _, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			removed = pipe.LRem(ctx, b.keyTaken, 1, partialJob.Id)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if removed.Val() > 0 {
+			stored = &current
+		}
+		return nil
+	}
+
+	for range 10 {
+		err := b.client.Watch(ctx, untakeIfSameTake, key)
+		if err == redis.TxFailedErr {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		if removed == 0 {
-			b.Logger.Debug().Str("partialJob", partialJob.Id).Msg("partial job no longer taken, not re-queued")
+		if stored == nil {
+			logStaleRequeue(b.Logger, partialJob.Id)
 			return nil
 		}
+		// The stored copy, not the caller's: it carries the progress
+		// reported since the caller read it.
+		return b.enqueue(ctx, stored, true)
 	}
-	return b.enqueue(ctx, partialJob, untake)
+	return fmt.Errorf("re-queueing partial job %s: too much contention", partialJob.Id)
 }
 
 // enqueue stores partialJob and puts it into its queue. A requeue goes to
@@ -803,7 +835,7 @@ func (b *RedisBackend) StartJob(jobID string) error {
 	start := func(tx *redis.Tx) error {
 		var job model.Job
 		found, err := jsonGetFrom(ctx, tx, key, &job)
-		if err != nil || !found {
+		if err != nil || !found || job.FinishedAt > 0 {
 			return err
 		}
 		job.StartedAt = nowMillis()
