@@ -459,11 +459,12 @@ func (r *Runner) reapOrphans() {
 	}
 }
 
-// cleanupFinishedJobs removes Jobs that have been finished and idle for
+// cleanupFinishedJobs removes Jobs that have been settled and idle for
 // longer than their retention (mirrors cleanupOldJobSets in
-// JobRunner.java). The gate is FinishedAt rather than Java's isDone(): a Job
+// JobRunner.java). The gate is IsSettled rather than Java's isDone(): a Job
 // force-failed by a failing setup step never reaches current == total, so
-// Java's gate would leak it forever.
+// Java's gate would leak it forever, and a Job removed before its cleanup
+// ran would lose the cleanup's outcome and its follow-ups.
 func (r *Runner) cleanupFinishedJobs() {
 	jobs, err := r.Backend.GetJobs()
 	if err != nil {
@@ -477,7 +478,7 @@ func (r *Runner) cleanupFinishedJobs() {
 		if retention < 0 {
 			continue
 		}
-		if job.FinishedAt > 0 && now-job.UpdatedAt >= retention.Milliseconds() {
+		if IsSettled(job) && now-job.UpdatedAt >= retention.Milliseconds() {
 			r.Logger.Debug().Str("job", job.Id).Dur("retention", retention).Msg("removing finished job")
 			r.reportError(r.DeleteJob(job))
 		}

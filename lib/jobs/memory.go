@@ -472,6 +472,10 @@ func (b *MemoryBackend) pushFollowUpsLocked(job *model.Job) error {
 		logFollowUpsSkipped(b.Logger, job, "sequenced job failed")
 		return nil
 	}
+	if job.HasErrors() && !job.IsStarted() {
+		logFollowUpsSkipped(b.Logger, job, "job failed before any work started")
+		return nil
+	}
 	logFollowUpsPushed(b.Logger, job)
 
 	for _, followUp := range job.FollowUps {

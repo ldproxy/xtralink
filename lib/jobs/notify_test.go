@@ -182,3 +182,47 @@ func TestRedisBackend_ListenerFollowsJobAdvancedElsewhere(t *testing.T) {
 		t.Errorf("listener still registered after its Job finished: %v", watched)
 	}
 }
+
+// A finished Job still changes while its cleanup runs, and a failing
+// cleanup turns it FAILED: the listener has to stay for that and end on the
+// stored status.
+func TestRedisBackend_ListenerFollowsAFailingCleanup(t *testing.T) {
+	b := requireRedis(t)
+	worker := uniqueType("worker")
+	kind := uniqueType("job")
+	job := NewJobFromConfiguration(model.JobConfiguration{Kind: kind, Priority: 1, Partials: []string{worker}, Cleanup: true})
+	cleanupJob(t, b, job.Id)
+
+	listener := &recordingJobListener{}
+	if err := b.PushJobListen(&job, listener); err != nil {
+		t.Fatalf("PushJobListen: %v", err)
+	}
+	part, _ := b.Take(worker, "a")
+	_ = b.StartJob(job.Id)
+	_ = b.UpdatePartialJob(part.Id, 1)
+	_ = b.Done(part.Id)
+
+	cleanup, _ := b.Take(CleanupKind(kind), "a")
+	if cleanup == nil {
+		t.Fatal("cleanup was never queued")
+	}
+	_ = b.Error(cleanup.Id, "cleanup broke", false)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _ := listener.last(); got.Status == model.StatusFAILED {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, calls := listener.last(); got.Status != model.StatusFAILED {
+		t.Errorf("listener ended on %s after %d calls, want FAILED", got.Status, calls)
+	}
+	deadline = time.Now().Add(time.Second)
+	for len(b.watchedJobs()) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if watched := b.watchedJobs(); len(watched) != 0 {
+		t.Errorf("listener still registered after the cleanup finished: %v", watched)
+	}
+}

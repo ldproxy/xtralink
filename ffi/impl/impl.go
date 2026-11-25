@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"fmt"
+	"io"
 	"runtime/debug"
 	"sync/atomic"
 	"time"
@@ -49,16 +50,7 @@ func (s *JobQueue) Start(cfg model.QueueConfiguration) (err error) {
 		return nil
 	}
 
-	if cfg.Queue == model.QueueREDIS {
-		cluster := ""
-		if cfg.Cluster != nil {
-			cluster = *cfg.Cluster
-		}
-		s.backend = jobs.NewRedisBackend(cfg.Redis, cluster)
-	} else {
-		s.backend = jobs.NewMemoryBackend()
-	}
-
+	s.backend = s.backendFor(cfg)
 	s.runner.Backend = s.backend
 	s.runner.Concurrency = cfg.Concurrency
 	s.runner.Executor = cfg.Executor
@@ -77,9 +69,28 @@ func (s *JobQueue) Start(cfg model.QueueConfiguration) (err error) {
 	return nil
 }
 
+// backendFor builds the backend for a Start. A memory backend from an
+// earlier Start is kept, because it holds the queue itself; a Redis backend
+// was closed by Stop and keeps nothing worth reusing, since its state lives
+// in Redis.
+func (s *JobQueue) backendFor(cfg model.QueueConfiguration) jobs.Backend {
+	if cfg.Queue == model.QueueREDIS {
+		cluster := ""
+		if cfg.Cluster != nil {
+			cluster = *cfg.Cluster
+		}
+		return jobs.NewRedisBackend(cfg.Redis, cluster)
+	}
+	if memory, ok := s.backend.(*jobs.MemoryBackend); ok {
+		return memory
+	}
+	return jobs.NewMemoryBackend()
+}
+
 // Stops the dispatch loop but keeps runner and registrations, so a later Start
 // resumes with the same processors. Blocks until in-flight PartialJobs have
-// finished, for at most the Runner's ShutdownTimeout.
+// finished, for at most the Runner's ShutdownTimeout, then releases the
+// backend's connections: calls reaching a Redis backend after Stop fail.
 func (s *JobQueue) Stop() {
 	defer func() { recover() }()
 
@@ -92,6 +103,12 @@ func (s *JobQueue) Stop() {
 	s.stopRunner = nil
 	s.runnerStopped = nil
 	s.started = false
+
+	if closer, ok := s.backend.(io.Closer); ok {
+		if err := closer.Close(); err != nil && s.runner.OnError != nil {
+			s.runner.OnError(err)
+		}
+	}
 }
 
 func (s *JobQueue) Register(jobType string, priority int32, processor api.JobProcessor) (err error) {
@@ -237,13 +254,13 @@ func (s *JobQueue) OnCancel(listener api.CancelListener) {
 	s.cancelListener.Store(&listener)
 }
 
-// Delete retires a finished Job ahead of its TTL. An unfinished Job is left
-// alone: its PartialJobs may still be queued or running, and pulling the Job
-// out from under them is what Cancel is for. It goes through the runner so
+// Delete retires a settled Job ahead of its TTL. Any other Job is left
+// alone: its PartialJobs, cleanup included, may still be queued or running,
+// and pulling the Job out from under them is what Cancel is for. It goes through the runner so
 // the Job's finalize processor runs exactly as it does on TTL expiry.
 func (s *JobQueue) Delete(id string) bool {
 	job, err := s.backend.GetJob(id)
-	if err != nil || job == nil || job.FinishedAt <= 0 {
+	if err != nil || job == nil || !jobs.IsSettled(job) {
 		return false
 	}
 	return s.runner.DeleteJob(job) == nil

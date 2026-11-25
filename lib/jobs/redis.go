@@ -115,7 +115,17 @@ func (b *RedisBackend) jsonSet(ctx context.Context, key, path string, value any)
 // jsonGet reads the document at $ and unmarshals it into out. It returns
 // (false, nil) if the key does not exist.
 func (b *RedisBackend) jsonGet(ctx context.Context, key string, out any) (bool, error) {
-	res, err := b.client.JSONGet(ctx, key, "$").Result()
+	return jsonGetFrom(ctx, b.client, key, out)
+}
+
+// jsonReader is the one command jsonGetFrom needs, satisfied by the client
+// and by a WATCH transaction alike.
+type jsonReader interface {
+	JSONGet(ctx context.Context, key string, paths ...string) *redis.JSONCmd
+}
+
+func jsonGetFrom(ctx context.Context, reader jsonReader, key string, out any) (bool, error) {
+	res, err := reader.JSONGet(ctx, key, "$").Result()
 	if err != nil {
 		if err == redis.Nil {
 			return false, nil
@@ -570,9 +580,6 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 	}
 	if job.Cleanup != nil && job.Cleanup.Id == partialJob.Id {
 		b.Logger.Debug().Str("job", job.Id).Str("partialJob", partialJob.Id).Strs("errors", partialJob.Errors).Msg("cleanup failed")
-		if err := b.syncEmbeddedPartialJob(ctx, job.Id, "cleanup", partialJob); err != nil {
-			return err
-		}
 		// Job is already finished; just surface the error so its status
 		// reports failed instead of successful. Nothing else can be writing
 		// the status at this point (finalization is long done, and there is
@@ -582,7 +589,12 @@ func (b *RedisBackend) onPartialJobPermanentlyFailed(ctx context.Context, partia
 			return err
 		}
 		job.Errors = append(job.Errors, partialJob.Errors...)
-		return b.setStatus(ctx, job.Id, job.GetStatus())
+		if err := b.setStatus(ctx, job.Id, job.GetStatus()); err != nil {
+			return err
+		}
+		// Last, because a finished cleanup is what tells a progress
+		// listener the Job is settled (s. jobSettled).
+		return b.syncEmbeddedPartialJob(ctx, job.Id, "cleanup", partialJob)
 	}
 
 	// A sequenced Job is a pipeline: every later part was written assuming
@@ -676,19 +688,17 @@ func (b *RedisBackend) finalizeIfDone(ctx context.Context, job *model.Job) error
 	}
 
 	fresh.FinishedAt = nowMillis()
-	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", fresh.FinishedAt); err != nil {
-		return err
-	}
-	// Derived from fresh - read above, i.e. after every PartialJob of this
-	// Job was accounted for, and therefore after all of their errors were
-	// merged (s. onPartialJobPermanentlyFailed).
-	if err := b.setStatus(ctx, job.Id, fresh.GetStatus()); err != nil {
-		return err
-	}
-	// The terminal percentage (100, by definition of IsDone), from the same
-	// read that decided the Job is finished - so a finished Job does not
-	// keep whatever partial value the last worker happened to store.
-	if err := b.setPercent(ctx, b.keyJob+job.Id, fresh.Percent()); err != nil {
+	// Status is derived from fresh - read above, i.e. after every
+	// PartialJob of this Job was accounted for, and therefore after all of
+	// their errors were merged (s. onPartialJobPermanentlyFailed). The
+	// percentage is the terminal one (100, by definition of IsDone) from the
+	// same read, so a finished Job does not keep whatever partial value the
+	// last worker happened to store.
+	if err := b.finish(ctx, job.Id, map[string]any{
+		"$.finishedAt":       fresh.FinishedAt,
+		"$.status":           fresh.GetStatus(),
+		"$.progress.percent": fresh.Percent(),
+	}); err != nil {
 		return err
 	}
 	logJobFinished(b.Logger, fresh, "job finished")
@@ -728,10 +738,10 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 
 	job.Errors = append(job.Errors, errors...)
 	job.FinishedAt = nowMillis()
-	if err := b.jsonSet(ctx, b.keyJob+job.Id, "$.finishedAt", job.FinishedAt); err != nil {
-		return err
-	}
-	if err := b.setStatus(ctx, job.Id, job.GetStatus()); err != nil {
+	if err := b.finish(ctx, job.Id, map[string]any{
+		"$.finishedAt": job.FinishedAt,
+		"$.status":     job.GetStatus(),
+	}); err != nil {
 		return err
 	}
 	logJobFinished(b.Logger, job, "job force-failed")
@@ -746,8 +756,10 @@ func (b *RedisBackend) forceFail(ctx context.Context, job *model.Job, errors []s
 // cancelled Job, since spawning more work is the opposite of cancelling,
 // and for a *sequenced* Job that failed: a pipeline that stopped at a
 // failed part never produced the thing its follow-ups were written
-// against. Cleanup is the opposite case and runs either way
-// (s. forceFail).
+// against. The same goes for a Job that failed before any of its work
+// started, a failed setup being the usual case: StartJob only runs for the
+// first non-setup PartialJob, so such a Job is never started. Cleanup is the
+// opposite case and runs either way (s. forceFail).
 //
 // Known gap: an unsequenced Job spawns its follow-ups even when one of its
 // parts failed. Its parts are independent, so most of the work did happen
@@ -764,6 +776,10 @@ func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 		logFollowUpsSkipped(b.Logger, job, "sequenced job failed")
 		return nil
 	}
+	if job.HasErrors() && !job.IsStarted() {
+		logFollowUpsSkipped(b.Logger, job, "job failed before any work started")
+		return nil
+	}
 	logFollowUpsPushed(b.Logger, job)
 
 	for _, followUp := range job.FollowUps {
@@ -778,22 +794,36 @@ func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 func (b *RedisBackend) StartJob(jobID string) error {
 	ctx := context.Background()
 	defer b.publishJobChanged(ctx, jobID)
+	key := b.keyJob + jobID
 
-	job, err := b.getJob(ctx, jobID)
-	if err != nil || job == nil {
+	// The status written is derived from the Job as read, so a Cancel
+	// landing between the read and the write would be overwritten with
+	// RUNNING and the dismissed Job would never finish. WATCH turns that
+	// into a retry, which then reads DISMISSED and keeps it (s. GetStatus).
+	start := func(tx *redis.Tx) error {
+		var job model.Job
+		found, err := jsonGetFrom(ctx, tx, key, &job)
+		if err != nil || !found {
+			return err
+		}
+		job.StartedAt = nowMillis()
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.JSONSet(ctx, key, "$.startedAt", job.StartedAt)
+			pipe.JSONSet(ctx, key, "$.status", job.GetStatus())
+			// Percent depends on startedAt too: a Job with no scope of its
+			// own (total 0) counts as complete the moment it starts.
+			pipe.JSONSet(ctx, key, "$.progress.percent", job.Percent())
+			return nil
+		})
 		return err
 	}
 
-	job.StartedAt = nowMillis()
-	if err := b.jsonSet(ctx, b.keyJob+jobID, "$.startedAt", job.StartedAt); err != nil {
-		return err
+	for range 10 {
+		if err := b.client.Watch(ctx, start, key); err != redis.TxFailedErr {
+			return err
+		}
 	}
-	if err := b.setStatus(ctx, jobID, job.GetStatus()); err != nil {
-		return err
-	}
-	// Percent depends on startedAt too: a Job with no scope of its own
-	// (total 0) counts as complete the moment it starts.
-	return b.setPercent(ctx, b.keyJob+jobID, job.Percent())
+	return fmt.Errorf("starting job %s: too much contention", jobID)
 }
 
 // SetProgressDetails overwrites Job.progressDetails wholesale - the
@@ -1367,4 +1397,34 @@ func (b *RedisBackend) Heartbeat(partialJobIDs []string) error {
 		}
 	}
 	return nil
+}
+
+// finish writes a Job's terminal fields in one MULTI/EXEC, so no reader, a
+// progress listener in particular, sees finishedAt next to a status that is
+// not final yet.
+func (b *RedisBackend) finish(ctx context.Context, jobID string, fields map[string]any) error {
+	key := b.keyJob + jobID
+	_, err := b.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		for path, value := range fields {
+			pipe.JSONSet(ctx, key, path, value)
+		}
+		return nil
+	})
+	return err
+}
+
+// Close ends the progress-listener subscription and closes the client. The
+// backend cannot be used afterwards.
+func (b *RedisBackend) Close() error {
+	w := &b.jobListeners
+	w.mu.Lock()
+	if w.stop != nil {
+		w.stop()
+		w.stop = nil
+	}
+	clear(w.listeners)
+	clear(w.pending)
+	w.mu.Unlock()
+
+	return b.client.Close()
 }

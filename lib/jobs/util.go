@@ -24,3 +24,15 @@ func IsCancelled(backend Backend, jobID string) bool {
 	job, err := backend.GetJob(jobID)
 	return err == nil && job != nil && job.Status == model.StatusDISMISSED
 }
+
+// IsSettled reports whether job is done changing: finished, and its cleanup
+// finished too. A finished Job still changes while its cleanup runs, since
+// a failing cleanup turns it FAILED, and its follow-ups are only pushed once
+// the cleanup is done. Removing it or dropping its listener any earlier
+// loses that.
+func IsSettled(job *model.Job) bool {
+	if job.FinishedAt <= 0 {
+		return false
+	}
+	return job.Cleanup == nil || job.Cleanup.FinishedAt > 0
+}

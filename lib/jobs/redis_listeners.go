@@ -39,14 +39,17 @@ func (b *RedisBackend) watchJob(jobID string, listener JobListener) {
 	if w.listeners == nil {
 		w.listeners = map[string]JobListener{}
 		w.pending = map[string]bool{}
-		w.signal = make(chan struct{}, 1)
 	}
 	w.listeners[jobID] = listener
 
 	if w.stop == nil {
+		// A fresh signal per subscription, so a delivery goroutine of an
+		// earlier one that has not noticed its cancellation yet cannot take
+		// this one's events and read with a cancelled context.
+		w.signal = make(chan struct{}, 1)
 		ctx, cancel := context.WithCancel(context.Background())
 		w.stop = cancel
-		b.subscribeJobChanges(ctx)
+		b.subscribeJobChanges(ctx, w.signal)
 	}
 }
 
@@ -63,7 +66,7 @@ func (b *RedisBackend) unwatchJob(jobID string) {
 	}
 }
 
-func (b *RedisBackend) subscribeJobChanges(ctx context.Context) {
+func (b *RedisBackend) subscribeJobChanges(ctx context.Context, signal <-chan struct{}) {
 	pubsub := b.client.Subscribe(ctx, b.channelJob)
 	if _, err := pubsub.Receive(ctx); err != nil {
 		// go-redis keeps retrying in the background; the resync covers
@@ -92,7 +95,7 @@ func (b *RedisBackend) subscribeJobChanges(ctx context.Context) {
 		}
 	}()
 
-	go b.deliverJobChanges(ctx)
+	go b.deliverJobChanges(ctx, signal)
 }
 
 func (b *RedisBackend) watchedJobs() []string {
@@ -119,11 +122,12 @@ func (b *RedisBackend) markJobsChanged(jobIDs ...string) {
 			marked = true
 		}
 	}
+	signal := w.signal
 	w.mu.Unlock()
 
 	if marked {
 		select {
-		case w.signal <- struct{}{}:
+		case signal <- struct{}{}:
 		default:
 		}
 	}
@@ -131,13 +135,13 @@ func (b *RedisBackend) markJobsChanged(jobIDs ...string) {
 
 // deliverJobChanges runs apart from the message loop so reading the Jobs
 // back never holds up the subscription.
-func (b *RedisBackend) deliverJobChanges(ctx context.Context) {
+func (b *RedisBackend) deliverJobChanges(ctx context.Context, signal <-chan struct{}) {
 	w := &b.jobListeners
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-w.signal:
+		case <-signal:
 		}
 
 		w.mu.Lock()
@@ -166,7 +170,7 @@ func (b *RedisBackend) deliverJobChange(ctx context.Context, jobID string, liste
 	}
 
 	listener.OnProgress(*job)
-	if job.FinishedAt > 0 {
+	if IsSettled(job) {
 		b.unwatchJob(jobID)
 	}
 }

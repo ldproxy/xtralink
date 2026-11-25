@@ -412,3 +412,21 @@ func TestJobQueue_StandalonePartialJobReachesProcessor(t *testing.T) {
 		t.Errorf("processor never called, failed: %v", failed)
 	}
 }
+
+func TestJobQueue_RestartKeepsTheMemoryQueue(t *testing.T) {
+	q := NewJobQueue()
+	cfg := model.QueueConfiguration{Concurrency: 1, Executor: "test", Queue: model.QueueLOCAL}
+	if err := q.Start(cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	jobID := pushJob(t, q)
+	q.Stop()
+
+	if err := q.Start(cfg); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	defer q.Stop()
+	if _, ok := q.Get(jobID); !ok {
+		t.Error("job pushed before Stop is gone after Start")
+	}
+}

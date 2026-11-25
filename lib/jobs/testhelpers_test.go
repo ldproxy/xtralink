@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,13 +21,36 @@ func requireRedis(t *testing.T) *RedisBackend {
 		addr = "localhost:6379"
 	}
 
-	b := NewRedisBackend([]string{addr}, "")
+	// Every test gets its own cluster, so its keys never mix with another
+	// test's or with a real instance's, and can all be deleted afterwards.
+	// Two calls in one test share it, which is how tests stand in for two
+	// processes on the same queue.
+	b := NewRedisBackend([]string{addr}, testCluster(t))
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := b.client.Ping(ctx).Err(); err != nil {
 		t.Skipf("redis not reachable at %s, skipping integration test: %v", addr, err)
 	}
+	t.Cleanup(func() { deleteClusterKeys(t, b) })
 	return b
+}
+
+var testRun = uuid.NewString()[:8]
+
+func testCluster(t *testing.T) string {
+	return "test-" + testRun + "-" + strings.ReplaceAll(t.Name(), "/", "-")
+}
+
+func deleteClusterKeys(t *testing.T, b *RedisBackend) {
+	ctx := context.Background()
+	prefix := strings.TrimSuffix(b.keyJob, "job:")
+	iter := b.client.Scan(ctx, 0, prefix+"*", 500).Iterator()
+	for iter.Next(ctx) {
+		b.client.Del(ctx, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		t.Logf("deleting test keys under %s: %v", prefix, err)
+	}
 }
 
 // uniqueType returns a partial job type unique to this test/call, so
