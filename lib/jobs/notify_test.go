@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -107,4 +108,77 @@ func TestMemoryBackend_ListenStopsWithContext(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Error("subscriber still registered after its context was cancelled")
+}
+
+type recordingJobListener struct {
+	mu   sync.Mutex
+	jobs []model.Job
+}
+
+func (l *recordingJobListener) OnProgress(job model.Job) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.jobs = append(l.jobs, job)
+}
+
+func (l *recordingJobListener) last() (model.Job, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.jobs) == 0 {
+		return model.Job{}, 0
+	}
+	return l.jobs[len(l.jobs)-1], len(l.jobs)
+}
+
+// The listener lives with the process that pushed the Job, while another
+// process runs its PartialJob: every change made there has to reach it, and
+// it has to be dropped once the Job is finished.
+func TestRedisBackend_ListenerFollowsJobAdvancedElsewhere(t *testing.T) {
+	pusher := requireRedis(t)
+	worker := requireRedis(t)
+	jobType := uniqueType("listen")
+
+	job := NewJob(uuid.NewString(), jobType, 1000, "", nil)
+	cleanupJob(t, pusher, job.Id)
+	listener := &recordingJobListener{}
+	if err := pusher.PushJobListen(job, listener); err != nil {
+		t.Fatalf("PushJobListen: %v", err)
+	}
+
+	partialJob := NewPartialJob(uuid.NewString(), jobType+":worker", 1000, job.Id)
+	cleanupPartialJob(t, worker, partialJob.Id)
+	if err := worker.InitJob(job.Id, 1, nil); err != nil {
+		t.Fatalf("InitJob: %v", err)
+	}
+	if err := worker.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+	if _, err := worker.Take(partialJob.Kind, "worker"); err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	if err := worker.StartJob(job.Id); err != nil {
+		t.Fatalf("StartJob: %v", err)
+	}
+	if err := worker.UpdatePartialJob(partialJob.Id, 1); err != nil {
+		t.Fatalf("UpdatePartialJob: %v", err)
+	}
+	if err := worker.Done(partialJob.Id); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _ := listener.last(); got.FinishedAt > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	got, calls := listener.last()
+	if got.FinishedAt == 0 || got.Progress.Current != 1 {
+		t.Fatalf("last delivered state after %d calls: finishedAt=%d current=%d, want the finished Job", calls, got.FinishedAt, got.Progress.Current)
+	}
+	if watched := pusher.watchedJobs(); len(watched) != 0 {
+		t.Errorf("listener still registered after its Job finished: %v", watched)
+	}
 }

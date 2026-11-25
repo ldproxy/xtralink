@@ -48,6 +48,9 @@ type RedisBackend struct {
 	// Pub/sub channels behind Listen, scoped by cluster like the keys.
 	channelWork   string
 	channelCancel string
+	channelJob    string
+
+	jobListeners redisJobListeners
 
 	// Logger receives debug/trace output about setup, cleanup, sequence
 	// and followUps decisions. Defaults to a no-op logger.
@@ -88,6 +91,7 @@ func NewRedisBackend(nodes []string, cluster string) *RedisBackend {
 		keyFinalized:  prefix + "finalized:",
 		channelWork:   prefix + "events:work",
 		channelCancel: prefix + "events:cancel",
+		channelJob:    prefix + "events:job",
 		Logger:        zerolog.Nop(),
 	}
 }
@@ -233,6 +237,11 @@ func (b *RedisBackend) PushJob(job *model.Job) error {
 
 func (b *RedisBackend) PushJobListen(job *model.Job, onProgress JobListener) error {
 	ctx := context.Background()
+	if _, noop := onProgress.(NoopJobListener); !noop && onProgress != nil {
+		b.watchJob(job.Id, onProgress)
+	}
+	defer b.publishJobChanged(ctx, job.Id)
+
 	if err := b.putJob(ctx, job); err != nil {
 		return err
 	}
@@ -440,6 +449,7 @@ func (b *RedisBackend) Done(partialJobID string) error {
 		return err
 	}
 	if partialJob != nil && partialJob.PartOf != "" {
+		defer b.publishJobChanged(ctx, partialJob.PartOf)
 		if err := b.onPartialJobDone(ctx, partialJob); err != nil {
 			return err
 		}
@@ -750,6 +760,7 @@ func (b *RedisBackend) pushFollowUps(job *model.Job) error {
 // StartJob sets Job.startedAt to now (mirrors JobSet.start() in Java).
 func (b *RedisBackend) StartJob(jobID string) error {
 	ctx := context.Background()
+	defer b.publishJobChanged(ctx, jobID)
 
 	job, err := b.getJob(ctx, jobID)
 	if err != nil || job == nil {
@@ -771,7 +782,9 @@ func (b *RedisBackend) StartJob(jobID string) error {
 // SetProgressDetails overwrites Job.progressDetails wholesale - the
 // one-time, type-specific initial build done by a setup JobProcessor.
 func (b *RedisBackend) SetProgressDetails(jobID string, details map[string]any) error {
-	return b.jsonSet(context.Background(), b.keyJob+jobID, "$.progress.details", details)
+	ctx := context.Background()
+	defer b.publishJobChanged(ctx, jobID)
+	return b.jsonSet(ctx, b.keyJob+jobID, "$.progress.details", details)
 }
 
 // SetOutput writes a single outputs entry, keyed by name.
@@ -804,6 +817,7 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 	if partialJob == nil {
 		return nil
 	}
+	defer b.publishJobChanged(ctx, partialJob.PartOf)
 
 	partialJob.Errors = append(partialJob.Errors, message)
 	partialJob.UpdatedAt = nowMillis()
@@ -831,6 +845,7 @@ func (b *RedisBackend) Error(partialJobID, message string, retry bool) error {
 // Cancel dismisses a Job (s. Backend.Cancel).
 func (b *RedisBackend) Cancel(jobID string) (bool, error) {
 	ctx := context.Background()
+	defer b.publishJobChanged(ctx, jobID)
 
 	job, err := b.getJob(ctx, jobID)
 	if err != nil || job == nil {
@@ -996,6 +1011,7 @@ func (b *RedisBackend) finalizeIfDismissed(ctx context.Context, job *model.Job) 
 // (s. finalizeIfDone), long after the Job it guards is gone.
 func (b *RedisBackend) DoneJob(jobID string) error {
 	ctx := context.Background()
+	b.unwatchJob(jobID)
 
 	if err := b.jsonDel(ctx, b.keyJob+jobID); err != nil {
 		return err
@@ -1105,6 +1121,7 @@ func (b *RedisBackend) InitJob(jobID string, totalDelta int, updates []model.Pro
 
 func (b *RedisBackend) UpdateJob(jobID string, currentDelta int, updates []model.ProgressUpdate) error {
 	ctx := context.Background()
+	defer b.publishJobChanged(ctx, jobID)
 	key := b.keyJob + jobID
 
 	if err := b.jsonNumIncrBy(ctx, key, "$.progress.current", currentDelta); err != nil {
@@ -1296,5 +1313,14 @@ func (b *RedisBackend) Listen(ctx context.Context, n Notifications) error {
 func (b *RedisBackend) publish(ctx context.Context, channel, payload string) {
 	if err := b.client.Publish(ctx, channel, payload).Err(); err != nil {
 		b.Logger.Warn().Err(err).Str("channel", channel).Msg("publishing job event failed")
+	}
+}
+
+// publishJobChanged tells the process holding jobID's listener, if any, to
+// re-read the Job (s. redisJobListeners). Publishing costs one command and
+// nobody may be listening, which is cheaper than tracking who is.
+func (b *RedisBackend) publishJobChanged(ctx context.Context, jobID string) {
+	if jobID != "" {
+		b.publish(ctx, b.channelJob, jobID)
 	}
 }
