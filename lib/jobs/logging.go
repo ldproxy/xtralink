@@ -65,6 +65,6 @@ func logPartialJobRetry(logger zerolog.Logger, partialJob *model.PartialJob, mes
 }
 
 func logPartialJobFailed(logger zerolog.Logger, partialJob *model.PartialJob, message string) {
-	logger.Debug().Str("partialJob", partialJob.Id).Str("job", partialJob.PartOf).Str("error", message).
+	logger.Warn().Str("partialJob", partialJob.Id).Str("job", partialJob.PartOf).Str("error", message).
 		Msg("partial job permanently failed")
 }

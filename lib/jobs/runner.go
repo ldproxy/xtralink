@@ -235,7 +235,14 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 	if partialJob.PartOf != "" {
 		var err error
 		job, err = r.Backend.GetJob(partialJob.PartOf)
-		r.reportError(err)
+		if err != nil {
+			// Running the processor without its Job would hand it a nil it
+			// never expects; failing with retry re-queues it, bounded by
+			// maxRetries.
+			r.reportError(err)
+			r.reportError(r.Backend.Error(partialJob.Id, fmt.Sprintf("loading job %s: %v", partialJob.PartOf, err), true))
+			return
+		}
 
 		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.Id == partialJob.Id) {
 			r.Logger.Debug().Str("job", partialJob.PartOf).Msg("starting job")

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -644,5 +645,45 @@ func TestRunner_RecoversPanicOutsideProcessor(t *testing.T) {
 	defer mu.Unlock()
 	if len(reported) == 0 || !strings.Contains(reported[0].Error(), "panic in partial job "+partialJob.Id) {
 		t.Errorf("expected the panic to be reported, got %v", reported)
+	}
+}
+
+type failingGetJob struct{ *MemoryBackend }
+
+func (failingGetJob) GetJob(string) (*model.Job, error) {
+	return nil, errors.New("backend unavailable")
+}
+
+// A Job that cannot be loaded must not reach the processor as nil; the
+// PartialJob is failed with retry instead, so it ends up in GetFailed once
+// maxRetries is spent.
+func TestRunner_DoesNotProcessWhenJobCannotBeLoaded(t *testing.T) {
+	b := failingGetJob{NewMemoryBackend()}
+	jobType := uniqueType("getjob-error")
+
+	partialJob := NewPartialJob(uuid.NewString(), jobType, 1000, uuid.NewString())
+	if err := b.PushPartialJob(partialJob, false); err != nil {
+		t.Fatalf("PushPartialJob: %v", err)
+	}
+
+	var processed int32
+	r := NewRunner(b, "test")
+	r.PollInterval = 5 * time.Millisecond
+	r.Register(&JobProcessor{Kind: jobType, Priority: 1000, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+		atomic.AddInt32(&processed, 1)
+		return model.Success()
+	}})
+
+	runRunnerUntil(t, r, 2*time.Second, func() bool {
+		failed, _ := b.GetFailed()
+		return len(failed) > 0
+	})
+
+	if got := atomic.LoadInt32(&processed); got != 0 {
+		t.Errorf("processor ran %d times without its Job", got)
+	}
+	failed, _ := b.GetFailed()
+	if len(failed) != 1 || !strings.Contains(strings.Join(failed[0].Errors, " "), "backend unavailable") {
+		t.Errorf("expected the partial job to fail with the load error, got %v", failed)
 	}
 }
