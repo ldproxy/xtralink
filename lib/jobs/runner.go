@@ -337,8 +337,14 @@ func (r *Runner) process(ctx context.Context, partialJob *model.PartialJob, proc
 			r.reportError(r.Backend.Error(partialJob.Id, fmt.Sprintf("loading job %s: %v", partialJob.PartOf, err), true))
 			return
 		}
+		if job == nil {
+			// The Job expired or was deleted while this PartialJob still
+			// lingered in the queue; a retry cannot bring it back.
+			r.reportError(r.Backend.Error(partialJob.Id, fmt.Sprintf("partial job %s has no job (partOf=%q)", partialJob.Id, partialJob.PartOf), false))
+			return
+		}
 
-		if job != nil && !job.IsStarted() && !(job.Setup != nil && job.Setup.Id == partialJob.Id) {
+		if !job.IsStarted() && !(job.Setup != nil && job.Setup.Id == partialJob.Id) {
 			r.Logger.Debug().Str("job", partialJob.PartOf).Msg("starting job")
 			r.reportError(r.Backend.StartJob(partialJob.PartOf))
 		}

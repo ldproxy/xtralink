@@ -252,3 +252,50 @@ func TestRunner_DeliversCancellationsToOnCancel(t *testing.T) {
 		}
 	})
 }
+
+// A PartialJob can be taken after its Job is gone, e.g. a PartialJob of a
+// sequence that never became ready and whose failed Job expired. It fails
+// for good instead of reaching a processor that expects its Job.
+func TestRunner_FailsAPartialJobWhoseJobIsGone(t *testing.T) {
+	forBothBackends(t, func(t *testing.T, b Backend) {
+		kind, goneJobID := uniqueType("orphan"), uuid.NewString()
+		partialJob := NewPartialJob(uuid.NewString(), kind, 1, goneJobID)
+		if redis, ok := b.(*RedisBackend); ok {
+			cleanupPartialJob(t, redis, partialJob.Id)
+		}
+		if err := b.PushPartialJob(partialJob, false); err != nil {
+			t.Fatalf("PushPartialJob: %v", err)
+		}
+
+		var processed atomic.Int32
+		r := fastRunner(b)
+		r.Register(&JobProcessor{Kind: kind, Priority: 1, Process: func(*model.PartialJob, *model.Job, Backend) model.JobResult {
+			processed.Add(1)
+			return model.Success()
+		}})
+
+		var failed *model.PartialJob
+		runUntil(t, r, 3*time.Second, "the partial job to fail", func() bool {
+			failed = failedPartialJob(b, partialJob.Id)
+			return failed != nil
+		})
+
+		if processed.Load() != 0 {
+			t.Errorf("processor ran %d times for a partial job without its job", processed.Load())
+		}
+		want := "partial job " + partialJob.Id + " has no job (partOf=\"" + goneJobID + "\")"
+		if len(failed.Errors) != 1 || failed.Errors[0] != want {
+			t.Errorf("errors = %q, want [%q]", failed.Errors, want)
+		}
+	})
+}
+
+func failedPartialJob(b Backend, id string) *model.PartialJob {
+	failed, _ := b.GetFailed()
+	for _, partialJob := range failed {
+		if partialJob.Id == id {
+			return partialJob
+		}
+	}
+	return nil
+}
